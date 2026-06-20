@@ -4,7 +4,7 @@
   "workspaceFolder": "/workspaces/project",
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
-      "version": "22"
+      "version": "24"
     }
   },
   "postCreateCommand": "if [ -f package.json ]; then npm install; fi"

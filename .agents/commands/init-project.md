@@ -29,7 +29,7 @@ description: Expo managed workflow + JavaScript の初期環境を作成する
    - `npx expo start`
    - Expo 関連依存は `npx expo install`
 6. この段階では機能実装を行わない
-7. `define-feature` で `docs/ideas/initial-requirements.md` を作成し、`setup-project` へ進める準備を整える
+7. `define-project` で `docs/ideas/initial-requirements.md` を作成し、`setup-project` へ進める準備を整える
 
 ## 必須ルール
 
@@ -44,4 +44,4 @@ description: Expo managed workflow + JavaScript の初期環境を作成する
 - Expo managed workflow の最小起動構成が存在すること
 - `.gitignore` と `.nvmrc` が存在すること
 - `.devcontainer/devcontainer.json` が存在し、必須利用ではないことが明記されていること
-- 次に `define-feature` で `docs/ideas/initial-requirements.md` を整備し、`setup-project` に進めること
+- 次に `define-project` で `docs/ideas/initial-requirements.md` を整備し、`setup-project` に進めること

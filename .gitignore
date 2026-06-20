@@ -36,6 +36,13 @@ Thumbs.db
 coverage/
 .nyc_output/
 
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
 # Expo
 .expo/
 web-build/

@@ -1,0 +1,161 @@
+# MediaVault プロダクト要求定義書
+
+## プロダクト概要
+
+### 名称
+
+**MediaVault** - iPhoneメディアをMac miniへ安全に退避し、preview確認できる個人向け保管アプリ
+
+### コンセプト
+
+- originalファイルを改変せず、外部SSDへ保管する。
+- ファイル完全性と内容確認を別の状態として扱う。
+- Phase 1で操作体験を検証し、Phase 2で大容量ProRes/LOG動画の安全転送を実現する。
+
+### 対象ユーザー
+
+- iPhoneで写真・動画を多く撮影する個人ユーザー。
+- ProRes/LOGなど大容量素材を扱うユーザー。
+- 自宅LAN上のMac miniと外部SSDを保管先にしたいユーザー。
+
+## 解決する課題
+
+- iPhone内の大容量メディアが端末容量を圧迫する。
+- 退避後にoriginalが保存されたか、内容が意図した素材かを確認しづらい。
+- ファイル完全性、preview確認、安全削除候補の意味が混ざると誤削除につながる。
+
+## 不変条件
+
+- originalファイルは改変しない。
+- iPhone内の素材を自動削除しない。
+- 保存先ルートは環境変数 `MEDIA_ROOT` で指定し、ハードコードしない。
+- Phase 1では `safe_to_delete_candidate` を本番運用しない。
+- Phase 2以降でも、安全条件をすべて満たす場合のみ削除候補にする。実削除は自動化しない。
+
+## Phase 1 MVP
+
+### 目的
+
+`104857600 bytes`以下の検証用素材で、iPhoneからアップロードし、Mac mini側でSHA256記録とpreview生成を行い、iPhone側で内容確認する一連の操作体験を検証する。
+
+### 対象範囲
+
+- iPhoneライブラリから写真・動画を選択する。
+- 取得可能な撮影日時、位置情報、EXIFを送信する。欠落値はnullableとする。
+- LOG素材かどうかをユーザーが選択する。
+- FastAPI backendへ通常アップロードする。
+- `${MEDIA_ROOT}/originals/` にoriginalを保存する。
+- Mac mini側でSHA256を計算し、`server_hash_recorded` として記録する。
+- ffmpeg preview生成jobを登録・実行する。
+- LOG指定素材ではRec.709変換用LUTを適用する。
+- 写真previewはJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映で生成する。
+- iPhoneアプリでpreviewを再生し、`review_status = preview_confirmed` に更新する。
+- Backend URLと固定APIトークンをSettingsから設定する。
+
+### Phase 1対象外
+
+- `104857600 bytes`を超える素材の本番退避。
+- chunk upload、resume upload、chunk hash verification。
+- end-to-end hash verification。
+- 安全削除候補の本番運用とiPhone内素材の削除。
+- AI解析、original再ダウンロード、外部SSD管理UI。
+
+## Phase 2 必須拡張
+
+- upload sessionを作成する。
+- chunk単位でuploadし、chunk hashを照合する。
+- Wi-Fi切断後にresume可能にする。
+- 全chunk完了後にファイルを結合する。
+- 結合後ファイルのSHA256を計算・記録する。
+- iPhone側`expected_file_sha256`とMac mini側`server_sha256`を照合する。
+- `upload_sessions.status = completed`、全`upload_chunks.status = verified`、`assets.verification_status = file_verified`、`assets.preview_status = preview_ready`、`assets.review_status = preview_confirmed`をすべて満たす場合のみ`safe_to_delete_candidate`にする。
+
+## Phase 3+ Backlog
+
+- Wi-Fi/充電中のみ同期
+- originalダウンロード
+- LUT設定管理
+- 顔検出、笑顔判定、ピント/ブレ判定、ベストショット抽出
+- 動画シーン解析、AIタグ付け
+- FCPXML出力
+- Mac miniからMBAへのoriginal取得
+
+## 主要ユーザーストーリー
+
+### P0: 素材退避
+
+ユーザーとして、iPhone容量を空ける準備のために、選択した写真・動画をMac miniへ退避したい。
+
+**受け入れ条件**
+
+- `104857600 bytes`以下の素材を選択できる。
+- Mobileとbackendの両方で超過素材を拒否する。
+- originalが`${MEDIA_ROOT}/originals/` に保存される。
+- originalのSHA256がMac mini側で計算・記録される。
+- originalがpreview生成処理で変更されない。
+
+### P0: preview確認
+
+ユーザーとして、退避した素材が意図した内容か確認するために、iPhoneでpreviewを再生したい。
+
+**受け入れ条件**
+
+- ffmpegでH.264 MP4 previewを生成できる。
+- previewは縦横比を維持し、1080pを上限とする。
+- 音声がある場合はAAC音声を含む。
+- LOG指定素材はRec.709変換用LUTを適用できる。
+- 写真previewはJPEG、長辺2048px上限、EXIF orientation反映で生成できる。
+- 確認後に`review_status = preview_confirmed`となる。
+
+### P0: LAN内アクセス制御
+
+ユーザーとして、LAN内の別端末から無制限に閲覧・uploadされないよう、backendへのアクセスを制限したい。
+
+**受け入れ条件**
+
+- Backend URLを手入力できる。
+- 固定APIトークンを設定できる。
+- API要求は`Authorization: Bearer <token>`形式を使う。
+- uploadとpreview APIはトークンなしの要求を拒否する。
+- `/jobs`, `/jobs/{job_id}`を含む全Phase 1 APIはトークンなしの要求を拒否する。
+
+## 状態モデル
+
+| 分類 | Phase 1で使用する状態 | Phase 2以降で追加する状態 |
+|------|----------------------|--------------------------|
+| `transfer_status` | `local_only`, `uploading`, `uploaded`, `failed` | 継続利用 |
+| `verification_status` | `not_started`, `server_hash_recorded`, `failed` | `chunk_verified`, `file_verified` |
+| `preview_status` | `not_started`, `preview_generating`, `preview_ready`, `failed` | 継続利用 |
+| `review_status` | `not_reviewed`, `preview_confirmed` | 継続利用 |
+| `delete_candidate_status` | `not_candidate` | `safe_to_delete_candidate` |
+
+## 非機能要件
+
+### 信頼性
+
+- originalはderived fileと別ディレクトリへ保存する。
+- original保存後のpreview生成はoriginalを読み取り専用入力として扱う。
+- Phase 1ではSHA256をサーバー側で計算・記録するが、end-to-end検証済みとは表示しない。
+- 外部SSD未接続、容量不足、ffmpeg失敗をエラーとして記録する。
+
+### セキュリティ
+
+- `/assets/upload`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`は固定APIトークンを要求する。
+- トークンや機密値をログへ出力しない。
+- 保存パスはbackend側で生成し、クライアント由来のパスを信用しない。
+
+### 運用
+
+- DockerをMac mini移行時の正規実行環境とする。
+- ローカル`node_modules`をDockerへ持ち込まない。
+- iPhone実運用はDevelopment Build / Internal Distributionを前提とする。
+
+## 未決事項
+
+- Phase 1で利用する具体的なRec.709 LUTファイル。
+- preview bitrate。
+- Docker内でPhase 1単一workerをsupervise/restartする方法。
+- iPhoneからMac miniへのBackend URL設定方法と将来のLAN discovery。
+- `expo-media-library` で取得可能なEXIF/location項目。
+- thumbnail生成をPhase 1に含めるか。
+- ffmpeg失敗時のretry回数。

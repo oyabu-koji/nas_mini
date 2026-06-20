@@ -13,15 +13,18 @@ description: `plan-feature` で作成した作業計画を維持し、`implement
 
 ## ワークフロー上の位置
 
-1. `define-feature` が `docs/ideas/` の仕様を作成または更新する
-2. `plan-feature <docs/ideas/YYYYMMDD-[feature-name].md>` が `.steering/...` を作成する
-3. `implement-feature <.steering/...>` が `tasklist.md` に従って実装する
-4. `validate-implementation <.steering/...>` が実装を検証する
+1. `define-project` が `docs/ideas/initial-requirements.md` を作成または更新する
+2. `setup-project` が `docs/` の永続ドキュメント6点を作成する
+3. `define-feature` が `docs/ideas/YYYYMMDD-[feature-name].md` を作成または更新する
+4. `plan-feature <docs/ideas/YYYYMMDD-[feature-name].md>` が `.steering/...` を作成する
+5. `implement-feature <.steering/...>` が `tasklist.md` に従って実装する
+6. `validate-implementation <.steering/...>` が実装を検証する
 
 ## 入力契約
 
 - `docs/ideas/` は仕様専用ディレクトリ
-- `docs/ideas/initial-requirements.md` は `setup-project` 用の初期要件
+- `docs/ideas/initial-requirements.md` は `define-project` が扱う `setup-project` 用の初期要件
+- `docs/ideas/YYYYMMDD-[feature-name].md` は `define-feature` が扱う個別機能仕様
 - `plan-feature` に渡すのは `docs/ideas/YYYYMMDD-[feature-name].md`
 - `implement-feature` と `validate-implementation` に渡すのは対象 `.steering/[YYYYMMDD]-[task]/`
 

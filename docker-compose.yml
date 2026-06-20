@@ -1,0 +1,34 @@
+services:
+  api:
+    build:
+      context: ./backend
+    command: uv run --frozen --no-dev uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      MEDIA_ROOT: /media_root
+      API_TOKEN: ${API_TOKEN:?API_TOKEN is required}
+      DATABASE_PATH: /data/mediavault.sqlite3
+      SQLITE_BUSY_TIMEOUT_MS: ${SQLITE_BUSY_TIMEOUT_MS:-5000}
+      JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
+    volumes:
+      - ${MEDIA_ROOT_HOST_PATH:-/private/tmp/mediavault-media}:/media_root
+      - backend-db:/data
+
+  worker:
+    build:
+      context: ./backend
+    command: uv run --frozen --no-dev python -m app.workers.worker
+    restart: unless-stopped
+    environment:
+      MEDIA_ROOT: /media_root
+      API_TOKEN: ${API_TOKEN:?API_TOKEN is required}
+      DATABASE_PATH: /data/mediavault.sqlite3
+      SQLITE_BUSY_TIMEOUT_MS: ${SQLITE_BUSY_TIMEOUT_MS:-5000}
+      JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
+    volumes:
+      - ${MEDIA_ROOT_HOST_PATH:-/private/tmp/mediavault-media}:/media_root
+      - backend-db:/data
+
+volumes:
+  backend-db:

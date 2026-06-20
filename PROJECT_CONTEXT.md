@@ -18,12 +18,23 @@ JavaScript (not TypeScript)
 
 ## Environment
 
-Node 22
+Node 24
 Expo SDK 54
 
 ### 日本語説明
-- Node の実行環境は 22 系を使います。
+- Node の実行環境は 24 系を使います。
 - Expo SDK は 54 を前提にします。
+
+## Environment Transfer
+
+This project uses Node 24 and treats Docker as the canonical runtime when moved to the Mac mini.
+
+Do not rely on the Mac mini host Node version when the app runs inside Docker. Install dependencies inside Docker and do not copy local `node_modules`.
+
+### 日本語説明
+このプロジェクトは Node 24 を使い、Mac mini へ移す場合は Docker 内の実行環境を正とします。
+
+Docker 内で動かす場合、Mac mini ホスト側の Node バージョンには依存しません。依存関係は Docker 内で `npm install` し、ローカルの `node_modules` は持ち込まないでください。
 
 ## Development
 

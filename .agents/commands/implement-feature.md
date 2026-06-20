@@ -60,9 +60,11 @@ tasklist.md に書かれているタスクを
 
 ## 4. 品質確認
 
-実装後に以下を実行する
+実装後に、`package.json` に該当 script がある場合は以下を実行する
 
 npm run lint
+
+`lint` script が未定義の場合は、実行できない理由を `tasklist.md` または報告に残す。
 
 必要に応じて
 
@@ -82,6 +84,7 @@ npx expo start
 # 完了条件
 
 - tasklist.md のタスクが完了している
-- lint エラーがない
+- `lint` script がある場合は lint エラーがない
+- `lint` script がない場合は未実行理由が明記されている
 - 必要なら `design.md` と `tasklist.md` が最新化されている
 - 次に `validate-implementation` を実行できる状態である
