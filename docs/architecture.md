@@ -143,6 +143,7 @@ ${MEDIA_ROOT}/
 - Phase 1はAPIと単一workerを使い、SQLiteはWAL modeと`busy_timeout = 5000ms`を設定する。
 - DBファイルはDocker volumeで永続化する。
 - workerはSQLite transactionで`queued` jobをatomic claimする。
+- workerは自身が処理可能なjob typeだけをclaimする。processor未実装のjobは`queued`のまま残す。
 - jobは`claimed_at`と`lease_expires_at`を持ち、期限切れ`running` jobを`queued`へ回収する。
 - Dockerではworkerを独立serviceとして起動し、`restart: unless-stopped`を設定する。
 - 理由: ffmpeg処理をAPI request lifecycleから分離し、将来のAI jobへ拡張しやすくするため。

@@ -1,3 +1,5 @@
+import hmac
+
 from fastapi import Header, HTTPException, status
 
 from app.core.settings import load_settings
@@ -12,7 +14,7 @@ def require_bearer_token(authorization: str | None = Header(default=None)) -> No
         raise _unauthorized()
 
     settings = load_settings()
-    if token != settings.api_token:
+    if not hmac.compare_digest(token, settings.api_token):
         raise _unauthorized()
 
 

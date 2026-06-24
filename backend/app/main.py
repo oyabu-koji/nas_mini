@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.assets import router as assets_router
 from app.api.health import router as health_router
 from app.core.settings import load_settings
 from app.db.connection import connect
@@ -20,3 +21,4 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MediaVault Backend", lifespan=lifespan)
 app.include_router(health_router)
+app.include_router(assets_router)

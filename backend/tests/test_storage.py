@@ -2,7 +2,13 @@ import os
 
 import pytest
 
-from app.services.storage import REQUIRED_DIRECTORIES, StorageError, initialize_storage
+from app.services.storage import (
+    REQUIRED_DIRECTORIES,
+    StorageError,
+    generate_original_relative_path,
+    initialize_storage,
+    resolve_media_path,
+)
 
 
 def test_initialize_storage_creates_required_directories(tmp_path):
@@ -35,3 +41,19 @@ def test_initialize_storage_rejects_unwritable_media_root(tmp_path):
             initialize_storage(media_root)
     finally:
         tmp_dir.chmod(original_mode)
+
+
+def test_resolve_media_path_rejects_path_traversal(tmp_path):
+    media_root = tmp_path / "media"
+    initialize_storage(media_root)
+
+    with pytest.raises(StorageError):
+        resolve_media_path(media_root, "../outside.txt")
+
+
+def test_generate_original_relative_path_uses_backend_generated_name():
+    relative_path = generate_original_relative_path("../client-name.JPG")
+
+    assert relative_path.startswith("originals/")
+    assert "client-name" not in relative_path
+    assert relative_path.endswith(".jpg")

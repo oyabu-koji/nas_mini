@@ -4,7 +4,12 @@ import time
 from app.core.settings import SettingsError, load_settings
 from app.db.connection import connect
 from app.db.migrations import run_migrations
-from app.repositories.jobs import claim_next_job, fail_unsupported_job, recover_expired_jobs
+from app.repositories.jobs import (
+    SUPPORTED_JOB_TYPES,
+    claim_next_job,
+    fail_unsupported_job,
+    recover_expired_jobs,
+)
 from app.services.storage import initialize_storage
 
 
@@ -19,7 +24,7 @@ def run_once() -> bool:
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         run_migrations(conn)
         recover_expired_jobs(conn)
-        job = claim_next_job(conn, settings.job_lease_seconds)
+        job = claim_next_job(conn, settings.job_lease_seconds, SUPPORTED_JOB_TYPES)
         if job is None:
             return False
         fail_unsupported_job(conn, job)

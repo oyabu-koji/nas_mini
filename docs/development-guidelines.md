@@ -78,6 +78,7 @@
 - jobはSQLiteへ永続化する。
 - Phase 1は単一worker、SQLite WAL mode、`busy_timeout = 5000ms`を使う。
 - workerはSQLite transactionでjobをatomic claimする。
+- workerは処理可能なjob typeだけをclaimし、processor未実装のjobを通常処理でfailedへ落とさない。
 - `claimed_at`と`lease_expires_at`で異常終了後のjobを回収する。
 - Docker worker serviceは`restart: unless-stopped`で再起動する。
 - job種別は`preview`, `lut_preview`から始め、将来AI jobを追加する。

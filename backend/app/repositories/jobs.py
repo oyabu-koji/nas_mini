@@ -1,6 +1,6 @@
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Iterable
 
 
 SUPPORTED_JOB_TYPES: set[str] = set()
@@ -12,6 +12,29 @@ def utc_now() -> datetime:
 
 def isoformat(value: datetime) -> str:
     return value.isoformat(timespec="seconds")
+
+
+def insert_job(
+    conn: sqlite3.Connection,
+    *,
+    job_type: str,
+    asset_id: int,
+    payload_json: str,
+) -> dict[str, Any]:
+    cursor = conn.execute(
+        """
+        INSERT INTO jobs (job_type, status, asset_id, payload_json)
+        VALUES (?, 'queued', ?, ?)
+        """,
+        (job_type, asset_id, payload_json),
+    )
+    row = conn.execute(
+        "SELECT * FROM jobs WHERE id = ?",
+        (cursor.lastrowid,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("inserted job could not be loaded")
+    return dict(row)
 
 
 def recover_expired_jobs(conn: sqlite3.Connection, now: datetime | None = None) -> int:
@@ -36,26 +59,34 @@ def recover_expired_jobs(conn: sqlite3.Connection, now: datetime | None = None) 
 def claim_next_job(
     conn: sqlite3.Connection,
     lease_seconds: int,
+    supported_job_types: Iterable[str],
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
+    supported_types = tuple(sorted(set(supported_job_types)))
+    if not supported_types:
+        return None
+
     claimed_at = now or utc_now()
     lease_expires_at = claimed_at + timedelta(seconds=lease_seconds)
+    placeholders = ", ".join("?" for _ in supported_types)
 
     with conn:
         row = conn.execute(
-            """
+            f"""
             SELECT *
             FROM jobs
             WHERE status = 'queued'
+              AND job_type IN ({placeholders})
             ORDER BY created_at ASC, id ASC
             LIMIT 1
-            """
+            """,
+            supported_types,
         ).fetchone()
         if row is None:
             return None
 
         cursor = conn.execute(
-            """
+            f"""
             UPDATE jobs
             SET status = 'running',
                 claimed_at = ?,
@@ -63,8 +94,14 @@ def claim_next_job(
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
               AND status = 'queued'
+              AND job_type IN ({placeholders})
             """,
-            (isoformat(claimed_at), isoformat(lease_expires_at), row["id"]),
+            (
+                isoformat(claimed_at),
+                isoformat(lease_expires_at),
+                row["id"],
+                *supported_types,
+            ),
         )
         if cursor.rowcount != 1:
             return None
