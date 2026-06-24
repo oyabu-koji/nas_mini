@@ -61,7 +61,7 @@ graph LR
 1. preview jobを`queued`から`running`にする。
 2. ffmpegはoriginalを読み取り入力としてpreviewを生成する。
 3. 通常動画はH.264 MP4、音声があればAAC、1080p上限で生成する。
-4. LOG指定素材はRec.709変換用LUTを適用する。
+4. LOG指定素材は`backend/assets/lut/rec709.cube`を既定とするRec.709変換用LUTを適用する。
 5. 写真はJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映で生成する。
 6. 成功時は`derived_files`を記録し、`preview_status = preview_ready`とする。
 7. 失敗時はjobと`preview_status`を`failed`にし、errorを記録する。
@@ -157,7 +157,7 @@ stateDiagram-v2
 | `104857600 bytes`超過 | `413` | Phase 2対象と表示する |
 | 外部SSD未接続 | 保存開始前に失敗 | retry可能として表示する |
 | 容量不足 | 保存失敗、error記録 | retry前に環境確認を促す |
-| ffmpeg失敗 | jobとpreview statusを`failed` | preview生成失敗を表示する |
+| ffmpeg失敗 | jobと`preview_status`を`failed` | preview生成失敗を表示する |
 | metadata欠落 | nullで保存 | uploadを妨げない |
 
 ## Phase 2設計前提

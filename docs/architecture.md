@@ -70,7 +70,7 @@ graph LR
 
 - originalを改変しない。
 - H.264 MP4、AAC音声、1080p上限でpreviewを生成する。
-- LOG素材には設定済みRec.709 LUTを適用する。
+- LOG素材には`backend/assets/lut/rec709.cube`を既定とするRec.709 LUTを適用する。
 - 写真はJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映でpreviewを生成する。
 - Phase 1でHEIC、JPEG、PNG入力の検証fixtureを用意し、Docker内ffmpeg buildのcodec対応を確認する。
 - stdout/stderrを安全に扱い、機密値をログへ含めない。
@@ -133,6 +133,7 @@ ${MEDIA_ROOT}/
 - Mac miniではDockerを正規実行環境とする。
 - Node 24、Python、ffmpegのバージョンはDocker側で固定する。
 - Backend Python依存は`uv.lock`を使ってDocker内で再現可能にinstallする。
+- Backend imageへ`backend/assets/`をcopyし、workerが`/app/assets/lut/rec709.cube`を読めるようにする。
 - ローカル`node_modules`をDockerへコピーしない。
 - 外部SSDはcontainerへvolume mountし、container内の`MEDIA_ROOT`へ割り当てる。
 - host上の`/Volumes/MediaVault`などのパス差分はcompose環境変数で吸収する。
@@ -157,5 +158,4 @@ ${MEDIA_ROOT}/
 ## Open Questions
 
 - Docker Composeの具体構成とMac miniのSSD mount path。
-- Rec.709 LUTファイルとpreview bitrate。
 - HTTP/HTTPSと将来のLAN discovery。

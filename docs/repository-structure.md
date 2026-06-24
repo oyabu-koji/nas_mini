@@ -16,7 +16,7 @@ project-root/
 ├── app.json
 ├── package.json
 ├── assets/
-│   └── lut/
+│   └── ...
 ├── src/
 │   ├── app/
 │   │   ├── navigation/
@@ -46,6 +46,8 @@ project-root/
 │   │   ├── schemas/
 │   │   ├── services/
 │   │   └── workers/
+│   ├── assets/
+│   │   └── lut/
 │   ├── tests/
 │   ├── pyproject.toml
 │   ├── uv.lock
@@ -123,6 +125,12 @@ project-root/
 - preview job実行。
 - SQLite transactionによるatomic claim、lease、期限切れjob回収を担当する。
 - Phase 3+でAI jobを追加する。
+
+### `backend/assets/lut/`
+
+- Backend workerがLOG preview生成時に使うLUT fileを置く。
+- Phase 1の既定LUTは`backend/assets/lut/rec709.cube`とする。
+- Docker image内では`/app/assets/lut/rec709.cube`として参照する。
 
 ### `backend/pyproject.toml`, `backend/uv.lock`
 
