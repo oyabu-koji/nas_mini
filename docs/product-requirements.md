@@ -10,6 +10,7 @@
 
 - originalファイルを改変せず、外部SSDへ保管する。
 - ファイル完全性と内容確認を別の状態として扱う。
+- Mac mini側previewで保存内容を確認した後、ユーザーの明示操作でiPhone側originalを削除できるようにする。
 - Phase 1で操作体験を検証し、Phase 2で大容量ProRes/LOG動画の安全転送を実現する。
 
 ### 対象ユーザー
@@ -27,10 +28,11 @@
 ## 不変条件
 
 - originalファイルは改変しない。
-- iPhone内の素材を自動削除しない。
+- iPhone内の素材を自動削除しない。削除はpreview確認後にユーザーが明示実行する場合のみ許可する。
+- Backend側original削除とiPhone側original削除を混同しない。Backend側originalは保持する。
 - 保存先ルートは環境変数 `MEDIA_ROOT` で指定し、ハードコードしない。
 - Phase 1では `safe_to_delete_candidate` を本番運用しない。
-- Phase 2以降でも、安全条件をすべて満たす場合のみ削除候補にする。実削除は自動化しない。
+- Phase 2以降でも、安全条件をすべて満たす場合のみ削除候補にする。iPhone側original削除も自動化しない。
 
 ## Phase 1 MVP
 
@@ -50,6 +52,7 @@
 - LOG指定素材ではRec.709変換用LUTを適用する。
 - 写真previewはJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映で生成する。
 - iPhoneアプリでpreviewを再生し、`review_status = preview_confirmed` に更新する。
+- preview確認後、ユーザー明示操作によるiPhone側original削除導線を提供する。
 - Backend URLと固定APIトークンをSettingsから設定する。
 
 ### Phase 1対象外
@@ -57,7 +60,9 @@
 - `104857600 bytes`を超える素材の本番退避。
 - chunk upload、resume upload、chunk hash verification。
 - end-to-end hash verification。
-- 安全削除候補の本番運用とiPhone内素材の削除。
+- 安全削除候補の本番運用。
+- iPhone側originalの自動削除。
+- Backend側original削除。
 - AI解析、original再ダウンロード、外部SSD管理UI。
 
 ## Phase 2 必須拡張
@@ -107,6 +112,19 @@
 - 写真previewはJPEG、長辺2048px上限、EXIF orientation反映で生成できる。
 - 確認後に`review_status = preview_confirmed`となる。
 
+### P0: preview確認後のiPhone側original手動削除
+
+ユーザーとして、Mac mini側に保存された軽量previewを確認した後、iPhone容量を空けるためにiPhone側originalを自分の操作で削除したい。
+
+**受け入れ条件**
+
+- `preview_status = preview_ready`かつ`review_status = preview_confirmed`のassetだけ削除操作を表示する。
+- 削除前に対象asset、filename、撮影日時など確認に必要な情報を表示する。
+- 削除はユーザーの明示確認後に、iPhone写真ライブラリ上のlocal asset identifierを使って実行する。
+- 削除操作はiPhone側originalだけを対象とし、Backend側originalやderived fileは削除しない。
+- 権限拒否、ユーザーキャンセル、local asset不在の場合は失敗または未実行として表示し、Backend側statusを壊さない。
+- Phase 1の手動削除は`safe_to_delete_candidate`を必須条件にしない。Phase 2以降の削除候補判定は、より強いhash verification条件として扱う。
+
 ### P0: LAN内アクセス制御
 
 ユーザーとして、LAN内の別端末から無制限に閲覧・uploadされないよう、backendへのアクセスを制限したい。
@@ -128,6 +146,7 @@
 | `preview_status` | `not_started`, `preview_generating`, `preview_ready`, `failed` | 継続利用 |
 | `review_status` | `not_reviewed`, `preview_confirmed` | 継続利用 |
 | `delete_candidate_status` | `not_candidate` | `safe_to_delete_candidate` |
+| `local_delete_status` | `not_deleted`, `delete_requested`, `deleted`, `failed` | 継続利用 |
 
 ## 非機能要件
 
@@ -136,6 +155,7 @@
 - originalはderived fileと別ディレクトリへ保存する。
 - original保存後のpreview生成はoriginalを読み取り専用入力として扱う。
 - Phase 1ではSHA256をサーバー側で計算・記録するが、end-to-end検証済みとは表示しない。
+- iPhone側original削除はpreview確認後のユーザー操作に限定し、バックグラウンドで自動実行しない。
 - 外部SSD未接続、容量不足、ffmpeg失敗をエラーとして記録する。
 
 ### セキュリティ
@@ -152,10 +172,10 @@
 
 ## 未決事項
 
-- Phase 1で利用する具体的なRec.709 LUTファイル。
 - preview bitrate。
-- Docker内でPhase 1単一workerをsupervise/restartする方法。
-- iPhoneからMac miniへのBackend URL設定方法と将来のLAN discovery。
+- Phase 1既定LUT `backend/assets/lut/rec709.cube` の将来的な差し替え方法。
+- Docker Compose上のworker service詳細設定。
+- 将来のLAN discovery。
 - `expo-media-library` で取得可能なEXIF/location項目。
-- thumbnail生成をPhase 1に含めるか。
+- thumbnail/proxy生成はPhase 1では本番対象外とし、将来候補として扱う。
 - ffmpeg失敗時のretry回数。

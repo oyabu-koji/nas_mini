@@ -4,6 +4,8 @@
 
 - originalを改変しない。
 - 自動削除を実装しない。
+- iPhone側original削除は、Mac mini側preview確認後のユーザー明示操作に限る。
+- Backend側original削除とiPhone側original削除を混同しない。
 - Phase 1 SHA256記録、Phase 2 hash検証、preview内容確認を混同しない。
 - 保存先ルートは`MEDIA_ROOT`から解決する。
 - Mobile、Backend、workerの責務を分離する。
@@ -51,7 +53,11 @@
 - metadata欠落をエラーにせずnullableとして扱う。
 - Phase 1では`104857600 bytes`超過をupload開始前に案内する。
 - Backend URLは通常設定保存領域、固定APIトークンは`expo-secure-store`へ保存する。
-- original削除操作を実装しない。
+- iPhone側original削除は自動実行しない。
+- iPhone側original削除操作は、`preview_status = preview_ready`かつ`review_status = preview_confirmed`のassetにだけ表示する。
+- 削除前に対象asset、filename、撮影日時などを表示し、ユーザーの明示確認を必須にする。
+- iPhone側original削除は`expo-media-library` service経由で実行し、screenから端末APIを直接呼ばない。
+- Backend側originalやderived fileをMobileの削除操作で削除しない。
 
 ## Backend実装ルール
 
@@ -71,6 +77,7 @@
 - `preview_status`: preview生成状態のみ。
 - `review_status`: ユーザー確認状態のみ。
 - `delete_candidate_status`: 安全削除候補状態のみ。
+- `local_delete_status`: Mobile側local stateとして、iPhone側original手動削除状態のみ。Backend asset statusではない。
 - 単一status列へ再統合しない。
 
 ## Jobルール
@@ -91,7 +98,8 @@
 
 - unit test: status表示変換、`104857600 bytes`制限、metadata nullable処理。
 - component test: Settings、Asset Picker、Upload Queue、Preview Review。
-- 実機確認: Development Buildで権限許可/拒否、iCloud-only素材、metadata欠落、ライブラリアクセス、LAN通信、preview再生。
+- unit/component test: iPhone側original削除導線がpreview確認後だけ表示されること。
+- 実機確認: Development Buildで権限許可/拒否、iCloud-only素材、metadata欠落、ライブラリアクセス、LAN通信、preview再生、削除キャンセルを確認する。
 
 ### Backend
 
@@ -131,7 +139,7 @@ uv run pytest
 ## Definition of Done
 
 - 受け入れ条件を満たす。
-- original非改変、自動削除禁止、Token必須を確認する。
+- Backend側original非改変、自動削除禁止、手動削除はpreview確認後のみ、Token必須を確認する。
 - lint/test/起動確認または未実行理由を記録する。
 - `docs/`と`.steering/`を必要に応じて更新する。
 - 実装後に`validate-implementation`を実行する。

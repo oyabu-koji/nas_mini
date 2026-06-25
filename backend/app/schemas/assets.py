@@ -52,6 +52,47 @@ class AssetResponse(BaseModel):
         return value
 
 
+class PreviewMetadataResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    kind: str
+    mime_type: str | None
+    size_bytes: int | None
+    url: str
+    created_at: str
+
+
+class AssetReadResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type: str
+    filename: str
+    size_bytes: int
+    server_sha256: str
+    taken_at: str | None
+    latitude: float | None
+    longitude: float | None
+    exif_json: Any | None
+    is_log: bool
+    transfer_status: str
+    verification_status: str
+    preview_status: str
+    review_status: str
+    delete_candidate_status: str
+    created_at: str
+    updated_at: str
+    preview: PreviewMetadataResponse | None
+
+
+class AssetListResponse(BaseModel):
+    items: list[AssetReadResponse]
+    limit: int
+    offset: int
+    total: int
+
+
 class JobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

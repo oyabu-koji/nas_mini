@@ -8,6 +8,7 @@ PREVIEW_STATUS_PREVIEW_GENERATING = "preview_generating"
 PREVIEW_STATUS_PREVIEW_READY = "preview_ready"
 PREVIEW_STATUS_FAILED = "failed"
 REVIEW_STATUS_NOT_REVIEWED = "not_reviewed"
+REVIEW_STATUS_PREVIEW_CONFIRMED = "preview_confirmed"
 DELETE_CANDIDATE_STATUS_NOT_CANDIDATE = "not_candidate"
 
 
@@ -78,6 +79,29 @@ def get_asset(conn: sqlite3.Connection, asset_id: int) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+def list_assets(
+    conn: sqlite3.Connection,
+    *,
+    limit: int,
+    offset: int,
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM assets
+        ORDER BY created_at DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        (limit, offset),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_assets(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) AS count FROM assets").fetchone()
+    return int(row["count"])
+
+
 def update_preview_status(
     conn: sqlite3.Connection,
     asset_id: int,
@@ -95,3 +119,25 @@ def update_preview_status(
         """,
         (preview_status, asset_id),
     )
+
+
+def update_review_status(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    review_status: str,
+) -> dict[str, Any] | None:
+    if review_status != REVIEW_STATUS_PREVIEW_CONFIRMED:
+        raise ValueError("unsupported review status")
+
+    with conn:
+        conn.execute(
+            """
+            UPDATE assets
+            SET review_status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (review_status, asset_id),
+        )
+        row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    return dict(row) if row is not None else None

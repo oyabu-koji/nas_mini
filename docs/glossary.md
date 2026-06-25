@@ -22,6 +22,10 @@ originalから生成した別ファイル。`preview`, `thumbnail`, `proxy`, `lu
 
 将来、iPhone側originalの削除候補として提示可能な状態。自動削除を意味しない。Phase 1では本番運用しない。
 
+### iPhone側original手動削除
+
+Mac mini側previewを確認した後、ユーザーが明示操作してiPhone写真ライブラリ上のoriginalを削除すること。Backend側originalやderived fileを削除する操作ではない。
+
 ## 技術用語
 
 ### MEDIA_ROOT
@@ -44,11 +48,19 @@ LOG指定素材のpreviewを確認しやすい色へ変換するためのLook-Up
 
 Expo Goでは足りない実運用向け権限や動作を検証するためのアプリbuild。Apple Developer Programを前提とする。
 
+### local asset identifier
+
+`expo-media-library`が扱うiPhone写真ライブラリ上の素材識別子。iPhone側original手動削除に使う。Backend側保存pathやasset idとは別物として扱う。
+
 ## エンティティ
 
 ### asset
 
 originalと関連metadata、分離statusを表す。
+
+### mobile local asset mapping
+
+backend asset idと`local asset identifier`をMobile側で紐づけるlocal state。iPhone側original手動削除の状態管理に使う。
 
 ### derived_files
 
@@ -127,7 +139,18 @@ Phase 2で導入する個別chunkとhash照合結果。
 | 値 | 意味 |
 |----|------|
 | `not_candidate` | 削除候補ではない |
-| `safe_to_delete_candidate` | Phase 2以降で安全条件を満たした削除候補。自動削除ではない |
+| `safe_to_delete_candidate` | Phase 2以降で安全条件を満たした削除候補。ユーザー明示操作の候補であり、自動削除ではない |
+
+### local_delete_status
+
+Mobile側で管理するiPhone側original手動削除の状態。Backend側asset statusではない。
+
+| 値 | 意味 |
+|----|------|
+| `not_deleted` | iPhone側originalが未削除 |
+| `delete_requested` | ユーザーが削除を要求し、端末側処理中 |
+| `deleted` | iPhone側originalの削除が完了 |
+| `failed` | 権限拒否、キャンセル、local asset不在などで削除未完了 |
 
 ### job status
 

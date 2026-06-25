@@ -4,6 +4,7 @@
 
 - Phase 1 MVP: `104857600 bytes`以下の素材を通常uploadし、Mac mini側でSHA256記録、preview生成、iPhone側で内容確認する。
 - 対象外: chunk/resume、end-to-end hash verification、自動削除、AI解析。
+- preview確認後のiPhone側original削除は、ユーザー明示操作だけを許可する。Backend側original削除は対象外とする。
 - 将来必須: Phase 2で大容量素材向け安全転送と削除候補判定を追加する。
 
 ## システム構成
@@ -12,6 +13,7 @@
 graph LR
     User[iPhoneユーザー]
     Mobile[Expo React Native App]
+    Photos[iPhone Photos Library]
     API[FastAPI Backend]
     DB[(SQLite)]
     Jobs[Job Service]
@@ -19,6 +21,7 @@ graph LR
     SSD[External SSD MEDIA_ROOT]
 
     User --> Mobile
+    Mobile --> Photos
     Mobile -->|Authorization token| API
     API --> DB
     API --> SSD
@@ -34,7 +37,7 @@ graph LR
 | Asset Picker | 写真・動画選択、メタデータ確認、LOG指定 | 選択、LOG toggle、upload開始 |
 | Upload Queue | 進捗と失敗状態の確認 | 進捗確認、失敗時再試行 |
 | Asset Detail | 素材と処理状態の確認 | SHA256、各status、preview導線確認 |
-| Preview Review | preview再生と内容確認 | 再生、確認済みにする |
+| Preview Review | preview再生、内容確認、iPhone側original削除導線 | 再生、確認済みにする、手動削除 |
 | Settings | backend接続情報設定 | Backend URL、固定APIトークン保存 |
 
 ## Phase 1 ユースケース
@@ -73,6 +76,15 @@ graph LR
 3. ユーザーが確認操作を行う。
 4. アプリは`POST /assets/{asset_id}/preview-confirmation`を呼ぶ。
 5. backendは`review_status = preview_confirmed`にする。
+
+### UC-05: preview確認後のiPhone側original手動削除
+
+1. アプリはasset詳細とpreview状態を取得する。
+2. `preview_status = preview_ready`かつ`review_status = preview_confirmed`の場合だけ削除操作を表示する。
+3. アプリは対象asset、filename、撮影日時などを表示し、ユーザーの明示確認を求める。
+4. アプリはupload時に保持したiPhone写真ライブラリのlocal asset identifierを使い、`expo-media-library` service経由で削除を要求する。
+5. iOS側確認、権限拒否、ユーザーキャンセル、local asset不在をそれぞれ扱う。
+6. 成功時はMobile側のlocal状態を`deleted`にする。Backend側original、derived file、asset statusは削除しない。
 
 ## API設計
 
@@ -115,6 +127,17 @@ graph LR
 | `is_log` | ユーザー指定LOGフラグ |
 | status fields | 転送、検証、preview、確認、削除候補を分離 |
 
+### mobile local asset mapping
+
+iPhone写真ライブラリ上の素材とbackend assetを紐づけるMobile側local state。Backend DBにはiPhone内ファイルを削除するための権限やpathを持たせない。
+
+| Field | 説明 |
+|-------|------|
+| `backend_asset_id` | upload後のasset識別子 |
+| `local_asset_identifier` | `expo-media-library`から得るiPhone写真ライブラリ上の識別子 |
+| `local_delete_status` | `not_deleted`, `delete_requested`, `deleted`, `failed` |
+| `last_delete_error` | 権限拒否、キャンセル、local asset不在などの表示用分類 |
+
 ### derived_files
 
 assetから生成した`preview`, `thumbnail`, `proxy`, `lut_preview`を記録する。originalとは別ファイルとして管理する。
@@ -125,6 +148,8 @@ preview生成と将来解析を共通のjob方式で記録する。Phase 1では
 
 ## 状態遷移
 
+### transfer_status
+
 ```mermaid
 stateDiagram-v2
     [*] --> local_only
@@ -132,6 +157,8 @@ stateDiagram-v2
     uploading --> uploaded
     uploading --> failed
 ```
+
+### verification_status
 
 ```mermaid
 stateDiagram-v2
@@ -141,12 +168,40 @@ stateDiagram-v2
     not_started --> failed
 ```
 
+### preview_status
+
 ```mermaid
 stateDiagram-v2
     [*] --> not_started
     not_started --> preview_generating
     preview_generating --> preview_ready
     preview_generating --> failed
+```
+
+### review_status
+
+```mermaid
+stateDiagram-v2
+    [*] --> not_reviewed
+    not_reviewed --> preview_confirmed
+```
+
+### delete_candidate_status
+
+```mermaid
+stateDiagram-v2
+    [*] --> not_candidate
+    not_candidate --> safe_to_delete_candidate: Phase 2+
+```
+
+### local_delete_status
+
+```mermaid
+stateDiagram-v2
+    [*] --> not_deleted
+    not_deleted --> delete_requested
+    delete_requested --> deleted
+    delete_requested --> failed
 ```
 
 ## エラーハンドリング
@@ -159,6 +214,9 @@ stateDiagram-v2
 | 容量不足 | 保存失敗、error記録 | retry前に環境確認を促す |
 | ffmpeg失敗 | jobと`preview_status`を`failed` | preview生成失敗を表示する |
 | metadata欠落 | nullで保存 | uploadを妨げない |
+| iPhone側削除権限拒否 | 変更なし | 削除未実行として表示する |
+| iPhone側削除キャンセル | 変更なし | 削除未実行として表示する |
+| local asset不在 | 変更なし | 端末内で見つからない素材として表示する |
 
 ## Phase 2設計前提
 
@@ -168,7 +226,8 @@ stateDiagram-v2
 - 結合後にMac mini側`server_sha256`を計算し、期待値と一致した場合のみ`file_verified`にする。
 - `upload_sessions.status = completed`、全`upload_chunks.status = verified`、assetの`file_verified`, `preview_ready`, `preview_confirmed`を満たす場合のみ削除候補とする。
 - 必須条件をすべて満たす場合のみ`safe_to_delete_candidate`にする。
-- 実削除は自動化しない。
+- `safe_to_delete_candidate`は削除操作の自動実行ではなく、ユーザーへ削除候補として提示できる状態を表す。
+- 実削除はPhase 2以降も自動化しない。
 
 ## Phase 1 Worker契約
 
@@ -187,4 +246,6 @@ stateDiagram-v2
 - metadata欠落を許容する。
 - LOG指定時だけRec.709 LUT previewを生成する。
 - preview確認が`review_status`だけを更新する。
+- iPhone側original削除操作がpreview確認後にだけ表示される。
+- 削除権限拒否、ユーザーキャンセル、local asset不在でBackend側statusが変わらない。
 - iCloud-only素材、ライブラリ権限拒否、metadata欠落をDevelopment Build実機で確認する。

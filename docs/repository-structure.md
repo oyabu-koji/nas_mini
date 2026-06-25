@@ -76,6 +76,7 @@ project-root/
 
 - 画面状態、非同期処理、状態遷移を調停する。
 - API client、platform serviceを呼び出す。
+- preview確認後のiPhone側original手動削除は、screenではなくhookで条件判定し、shared serviceへ委譲する。
 
 ### `src/features/[feature]/components/`
 
@@ -91,6 +92,13 @@ project-root/
 
 - `expo-media-library`、通常設定保存、`expo-secure-store`など端末依存処理を集約する。
 - Backend URLは通常設定保存領域、固定APIトークンはPhase 1から`expo-secure-store`へ保存する。
+- 写真ライブラリ選択、metadata取得、local asset identifier保持、iPhone側original手動削除要求は`mediaLibraryService.js`へ閉じ込める。
+
+### `src/features/preview-review/`
+
+- preview再生、内容確認、確認済み更新を担当する。
+- `preview_status = preview_ready`かつ`review_status = preview_confirmed`のassetだけ、iPhone側original手動削除導線を表示する。
+- Backend側original削除APIを呼ばない。
 
 ## Backend構造
 
@@ -178,6 +186,8 @@ backend workers -> services -> repositories -> db
 - Backend routeからffmpegを直接呼ぶ。
 - クライアント由来pathを保存先に使う。
 - repository内へoriginalやpreviewを保存する。
+- iPhone側original削除を自動実行する。
+- iPhone側original削除とBackend側original削除を同じservice/APIで扱う。
 
 ## Docker配置方針
 

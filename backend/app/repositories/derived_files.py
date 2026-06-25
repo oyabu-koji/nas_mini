@@ -12,7 +12,7 @@ def get_preview_for_asset(conn: sqlite3.Connection, asset_id: int) -> dict[str, 
         FROM derived_files
         WHERE asset_id = ?
           AND kind = ?
-        ORDER BY created_at ASC, id ASC
+        ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
         (asset_id, DERIVED_KIND_PREVIEW),
