@@ -12,6 +12,7 @@ class Settings:
     media_root: Path
     api_token: str
     database_path: Path
+    lut_path: Path = Path("/app/assets/lut/rec709.cube")
     sqlite_busy_timeout_ms: int = 5000
     job_lease_seconds: int = 300
 
@@ -25,6 +26,7 @@ def load_settings() -> Settings:
         media_root=media_root,
         api_token=api_token,
         database_path=database_path,
+        lut_path=Path(os.environ.get("LUT_PATH", "/app/assets/lut/rec709.cube")),
         sqlite_busy_timeout_ms=_positive_int("SQLITE_BUSY_TIMEOUT_MS", 5000),
         job_lease_seconds=_positive_int("JOB_LEASE_SECONDS", 300),
     )

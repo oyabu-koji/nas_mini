@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 
-SUPPORTED_JOB_TYPES: set[str] = set()
+SUPPORTED_JOB_TYPES: set[str] = {"preview", "lut_preview"}
+MAX_ERROR_MESSAGE_LENGTH = 200
 
 
 def utc_now() -> datetime:
@@ -116,6 +117,7 @@ def mark_job_failed(
     job_id: int,
     error_message: str,
 ) -> None:
+    sanitized_error = error_message[:MAX_ERROR_MESSAGE_LENGTH]
     with conn:
         conn.execute(
             """
@@ -125,7 +127,21 @@ def mark_job_failed(
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (error_message, job_id),
+            (sanitized_error, job_id),
+        )
+
+
+def mark_job_done(conn: sqlite3.Connection, job_id: int) -> None:
+    with conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'done',
+                error_message = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (job_id,),
         )
 
 

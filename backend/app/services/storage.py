@@ -40,10 +40,18 @@ def generate_tmp_upload_path(media_root: Path) -> Path:
     return resolve_media_path(media_root, f"tmp/{uuid4().hex}.upload")
 
 
+def generate_tmp_preview_path(media_root: Path, extension: str) -> Path:
+    return resolve_media_path(media_root, f"tmp/{uuid4().hex}{_normalize_extension(extension)}")
+
+
 def generate_original_relative_path(filename: str) -> str:
     extension = _safe_extension(filename)
     generated_name = f"{uuid4().hex}{extension}"
     return f"originals/{generated_name}"
+
+
+def generate_preview_relative_path(extension: str) -> str:
+    return f"previews/{uuid4().hex}{_normalize_extension(extension)}"
 
 
 def resolve_media_path(media_root: Path, relative_path: str) -> Path:
@@ -67,3 +75,12 @@ def _safe_extension(filename: str) -> str:
     if not extension.isalnum():
         return ""
     return suffix
+
+
+def _normalize_extension(extension: str) -> str:
+    if not extension.startswith("."):
+        extension = f".{extension}"
+    normalized = extension.lower()
+    if normalized not in {".mp4", ".jpg"}:
+        raise StorageError("unsupported preview extension")
+    return normalized

@@ -3,6 +3,7 @@ from datetime import timedelta
 from app.db.connection import connect
 from app.db.migrations import run_migrations
 from app.repositories.jobs import (
+    SUPPORTED_JOB_TYPES,
     claim_next_job,
     fail_unsupported_job,
     isoformat,
@@ -94,6 +95,10 @@ def test_claim_next_job_claims_only_supported_job_types(tmp_path):
     assert job["status"] == "running"
 
 
+def test_supported_job_types_include_preview_processors():
+    assert SUPPORTED_JOB_TYPES == {"preview", "lut_preview"}
+
+
 def test_worker_leaves_unsupported_job_queued(monkeypatch, tmp_path):
     media_root = tmp_path / "media"
     database_path = tmp_path / "db.sqlite3"
@@ -115,6 +120,61 @@ def test_worker_leaves_unsupported_job_queued(monkeypatch, tmp_path):
     assert processed is False
     assert row["status"] == "queued"
     assert row["error_message"] is None
+
+
+def test_worker_claims_preview_job_and_delegates(monkeypatch, tmp_path):
+    media_root = tmp_path / "media"
+    database_path = tmp_path / "db.sqlite3"
+    claimed_jobs = []
+    monkeypatch.setenv("MEDIA_ROOT", str(media_root))
+    monkeypatch.setenv("API_TOKEN", "secret-token")
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+
+    def record_preview_job(*, settings, job):
+        claimed_jobs.append(job)
+        return True
+
+    monkeypatch.setattr("app.workers.worker.process_preview_job", record_preview_job)
+
+    with connect(database_path, 5000) as conn:
+        run_migrations(conn)
+        conn.execute(
+            "INSERT INTO jobs (job_type, status) VALUES ('preview', 'queued')"
+        )
+
+    processed = run_once()
+
+    assert processed is True
+    assert claimed_jobs[0]["job_type"] == "preview"
+    with connect(database_path, 5000) as conn:
+        row = conn.execute("SELECT * FROM jobs").fetchone()
+    assert row["status"] == "running"
+
+
+def test_worker_claims_lut_preview_job_and_delegates(monkeypatch, tmp_path):
+    media_root = tmp_path / "media"
+    database_path = tmp_path / "db.sqlite3"
+    claimed_jobs = []
+    monkeypatch.setenv("MEDIA_ROOT", str(media_root))
+    monkeypatch.setenv("API_TOKEN", "secret-token")
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+
+    def record_preview_job(*, settings, job):
+        claimed_jobs.append(job)
+        return True
+
+    monkeypatch.setattr("app.workers.worker.process_preview_job", record_preview_job)
+
+    with connect(database_path, 5000) as conn:
+        run_migrations(conn)
+        conn.execute(
+            "INSERT INTO jobs (job_type, status) VALUES ('lut_preview', 'queued')"
+        )
+
+    processed = run_once()
+
+    assert processed is True
+    assert claimed_jobs[0]["job_type"] == "lut_preview"
 
 
 def test_explicit_unsupported_job_failure_helper_marks_claimed_job_failed(tmp_path):

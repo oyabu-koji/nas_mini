@@ -7,9 +7,9 @@ from app.db.migrations import run_migrations
 from app.repositories.jobs import (
     SUPPORTED_JOB_TYPES,
     claim_next_job,
-    fail_unsupported_job,
     recover_expired_jobs,
 )
+from app.services.preview import process_preview_job
 from app.services.storage import initialize_storage
 
 
@@ -27,8 +27,7 @@ def run_once() -> bool:
         job = claim_next_job(conn, settings.job_lease_seconds, SUPPORTED_JOB_TYPES)
         if job is None:
             return False
-        fail_unsupported_job(conn, job)
-        return True
+    return process_preview_job(settings=settings, job=job)
 
 
 def run_forever() -> None:

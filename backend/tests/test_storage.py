@@ -6,6 +6,8 @@ from app.services.storage import (
     REQUIRED_DIRECTORIES,
     StorageError,
     generate_original_relative_path,
+    generate_preview_relative_path,
+    generate_tmp_preview_path,
     initialize_storage,
     resolve_media_path,
 )
@@ -57,3 +59,25 @@ def test_generate_original_relative_path_uses_backend_generated_name():
     assert relative_path.startswith("originals/")
     assert "client-name" not in relative_path
     assert relative_path.endswith(".jpg")
+
+
+def test_generate_tmp_preview_path_stays_under_tmp(tmp_path):
+    media_root = tmp_path / "media"
+    initialize_storage(media_root)
+
+    preview_path = generate_tmp_preview_path(media_root, ".mp4")
+
+    assert preview_path.parent == media_root / "tmp"
+    assert preview_path.suffix == ".mp4"
+
+
+def test_generate_preview_relative_path_uses_backend_generated_name():
+    relative_path = generate_preview_relative_path("jpg")
+
+    assert relative_path.startswith("previews/")
+    assert relative_path.endswith(".jpg")
+
+
+def test_generate_preview_relative_path_rejects_unsupported_extension():
+    with pytest.raises(StorageError):
+        generate_preview_relative_path(".exe")

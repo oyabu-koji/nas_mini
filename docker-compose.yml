@@ -11,6 +11,7 @@ services:
       DATABASE_PATH: /data/mediavault.sqlite3
       SQLITE_BUSY_TIMEOUT_MS: ${SQLITE_BUSY_TIMEOUT_MS:-5000}
       JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
+      LUT_PATH: ${LUT_PATH:-/app/assets/lut/rec709.cube}
     volumes:
       - ${MEDIA_ROOT_HOST_PATH:-/private/tmp/mediavault-media}:/media_root
       - backend-db:/data
@@ -26,6 +27,7 @@ services:
       DATABASE_PATH: /data/mediavault.sqlite3
       SQLITE_BUSY_TIMEOUT_MS: ${SQLITE_BUSY_TIMEOUT_MS:-5000}
       JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
+      LUT_PATH: ${LUT_PATH:-/app/assets/lut/rec709.cube}
     volumes:
       - ${MEDIA_ROOT_HOST_PATH:-/private/tmp/mediavault-media}:/media_root
       - backend-db:/data

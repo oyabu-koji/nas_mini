@@ -25,6 +25,18 @@ def test_load_settings_defaults(monkeypatch, tmp_path):
 
     assert settings.sqlite_busy_timeout_ms == 5000
     assert settings.job_lease_seconds == 300
+    assert str(settings.lut_path) == "/app/assets/lut/rec709.cube"
+
+
+def test_load_settings_allows_lut_path_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path / "media"))
+    monkeypatch.setenv("API_TOKEN", "secret-token")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "db.sqlite3"))
+    monkeypatch.setenv("LUT_PATH", str(tmp_path / "custom.cube"))
+
+    settings = load_settings()
+
+    assert settings.lut_path == tmp_path / "custom.cube"
 
 
 def test_load_settings_rejects_invalid_numeric_value(monkeypatch, tmp_path):
