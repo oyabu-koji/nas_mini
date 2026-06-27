@@ -127,6 +127,68 @@ cd backend
 uv run pytest
 ```
 
+### Backend ローカル疎通確認
+
+DockerなしでMBA上のbackendを確認する場合は、API serverとworkerを別Terminalで起動する。
+
+API server:
+
+```bash
+cd /Users/oyabu/dev/rep/latest_template/backend
+
+MEDIA_ROOT=/private/tmp/mediavault-local-media \
+API_TOKEN=test-token \
+DATABASE_PATH=/private/tmp/mediavault-local.sqlite3 \
+LUT_PATH=/Users/oyabu/dev/rep/latest_template/backend/assets/lut/rec709.cube \
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+worker:
+
+```bash
+cd /Users/oyabu/dev/rep/latest_template/backend
+
+PATH="/opt/homebrew/bin:$PATH" \
+MEDIA_ROOT=/private/tmp/mediavault-local-media \
+API_TOKEN=test-token \
+DATABASE_PATH=/private/tmp/mediavault-local.sqlite3 \
+LUT_PATH=/Users/oyabu/dev/rep/latest_template/backend/assets/lut/rec709.cube \
+uv run python -m app.workers.worker
+```
+
+Homebrewで入れたffmpegをworkerから見えるようにするため、worker起動時は`PATH="/opt/homebrew/bin:$PATH"`を明示する。
+
+疎通確認:
+
+```bash
+curl -H "Authorization: Bearer test-token" http://127.0.0.1:8000/health
+
+curl -X POST http://127.0.0.1:8000/assets/upload \
+  -H "Authorization: Bearer test-token" \
+  -F "file=@/path/to/sample.mp4" \
+  -F "type=video" \
+  -F "filename=sample.mp4" \
+  -F "is_log=false"
+
+curl -H "Authorization: Bearer test-token" http://127.0.0.1:8000/assets/{asset_id}
+
+curl -H "Authorization: Bearer test-token" \
+  http://127.0.0.1:8000/assets/{asset_id}/preview \
+  -o /private/tmp/preview-check.mp4
+
+curl -X POST \
+  -H "Authorization: Bearer test-token" \
+  http://127.0.0.1:8000/assets/{asset_id}/preview-confirmation
+```
+
+確認観点:
+
+- `/health`が`{"status":"ok"}`を返す。
+- upload responseで`preview_status = preview_generating`、jobが`queued`になる。
+- worker処理後にasset detailで`preview_status = preview_ready`になる。
+- preview取得で`/private/tmp/preview-check.mp4`が作成される。
+- confirmation後に`review_status = preview_confirmed`になる。
+
 実行できないcommandがある場合は、理由を`.steering/[task]/tasklist.md`へ残す。
 
 ## Git運用
