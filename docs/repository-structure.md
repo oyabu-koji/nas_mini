@@ -86,12 +86,14 @@ project-root/
 ### `src/shared/api/`
 
 - Backend URL、Authorizationヘッダー、API response処理を集約する。
+- Backend URLはLAN IP、Tailscale IP、MagicDNS名のprivate endpointを扱う。
 - Tokenをログ出力しない。
 
 ### `src/shared/services/`
 
 - `expo-media-library`、通常設定保存、`expo-secure-store`など端末依存処理を集約する。
 - Backend URLは通常設定保存領域、固定APIトークンはPhase 1から`expo-secure-store`へ保存する。
+- Tailscale接続状態そのものはアプリ内認証として扱わず、固定APIトークンを常に送信する。
 - 写真ライブラリ選択、metadata取得、local asset identifier保持、iPhone側original手動削除要求は`mediaLibraryService.js`へ閉じ込める。
 
 ### `src/features/preview-review/`
@@ -109,7 +111,7 @@ project-root/
 
 ### `backend/app/core/`
 
-- `MEDIA_ROOT`、API token、LUT path、preview設定などの環境設定。
+- `MEDIA_ROOT`、固定APIトークン、LUT path、preview設定などの環境設定。
 
 ### `backend/app/db/`
 
@@ -185,6 +187,8 @@ backend workers -> services -> repositories -> db
 - Mobile screenからExpo APIやHTTP clientを直接呼ぶ。
 - Backend routeからffmpegを直接呼ぶ。
 - クライアント由来pathを保存先に使う。
+- Tailscale接続を理由に固定APIトークン送信や認証処理を省略する。
+- 公開インターネット向けHTTP endpointをPhase 1の接続先にする。
 - repository内へoriginalやpreviewを保存する。
 - iPhone側original削除を自動実行する。
 - iPhone側original削除とBackend側original削除を同じservice/APIで扱う。

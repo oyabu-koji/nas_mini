@@ -5,6 +5,7 @@
 - Phase 1 MVP: `104857600 bytes`以下の素材を通常uploadし、Mac mini側でSHA256記録、preview生成、iPhone側で内容確認する。
 - 対象外: chunk/resume、end-to-end hash verification、自動削除、AI解析。
 - preview確認後のiPhone側original削除は、ユーザー明示操作だけを許可する。Backend側original削除は対象外とする。
+- iPhoneからbackendへのPhase 1接続は、LANまたはTailscale private network上のHTTP endpointと固定APIトークンを使う。
 - 将来必須: Phase 2で大容量素材向け安全転送と削除候補判定を追加する。
 
 ## システム構成
@@ -14,6 +15,7 @@ graph LR
     User[iPhoneユーザー]
     Mobile[Expo React Native App]
     Photos[iPhone Photos Library]
+    Tailnet[Tailscale private network / LAN]
     API[FastAPI Backend]
     DB[(SQLite)]
     Jobs[Job Service]
@@ -22,7 +24,8 @@ graph LR
 
     User --> Mobile
     Mobile --> Photos
-    Mobile -->|Authorization token| API
+    Mobile -->|HTTP + Authorization: Bearer <token>| Tailnet
+    Tailnet --> API
     API --> DB
     API --> SSD
     API --> Jobs
@@ -45,8 +48,10 @@ graph LR
 ### UC-01: 接続設定
 
 1. ユーザーがSettingsでBackend URLと固定APIトークンを入力する。
-2. アプリはBackend URLを通常の設定保存領域、固定APIトークンを`expo-secure-store`へ保存する。
-3. API要求では`Authorization`ヘッダーを付ける。
+2. Backend URLは`http://<tailscale-ip>:8000`または`http://<magicdns-name>:8000`のようなprivate endpointを許容する。
+3. アプリはBackend URLを通常の設定保存領域、固定APIトークンを`expo-secure-store`へ保存する。
+4. API要求では`Authorization`ヘッダーを付ける。
+5. Tailscaleは到達経路であり、固定APIトークン認証は省略しない。
 
 ### UC-02: 素材upload
 
@@ -88,7 +93,7 @@ graph LR
 
 ## API設計
 
-すべてのPhase 1 APIは`Authorization: Bearer <token>`形式の固定APIトークンを要求する。
+すべてのPhase 1 APIは`Authorization: Bearer <token>`形式の固定APIトークンを要求する。Phase 1はLANまたはTailscale private network内のHTTP endpointを許容するが、公開インターネット上のHTTP endpointは対象外とする。
 
 | Method | Path | 用途 |
 |--------|------|------|
@@ -209,6 +214,7 @@ stateDiagram-v2
 | 条件 | backend | mobile |
 |------|---------|--------|
 | Token不正 | `401`または`403` | Settings確認を促す |
+| Backend URL到達不可 | なし | Tailscale接続、URL、backend起動状態を確認する |
 | `104857600 bytes`超過 | `413` | Phase 2対象と表示する |
 | 外部SSD未接続 | 保存開始前に失敗 | retry可能として表示する |
 | 容量不足 | 保存失敗、error記録 | retry前に環境確認を促す |
@@ -248,4 +254,4 @@ stateDiagram-v2
 - preview確認が`review_status`だけを更新する。
 - iPhone側original削除操作がpreview確認後にだけ表示される。
 - 削除権限拒否、ユーザーキャンセル、local asset不在でBackend側statusが変わらない。
-- iCloud-only素材、ライブラリ権限拒否、metadata欠落をDevelopment Build実機で確認する。
+- iCloud-only素材、ライブラリ権限拒否、metadata欠落、Tailscale経由のBackend URL到達をDevelopment Build実機で確認する。

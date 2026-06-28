@@ -49,10 +49,14 @@
 
 - screenからExpo APIやHTTP clientを直接呼ばない。
 - `expo-media-library`など端末APIはserviceに閉じ込める。
-- API tokenをログ出力しない。
+- 固定APIトークンをログ出力しない。
 - metadata欠落をエラーにせずnullableとして扱う。
 - Phase 1では`104857600 bytes`超過をupload開始前に案内する。
 - Backend URLは通常設定保存領域、固定APIトークンは`expo-secure-store`へ保存する。
+- Backend URLはLANまたはTailscale private network上のHTTP endpointを許容する。
+- Tailscale IPまたはMagicDNS名を使う場合も、固定APIトークン認証を必須にする。
+- `127.0.0.1`はiPhone自身を指すため、iPhone実機からMBA/Mac mini backendへ接続するURLとして使わない。
+- 公開インターネット上のHTTP endpointをPhase 1の接続先にしない。
 - iPhone側original削除は自動実行しない。
 - iPhone側original削除操作は、`preview_status = preview_ready`かつ`review_status = preview_confirmed`のassetにだけ表示する。
 - 削除前に対象asset、filename、撮影日時などを表示し、ユーザーの明示確認を必須にする。
@@ -69,6 +73,7 @@
 - 外部SSD未接続、容量不足、I/O失敗を明示的に扱う。
 - `/assets/upload`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`は固定APIトークンを要求する。
 - API要求は`Authorization: Bearer <token>`形式とする。
+- Tailscaleは通信経路であり、backend認証の代替にはしない。
 
 ## Statusルール
 
@@ -90,7 +95,7 @@
 - Docker worker serviceは`restart: unless-stopped`で再起動する。
 - job種別は`preview`, `lut_preview`から始め、将来AI jobを追加する。
 - job失敗時は`error_message`へ運用に必要な情報を保存する。
-- API tokenや不要な個人情報をerror/logへ含めない。
+- 固定APIトークンや不要な個人情報をerror/logへ含めない。
 
 ## テスト戦略
 
@@ -99,7 +104,7 @@
 - unit test: status表示変換、`104857600 bytes`制限、metadata nullable処理。
 - component test: Settings、Asset Picker、Upload Queue、Preview Review。
 - unit/component test: iPhone側original削除導線がpreview確認後だけ表示されること。
-- 実機確認: Development Buildで権限許可/拒否、iCloud-only素材、metadata欠落、ライブラリアクセス、LAN通信、preview再生、削除キャンセルを確認する。
+- 実機確認: Development Buildで権限許可/拒否、iCloud-only素材、metadata欠落、ライブラリアクセス、TailscaleまたはLAN経由の通信、preview再生、削除キャンセルを確認する。
 
 ### Backend
 
@@ -129,7 +134,7 @@ uv run pytest
 
 ### Backend ローカル疎通確認
 
-DockerなしでMBA上のbackendを確認する場合は、API serverとworkerを別Terminalで起動する。
+DockerなしでMBA上のbackendを確認する場合は、API serverとworkerを別Terminalで起動する。MBA自身から確認するだけなら`127.0.0.1`でよい。iPhoneからTailscale経由でMBA backendへ接続する場合は、API serverを`0.0.0.0`で待ち受け、Backend URLにはMBAのTailscale IPまたはMagicDNS名を使う。
 
 API server:
 
@@ -141,6 +146,18 @@ API_TOKEN=test-token \
 DATABASE_PATH=/private/tmp/mediavault-local.sqlite3 \
 LUT_PATH=/Users/oyabu/dev/rep/latest_template/backend/assets/lut/rec709.cube \
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+iPhoneからTailscale経由で確認するAPI server:
+
+```bash
+cd /Users/oyabu/dev/rep/latest_template/backend
+
+MEDIA_ROOT=/private/tmp/mediavault-local-media \
+API_TOKEN=test-token \
+DATABASE_PATH=/private/tmp/mediavault-local.sqlite3 \
+LUT_PATH=/Users/oyabu/dev/rep/latest_template/backend/assets/lut/rec709.cube \
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 worker:
@@ -180,6 +197,8 @@ curl -X POST \
   -H "Authorization: Bearer test-token" \
   http://127.0.0.1:8000/assets/{asset_id}/preview-confirmation
 ```
+
+iPhoneから確認する場合は、`http://127.0.0.1:8000`ではなく`http://<MBAのTailscale IP>:8000`または`http://<MBAのMagicDNS名>:8000`を使う。
 
 確認観点:
 

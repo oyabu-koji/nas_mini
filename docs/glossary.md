@@ -177,4 +177,24 @@ Look-Up Table。LOG previewのRec.709変換に使う。
 
 ### LAN
 
-Local Area Network。Phase 1ではiPhoneからMac mini backendへ接続するネットワーク範囲。
+Local Area Network。Phase 1ではTailscale private networkと並ぶ、iPhoneからbackendへ接続するprivate networkの一つ。
+
+### Tailscale
+
+WireGuardベースのprivate networkを提供するツール。MediaVault Phase 1では、同じLANにいないiPhone、MBA、Mac miniを同じprivate network上で接続するために使う。
+
+### Tailnet
+
+同じTailscale networkに参加している端末群。MediaVaultではiPhone、MBA、Mac miniが同じTailnetに参加する想定。
+
+### Tailscale IP
+
+Tailscaleが端末に割り当てるprivate IP。Phase 1のBackend URLは`http://<tailscale-ip>:8000`を初期疎通確認の推奨形とする。
+
+### MagicDNS
+
+Tailscale上の端末名で到達できる名前解決機能。Phase 1ではBackend URLとして`http://<magicdns-name>:8000`も許容するが、初期疎通確認はTailscale IPを優先する。
+
+### private endpoint
+
+LANまたはTailscale private network内からだけ到達するbackend endpoint。Phase 1ではHTTP private endpointと固定APIトークンを組み合わせる。

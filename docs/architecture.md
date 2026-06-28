@@ -5,6 +5,8 @@
 - Mobile AppはReact Native + Expo managed workflow + JavaScriptで実装する。
 - BackendはFastAPI、DBはSQLite、preview生成はffmpegを使う。
 - Mac mini移行時はDocker内の実行環境を正とする。
+- Phase 1のiPhone-backend通信は、LANまたはTailscale private network上のHTTP endpointと固定APIトークンを使う。
+- 公開インターネットへbackendを直接公開しない。公開運用する場合はPhase 1対象外とし、HTTPSを必須にする。
 - 外部SSDの保存先ルートは`MEDIA_ROOT`で指定する。
 - originalはimmutableとして扱い、derived fileと分離する。
 - Phase 1は`104857600 bytes`以下の通常uploadによるUX検証、Phase 2は大容量安全転送とする。
@@ -15,6 +17,7 @@
 graph LR
     iPhone[iPhone / MediaVault App]
     Photos[iPhone Photos Library]
+    Tailnet[Tailscale private network / LAN]
     API[FastAPI API]
     Worker[Preview Job Worker]
     DB[(SQLite)]
@@ -22,7 +25,8 @@ graph LR
     FFmpeg[ffmpeg]
 
     iPhone --> Photos
-    iPhone -->|LAN HTTPS/HTTP + Token| API
+    iPhone -->|HTTP + Token| Tailnet
+    Tailnet --> API
     API --> DB
     API --> SSD
     API --> Worker
@@ -38,7 +42,8 @@ graph LR
 | Mobile runtime | Node.js 24, Expo SDK 54 | `.nvmrc`とdevcontainerをNode 24で統一 |
 | Mobile UI | React Native, JavaScript | TypeScriptは明示依頼なしに導入しない |
 | Device API | `expo-media-library` | Expo関連依存は`npx expo install`で追加 |
-| Backend | Python, FastAPI | LAN内APIとjob登録を担当 |
+| Backend | Python, FastAPI | private endpoint APIとjob登録を担当 |
+| Private network | Tailscale, LAN | Phase 1のiPhone-backend到達経路 |
 | Backend dependency manager | uv | `pyproject.toml`と`uv.lock`で依存を固定 |
 | DB | SQLite | 個人利用MVPに十分。migration方針は実装時に確定 |
 | Preview | ffmpeg | originalを読み取り入力としてderived fileを生成 |
@@ -51,6 +56,7 @@ graph LR
 
 - 写真・動画選択、nullable metadata取得、LOG指定。
 - Backend URLと固定APIトークンの設定。
+- Tailscale IPまたはMagicDNS名を含むprivate endpoint URLの設定。
 - upload進捗、asset状態、preview表示、確認操作。
 - 自動削除は実行しない。
 - preview確認後にユーザーが明示操作した場合のみ、iPhone写真ライブラリ上のoriginal削除を端末service経由で実行する。
@@ -137,7 +143,11 @@ ${MEDIA_ROOT}/
 - Mobile側のTokenは`expo-secure-store`へ保存する。平文ハードコードは禁止する。
 - クライアント由来のファイルパスを使用しない。
 - Path traversalを防ぐため、保存先パスはbackend側で構成する。
-- LAN内運用でも認証を省略しない。
+- LANまたはTailscale private network内運用でも認証を省略しない。
+- Tailscale private network内のHTTP endpointでも認証を省略しない。
+- Tailscaleは到達経路であり、固定APIトークン認証の代替ではない。
+- Phase 1で許容するHTTPはLANまたはTailscale private network内に限定する。
+- iPhoneから接続するbackendは`127.0.0.1`ではなく、Tailscale IP、MagicDNS名、またはLAN IPで指定する。
 - iPhone側original削除はユーザー確認を必須とし、background jobや自動同期で実行しない。
 
 ## 信頼性
@@ -174,9 +184,10 @@ ${MEDIA_ROOT}/
 
 - Mobile: `npx expo install --check`, `npm run lint`, `npm test`, `npx expo start`
 - Backend: `uv run pytest`を標準のtest commandとし、lintを導入した場合も`uv run ...`で実行する。
-- 実機: Development Buildでライブラリアクセス、LAN通信、preview再生、iPhone側original手動削除の権限/キャンセルを確認する。
+- 実機: Development Buildでライブラリアクセス、TailscaleまたはLAN経由のHTTP通信、preview再生、iPhone側original手動削除の権限/キャンセルを確認する。
 
 ## Open Questions
 
 - Docker Composeの具体構成とMac miniのSSD mount path。
-- HTTP/HTTPSと将来のLAN discovery。
+- HTTP/HTTPSと将来のLAN/Tailscale endpoint discovery。
+- iOS/ExpoでTailscale private endpointのHTTP通信を許可するapp config詳細。

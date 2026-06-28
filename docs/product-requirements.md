@@ -17,7 +17,7 @@
 
 - iPhoneで写真・動画を多く撮影する個人ユーザー。
 - ProRes/LOGなど大容量素材を扱うユーザー。
-- 自宅LAN上のMac miniと外部SSDを保管先にしたいユーザー。
+- LANまたはTailscale private network上のMac miniと外部SSDを保管先にしたいユーザー。
 
 ## 解決する課題
 
@@ -54,6 +54,8 @@
 - iPhoneアプリでpreviewを再生し、`review_status = preview_confirmed` に更新する。
 - preview確認後、ユーザー明示操作によるiPhone側original削除導線を提供する。
 - Backend URLと固定APIトークンをSettingsから設定する。
+- Phase 1のBackend URLは、LANまたはTailscaleで到達可能なprivate endpointとする。
+- Tailscale利用時のBackend URLは`http://<tailscale-ip>:8000`または`http://<magicdns-name>:8000`を想定する。
 
 ### Phase 1対象外
 
@@ -125,9 +127,9 @@
 - 権限拒否、ユーザーキャンセル、local asset不在の場合は失敗または未実行として表示し、Backend側statusを壊さない。
 - Phase 1の手動削除は`safe_to_delete_candidate`を必須条件にしない。Phase 2以降の削除候補判定は、より強いhash verification条件として扱う。
 
-### P0: LAN内アクセス制御
+### P0: Private endpointアクセス制御
 
-ユーザーとして、LAN内の別端末から無制限に閲覧・uploadされないよう、backendへのアクセスを制限したい。
+ユーザーとして、LANまたはTailscale private network上の別端末から無制限に閲覧・uploadされないよう、backendへのアクセスを制限したい。
 
 **受け入れ条件**
 
@@ -136,6 +138,9 @@
 - API要求は`Authorization: Bearer <token>`形式を使う。
 - uploadとpreview APIはトークンなしの要求を拒否する。
 - `/jobs`, `/jobs/{job_id}`を含む全Phase 1 APIはトークンなしの要求を拒否する。
+- Tailscaleは通信経路を提供するだけで、固定APIトークン認証の代替にはしない。
+- Phase 1ではTailscale private network内のHTTP endpointを許容する。
+- 公開インターネットへbackendを晒す場合はPhase 1対象外とし、HTTPSを必須にする。
 
 ## 状態モデル
 
@@ -163,19 +168,24 @@
 - `/assets/upload`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`は固定APIトークンを要求する。
 - トークンや機密値をログへ出力しない。
 - 保存パスはbackend側で生成し、クライアント由来のパスを信用しない。
+- Phase 1のHTTP通信はLANまたはTailscale private network内に限定する。
+- Tailscale利用時も固定APIトークンを必須とし、Tailnet参加だけでは認可済みと扱わない。
+- backendを公開インターネットへ直接公開しない。
 
 ### 運用
 
 - DockerをMac mini移行時の正規実行環境とする。
 - ローカル`node_modules`をDockerへ持ち込まない。
 - iPhone実運用はDevelopment Build / Internal Distributionを前提とする。
+- 開発中はMBA上のbackendをTailscale経由でiPhoneから確認し、Mac mini移行後はBackend URLをMac miniのTailscale IPまたはMagicDNS名へ差し替える。
 
 ## 未決事項
 
 - preview bitrate。
 - Phase 1既定LUT `backend/assets/lut/rec709.cube` の将来的な差し替え方法。
 - Docker Compose上のworker service詳細設定。
-- 将来のLAN discovery。
+- 将来のLAN/Tailscale endpoint discovery。
+- iOS/ExpoでHTTP private endpointへ接続するためのapp config詳細。
 - `expo-media-library` で取得可能なEXIF/location項目。
 - thumbnail/proxy生成はPhase 1では本番対象外とし、将来候補として扱う。
 - ffmpeg失敗時のretry回数。
