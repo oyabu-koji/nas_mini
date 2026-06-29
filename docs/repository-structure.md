@@ -18,7 +18,7 @@ project-root/
 ├── assets/
 │   └── ...
 ├── src/
-│   ├── app/
+│   ├── application/
 │   │   ├── navigation/
 │   │   ├── providers/
 │   │   └── theme/
@@ -62,10 +62,11 @@ project-root/
 
 ## Mobile構造
 
-### `src/app/`
+### `src/application/`
 
 - navigation、provider、themeなどアプリ全体の組み立てを置く。
 - feature固有の業務処理を持たない。
+- Expo Routerを使わない限り、Expo CLIのrouter root誤認を避けるため`src/app/`は使わない。
 
 ### `src/features/[feature]/screens/`
 
