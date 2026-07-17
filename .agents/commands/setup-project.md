@@ -18,7 +18,7 @@ description: 初回セットアップ。6つの永続ドキュメントを対話
 1. `docs/ideas/initial-requirements.md` が存在するか確認する
 2. 存在しない場合は停止し、先に `define-project` で初期要件を作成するよう案内する
 3. `docs/ideas/initial-requirements.md` を読み、初期要件を整理する
-4. `docs/ideas/YYYYMMDD-[feature-name].md` のような追加仕様ファイルは、このコマンドの入力として使わない
+4. `docs/ideas/YYYYMMDD_N-[feature-name].md` のような追加仕様ファイルは、このコマンドの入力として使わない
 5. 利用可能ならドキュメント作成やレビューを背景実行へ委任する
 6. `docs/product-requirements.md` を作成し、承認を得る
 7. 以降を順に作成する

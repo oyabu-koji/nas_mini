@@ -25,6 +25,11 @@ def test_load_settings_defaults(monkeypatch, tmp_path):
 
     assert settings.sqlite_busy_timeout_ms == 5000
     assert settings.job_lease_seconds == 300
+    assert settings.upload_session_chunk_size_bytes == 8_388_608
+    assert settings.upload_session_max_size_bytes == 1_099_511_627_776
+    assert settings.upload_session_active_limit == 2
+    assert settings.upload_session_expiry_seconds == 604_800
+    assert settings.upload_session_retry_after_seconds == 30
     assert str(settings.lut_path) == "/app/assets/lut/rec709.cube"
 
 
@@ -47,6 +52,25 @@ def test_load_settings_rejects_invalid_numeric_value(monkeypatch, tmp_path):
 
     with pytest.raises(SettingsError):
         load_settings()
+
+
+def test_load_settings_allows_upload_session_limits_to_be_overridden(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path / "media"))
+    monkeypatch.setenv("API_TOKEN", "secret-token")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "db.sqlite3"))
+    monkeypatch.setenv("UPLOAD_SESSION_CHUNK_SIZE_BYTES", "1024")
+    monkeypatch.setenv("UPLOAD_SESSION_MAX_SIZE_BYTES", "2048")
+    monkeypatch.setenv("UPLOAD_SESSION_ACTIVE_LIMIT", "3")
+    monkeypatch.setenv("UPLOAD_SESSION_EXPIRY_SECONDS", "60")
+    monkeypatch.setenv("UPLOAD_SESSION_RETRY_AFTER_SECONDS", "5")
+
+    settings = load_settings()
+
+    assert settings.upload_session_chunk_size_bytes == 1024
+    assert settings.upload_session_max_size_bytes == 2048
+    assert settings.upload_session_active_limit == 3
+    assert settings.upload_session_expiry_seconds == 60
+    assert settings.upload_session_retry_after_seconds == 5
 
 
 def test_settings_error_does_not_include_token_value(monkeypatch, tmp_path):

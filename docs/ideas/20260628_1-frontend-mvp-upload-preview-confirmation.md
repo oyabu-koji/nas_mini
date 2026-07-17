@@ -13,9 +13,9 @@
   - `docs/development-guidelines.md`
   - `docs/glossary.md`
   - `docs/ideas/initial-requirements.md`
-  - `docs/ideas/20260622-backend-upload-api.md`
-  - `docs/ideas/20260624-backend-preview-worker.md`
-  - `docs/ideas/20260625-backend-asset-read-preview-api.md`
+  - `docs/ideas/20260622_1-backend-upload-api.md`
+  - `docs/ideas/20260624_1-backend-preview-worker.md`
+  - `docs/ideas/20260625_1-backend-asset-read-preview-api.md`
 
 ## Background
 

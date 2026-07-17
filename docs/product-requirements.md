@@ -43,13 +43,13 @@
 ### 対象範囲
 
 - iPhoneライブラリから写真・動画を選択する。
-- 取得可能な撮影日時、位置情報、EXIFを送信する。欠落値はnullableとする。
+- 取得可能な撮影日時、位置情報、EXIFを送信する。`taken_at` は秒精度の ISO 8601 datetime、欠落または正規化不能な値はnullableとする。
 - LOG素材かどうかをユーザーが選択する。
 - FastAPI backendへ通常アップロードする。
 - `${MEDIA_ROOT}/originals/` にoriginalを保存する。
 - Mac mini側でSHA256を計算し、`server_hash_recorded` として記録する。
 - ffmpeg preview生成jobを登録・実行する。
-- LOG指定素材ではRec.709変換用LUTを適用する。
+- LOG指定素材は、Apple Log対応featureで正式なRec.709 LUTを適用する。安全ゲート中は変換済みpreviewを生成・配信せず、preview失敗として扱う。
 - 写真previewはJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映で生成する。
 - iPhoneアプリでpreviewを再生し、`review_status = preview_confirmed` に更新する。
 - preview確認後、ユーザー明示操作によるiPhone側original削除導線を提供する。
@@ -69,19 +69,40 @@
 
 ## Phase 2 必須拡張
 
+Phase 2は、削除候補を有効化する前に大容量素材の保存完全性とApple Log previewの正しさを段階的に確立する。
+
+### Phase 2A: 大容量安全転送
+
 - upload sessionを作成する。
 - chunk単位でuploadし、chunk hashを照合する。
 - Wi-Fi切断後にresume可能にする。
 - 全chunk完了後にファイルを結合する。
 - 結合後ファイルのSHA256を計算・記録する。
 - iPhone側`expected_file_sha256`とMac mini側`server_sha256`を照合する。
-- `upload_sessions.status = completed`、全`upload_chunks.status = verified`、`assets.verification_status = file_verified`、`assets.preview_status = preview_ready`、`assets.review_status = preview_confirmed`をすべて満たす場合のみ`safe_to_delete_candidate`にする。
+- original確定保存と`file_verified`を、preview jobを登録できる前提状態として扱う。
+- 新規動画の`POST /assets/upload`は`409 video_session_required`で拒否し、imageだけPhase 1 direct uploadを継続する。
+- session作成、chunk再送、finalizationを冪等にし、finalizationはleaseを持つ`upload_finalize` jobで実行・回復する。
+- この段階では`safe_to_delete_candidate`を有効化しない。
+
+### Phase 2B: Apple Log preview
+
+- original確定保存後に、動画metadataからApple Logを高信頼で自動判定する。
+- Apple Logを検出した素材は、利用可能なら`generated-apple-log-rec709`を既定プリセットとして要求する。自前生成変換または利用条件を確認済みの公式LUTだけを、このプリセットに登録する。
+- 要求プリセットが未登録または無効化済みの場合は、`compress-only`で軽量化した未変換previewを`done`かつ`preview_ready`として返す。画面はApple Log未変換であることを表示し、Rec.709変換済みとは表示しない。
+- 登録済みLUTのmanifest検証、SHA-256、形式、FFmpeg適用が失敗した場合だけ、jobと`preview_status`を`failed`にする。判定不能または未対応profileも、色変換を要求せず`compress-only`で内容確認可能なpreviewを生成する。
+- Apple LogのRec.709変換、未変換fallback、custom LUTのいずれも、要求プリセット、適用プリセット、version、SHA-256、`color_transform_status`、必要時のerror codeをpreview provenanceとして記録する。未変換Apple Logは`transform_kind = none`とし、`color_transform_error_code = lut_preset_unavailable`を使う。
+- Phase 2B rolloutでは、Phase 2A session由来で`file_verified`の動画だけを一意なprofile-aware preview jobへ移行する。新jobのdedup insertに成功したときだけasset preview generationとformal preview/review stateを更新し、旧generation jobはassetを書き換えない。Phase 1 direct assetは対象外とする。
+- Mac mini管理者はrepo外のLUT rootにmanifest付きcustom LUTを登録できる。Mobileはサーバーが返す有効なプリセットだけを選択でき、LUTファイルをuploadしない。custom LUTはApple Log to Rec.709とは表示しない。
+
+### Phase 2C: 安全削除候補
+
+- `upload_sessions.status = completed`、全`upload_chunks.status = verified`、`assets.verification_status = file_verified`、`transform_kind = lut`または`none`の正式provenance付き`assets.preview_status = preview_ready`、`assets.review_status = preview_confirmed`をすべて満たす場合のみ`safe_to_delete_candidate`にする。Apple Logの`compress-only` fallbackも、未変換表示と`none` provenanceを持つ場合はこの条件に含める。
 
 ## Phase 3+ Backlog
 
 - Wi-Fi/充電中のみ同期
 - originalダウンロード
-- LUT設定管理
+- LUT presetの管理UI/API、有効化、廃止管理
 - 顔検出、笑顔判定、ピント/ブレ判定、ベストショット抽出
 - 動画シーン解析、AIタグ付け
 - FCPXML出力
@@ -110,7 +131,7 @@
 - ffmpegでH.264 MP4 previewを生成できる。
 - previewは縦横比を維持し、1080pを上限とする。
 - 音声がある場合はAAC音声を含む。
-- LOG指定素材はRec.709変換用LUTを適用できる。
+- Phase 2B以降、Apple Logと高信頼で判定された素材は、利用可能なら正式なRec.709変換を適用できる。要求LUTが未登録または無効化済みなら、未変換であることを表示した`compress-only` previewを確認できる。登録済みLUTの検証・適用失敗だけはpreviewをfailedにする。
 - 写真previewはJPEG、長辺2048px上限、EXIF orientation反映で生成できる。
 - 確認後に`review_status = preview_confirmed`となる。
 
@@ -135,6 +156,8 @@
 
 - Backend URLを手入力できる。
 - 固定APIトークンを設定できる。
+- 初期リリースではURLとトークンを手入力し、URL・名称は通常設定保存、トークンは`expo-secure-store`へ分離保存する。
+- 接続先は固定値にせず、将来の複数サーバー設定に対応する。自宅利用はLAN/Tailscale private endpoint、App Review用の独立環境はHTTPS endpointとする。
 - API要求は`Authorization: Bearer <token>`形式を使う。
 - uploadとpreview APIはトークンなしの要求を拒否する。
 - `/jobs`, `/jobs/{job_id}`を含む全Phase 1 APIはトークンなしの要求を拒否する。
@@ -147,11 +170,12 @@
 | 分類 | Phase 1で使用する状態 | Phase 2以降で追加する状態 |
 |------|----------------------|--------------------------|
 | `transfer_status` | `local_only`, `uploading`, `uploaded`, `failed` | 継続利用 |
-| `verification_status` | `not_started`, `server_hash_recorded`, `failed` | `chunk_verified`, `file_verified` |
+| `verification_status` | `not_started`, `server_hash_recorded`, `failed` | `file_verified` |
 | `preview_status` | `not_started`, `preview_generating`, `preview_ready`, `failed` | 継続利用 |
 | `review_status` | `not_reviewed`, `preview_confirmed` | 継続利用 |
 | `delete_candidate_status` | `not_candidate` | `safe_to_delete_candidate` |
 | `local_delete_status` | `not_deleted`, `delete_requested`, `deleted`, `failed` | 継続利用 |
+| `color_transform_status` | - | `not_requested`, `unavailable`, `applied`, `failed` |
 
 ## 非機能要件
 
@@ -170,19 +194,19 @@
 - 保存パスはbackend側で生成し、クライアント由来のパスを信用しない。
 - Phase 1のHTTP通信はLANまたはTailscale private network内に限定する。
 - Tailscale利用時も固定APIトークンを必須とし、Tailnet参加だけでは認可済みと扱わない。
-- backendを公開インターネットへ直接公開しない。
+- 自宅Mac miniのbackendを公開インターネットへ直接公開しない。App Review用には自宅環境とデータを分離したHTTPS backendだけを使用する。
 
 ### 運用
 
 - DockerをMac mini移行時の正規実行環境とする。
 - ローカル`node_modules`をDockerへ持ち込まない。
-- iPhone実運用はDevelopment Build / Internal Distributionを前提とする。
+- 開発中のiPhone実運用はDevelopment Buildを使う。配布はApp StoreまたはUnlisted Appを目標とし、審査時は独立したHTTPS backendを用意する。
 - 開発中はMBA上のbackendをTailscale経由でiPhoneから確認し、Mac mini移行後はBackend URLをMac miniのTailscale IPまたはMagicDNS名へ差し替える。
 
 ## 未決事項
 
 - preview bitrate。
-- Phase 1既定LUT `backend/assets/lut/rec709.cube` の将来的な差し替え方法。
+- Apple公式LUTの配布元・利用条件、自前生成変換の入力仕様・metadata検出根拠・品質閾値・SHA-256の確定値。
 - Docker Compose上のworker service詳細設定。
 - 将来のLAN/Tailscale endpoint discovery。
 - iOS/ExpoでHTTP private endpointへ接続するためのapp config詳細。

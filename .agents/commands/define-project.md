@@ -52,7 +52,7 @@ description: プロジェクト全体の初期要件を docs/ideas/initial-requi
 ## 重要ルール
 
 - `docs/ideas/initial-requirements.md` は `setup-project` の入力として扱う
-- `docs/ideas/YYYYMMDD-[feature-name].md` は作成しない
+- `docs/ideas/YYYYMMDD_N-[feature-name].md` は作成しない
 - `.steering/` はこのコマンドで作らない
 - コード実装は行わない
 - React Native + Expo managed workflow + JavaScript の前提を維持する

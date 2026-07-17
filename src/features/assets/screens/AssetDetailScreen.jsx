@@ -7,7 +7,7 @@ import { PREVIEW_STATUS } from '../../../shared/constants/assetStatuses';
 import { formatBytes } from '../../../shared/utils/fileSize';
 import { useAssetDetail } from '../hooks/useAssets';
 
-export function AssetDetailScreen({ settings, canUseApi, assetId, onBack, onPreview }) {
+export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavailable = false, onBack, onPreview }) {
   const { asset, status, error, loadAsset } = useAssetDetail(settings, canUseApi, assetId, { autoPoll: true });
 
   return (
@@ -41,8 +41,9 @@ export function AssetDetailScreen({ settings, canUseApi, assetId, onBack, onPrev
           {asset.preview_status === PREVIEW_STATUS.FAILED ? (
             <Text style={styles.error}>Preview generation failed. Retry API is outside this feature.</Text>
           ) : null}
+          {mappingUnavailable ? <Text style={styles.meta}>Local asset mapping is unavailable for this upload.</Text> : null}
           <ActionButton
-            disabled={asset.preview_status !== PREVIEW_STATUS.READY}
+            disabled={asset.is_log || asset.preview_status !== PREVIEW_STATUS.READY}
             label="Open preview"
             onPress={() => onPreview(asset.id)}
           />

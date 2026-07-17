@@ -3,7 +3,7 @@
 ## 基本フロー
 
 1. `docs/` の永続ドキュメントを確認する
-2. `.steering/[YYYYMMDD]-[task]/` を作成または参照する
+2. `.steering/[YYYYMMDD_N]-[feature-name]/` を作成または参照する
 3. `requirements.md` / `design.md` / `tasklist.md` を整える
 4. 実装またはドキュメント更新を行う
 5. `npm run lint`、`npm test`、`npx expo start` で確認する
@@ -103,7 +103,7 @@ CI に最低限入れるもの:
 - タップ体験やアニメーションを変更した
 - 画面レイアウトを大きく変えた
 
-確認結果は `.steering/[YYYYMMDD]-[task]/tasklist.md` に残します。
+確認結果は `.steering/[YYYYMMDD_N]-[feature-name]/tasklist.md` に残します。
 
 ## 完成チェック
 

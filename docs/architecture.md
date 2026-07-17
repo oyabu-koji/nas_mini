@@ -5,11 +5,11 @@
 - Mobile AppはReact Native + Expo managed workflow + JavaScriptで実装する。
 - BackendはFastAPI、DBはSQLite、preview生成はffmpegを使う。
 - Mac mini移行時はDocker内の実行環境を正とする。
-- Phase 1のiPhone-backend通信は、LANまたはTailscale private network上のHTTP endpointと固定APIトークンを使う。
-- 公開インターネットへbackendを直接公開しない。公開運用する場合はPhase 1対象外とし、HTTPSを必須にする。
+- 自宅利用のiPhone-backend通信は、LANまたはTailscale private network上のHTTP endpointと固定APIトークンを使う。接続先URLはMobile設定値であり、ソースコードへ固定しない。
+- 自宅Mac miniのbackendを公開インターネットへ直接公開しない。App Review用に公開運用する場合は、自宅環境・データと分離したHTTPS backendを使う。
 - 外部SSDの保存先ルートは`MEDIA_ROOT`で指定する。
 - originalはimmutableとして扱い、derived fileと分離する。
-- Phase 1は`104857600 bytes`以下の通常uploadによるUX検証、Phase 2は大容量安全転送とする。
+- Phase 1は`104857600 bytes`以下の通常uploadによるUX検証とする。Phase 2は2Aの大容量安全転送、2BのApple Log preview、2Cの安全削除候補の順に進める。
 
 ## コンテキスト図
 
@@ -55,9 +55,9 @@ graph LR
 ### Mobile App
 
 - 写真・動画選択、nullable metadata取得、LOG指定。
-- Backend URLと固定APIトークンの設定。
+- サーバー名、Backend URL、固定APIトークンの設定。URLと名称は通常設定保存、トークンはサーバーIDごとに`expo-secure-store`へ保存する。初期リリースでQR importは実装しない。
 - Tailscale IPまたはMagicDNS名を含むprivate endpoint URLの設定。
-- upload進捗、asset状態、preview表示、確認操作。
+- upload進捗、asset状態、要求・適用presetと色変換状態を含むpreview表示、確認操作。
 - 自動削除は実行しない。
 - preview確認後にユーザーが明示操作した場合のみ、iPhone写真ライブラリ上のoriginal削除を端末service経由で実行する。
 - Backend側original、derived file、asset DB recordはMobileの削除操作では削除しない。
@@ -73,14 +73,14 @@ graph LR
 ### Job Service
 
 - job状態を`queued`, `running`, `done`, `failed`で管理する。
-- Phase 1はpreviewとlut_previewを処理する。
+- Phase 1はpreviewと安全ゲート中のlut_previewを処理する。Phase 2Aはsessionごとに一意な`upload_finalize` jobをlease/reclaim可能にする。Phase 2Bではoriginal確定後のApple Log自動判定、server presetのsnapshot、formal preview provenance付き生成を追加する。未登録または無効化済みpresetは`compress-only` previewを`done`にし、登録済みLUTの検証・適用失敗だけをterminal failureにする。session由来video preview jobはassetと同じ`preview_generation`を持ち、claim/commit時に一致しないjobはassetを書き換えず`preview_generation_superseded`として終了する。
 - Phase 3+でAI解析jobを追加可能にする。
 
 ### Preview Adapter
 
 - originalを改変しない。
 - H.264 MP4、AAC音声、1080p上限でpreviewを生成する。
-- LOG素材には`backend/assets/lut/rec709.cube`を既定とするRec.709 LUTを適用する。
+- Apple Log対応feature導入後、利用可能な`generated-apple-log-rec709` presetを適用する。要求presetが未登録または無効化済みなら、未変換表示用のprovenanceを持つ`compress-only` previewを生成する。登録済みLUTの検証・適用失敗はpreviewを生成・配信しない。
 - 写真はJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映でpreviewを生成する。
 - Phase 1でHEIC、JPEG、PNG入力の検証fixtureを用意し、Docker内ffmpeg buildのcodec対応を確認する。
 - stdout/stderrを安全に扱い、機密値をログへ含めない。
@@ -91,7 +91,8 @@ graph LR
 
 - DBファイル配置はbackend設定で指定する。
 - assets、derived_files、jobsをPhase 1で作成する。
-- upload_sessions、upload_chunksはPhase 2で追加する。
+- upload_sessions、upload_chunksはPhase 2で追加する。sessionはclient idempotency key、immutable metadata、expected hash、failure/retry、expiry、lease、asset/job参照を持ち、chunkは`UNIQUE(session_id, chunk_index)`とverified hashを持つ。
+- Phase 2BではLUT preset/detector manifestとpreview provenanceを追加する。provenanceは要求・適用preset、version、SHA-256、色変換状態・未適用理由を記録し、Apple Log fallbackを含む`transform_kind = none`も扱う。
 - statusは一つの列へ集約せず、役割ごとに分離する。
 
 ### Mobile Local State
@@ -99,6 +100,8 @@ graph LR
 - backend asset idとiPhone写真ライブラリのlocal asset identifierを紐づける。
 - iPhone側original手動削除の状態はMobile側で管理し、Backend側originalの状態と混同しない。
 - local asset identifierは端末内の素材削除にのみ使い、backendへ保存先pathとして送らない。
+- upload timeout後の`result_unknown`はtoken、URI、filenameを含めず端末に保存する。local asset idがない場合はglobal pending markerを使い、asset一覧確認済みの明示操作までuploadを再開しない。
+- サーバー設定はサーバーID、名称、URLを通常設定へ保存し、tokenは`expo-secure-store`へ分離保存する。
 
 ### External SSD
 
@@ -115,6 +118,7 @@ ${MEDIA_ROOT}/
 - `previews/`, `thumbnails/`: derived file。
 - `tmp/`: upload中、一時生成中のファイル。
 - `jobs/`: 必要なjob関連ファイル。DB jobレコードと役割を混同しない。
+- custom LUTはDocker imageとGitリポジトリへ入れず、`USER_LUT_ROOT`として設定したMac mini側のrepo外ディレクトリをread-only mountして参照する。
 
 ## ファイル保存フロー
 
@@ -157,14 +161,21 @@ ${MEDIA_ROOT}/
 - Phase 1 SHA256はサーバー側計算・記録であり、end-to-end検証とは表示しない。
 - Phase 2ではchunk hashと結合後hashを照合する。
 - Phase 2ではiPhone側`expected_file_sha256`とMac mini側`server_sha256`が一致した場合のみ`file_verified`とする。
+- Phase 2Aでは結合、hash照合、original確定保存の完了後にだけpreview jobを登録する。
+- Phase 2Aではworker lease回収時にdeterministic tmp/final pathを検査し、hash一致のpromoted fileから同一sessionを完了するか、verified chunkから再構築する。DB commit後のclient timeoutはsession statusでcompleted assetを返す。
 - iPhone側original削除の失敗、権限拒否、ユーザーキャンセルはBackend側保存済みassetの状態を壊さない。
+- upload timeoutでMobileがrequestを中断した場合、backend保存結果は不明として扱う。Mobileは同一素材を自動再送せず、asset一覧で結果を確認する。
+- identity LUTで生成済みのLOG previewはRec.709変換済みとして扱わず、要求・適用presetと色変換状態を持つformal provenanceがなければpreview配信と確認を拒否する。derived fileは自動削除しない。
+- Phase 2Bではtemporary LOG safety triggerを、`type = video AND verification_status = file_verified`のassetで`formal_preview_id`と`log_detection_status`に応じたformal preview provenanceがない場合に`preview_ready`を拒否するSQLite triggerへmigrationで置換する。Apple Logの未登録または無効化済みpresetは`transform_kind = none`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を持つprovenanceで許可する。登録済みLUTのhash不一致・形式不備・FFmpeg適用失敗だけはterminal failureにする。
+- preview jobのterminal failureでは、jobと存在するassetのstatusを同一SQLite transactionで更新し、部分更新を残さない。
+- Phase 2B preview migrationはmaintenance modeでpre-Phase-2B workerを停止・drainしてから実行する。`phase2b-profile-preview:{asset_id}`の新規insertとasset generation/state更新を同一transactionにし、既存dedup keyではassetを変更しない。これにより再実行と旧jobのlate commitがformal preview/review stateを巻き戻さない。
 
 ## Docker方針
 
 - Mac miniではDockerを正規実行環境とする。
 - Node 24、Python、ffmpegのバージョンはDocker側で固定する。
 - Backend Python依存は`uv.lock`を使ってDocker内で再現可能にinstallする。
-- Backend imageへ`backend/assets/`をcopyし、workerが`/app/assets/lut/rec709.cube`を読めるようにする。
+- Backend imageへ`backend/assets/`をcopyし、workerが管理済みpresetとmanifestを読めるようにする。custom LUTはimageへcopyせず、`USER_LUT_ROOT`をread-only volume mountして参照する。
 - ローカル`node_modules`をDockerへコピーしない。
 - 外部SSDはcontainerへvolume mountし、container内の`MEDIA_ROOT`へ割り当てる。
 - host上の`/Volumes/MediaVault`などのパス差分はcompose環境変数で吸収する。

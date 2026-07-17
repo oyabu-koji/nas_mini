@@ -1,13 +1,69 @@
+import { useCallback, useEffect, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../../shared/components/ActionButton';
 import { ScreenHeader } from '../../../shared/components/ScreenHeader';
 import { StatusPill } from '../../../shared/components/StatusPill';
 import { formatBytes } from '../../../shared/utils/fileSize';
+import {
+  clearUploadResultUnknown,
+  readUploadResultUnknown,
+} from '../../../shared/services/uploadResultUnknownStore';
 import { useAssetList } from '../hooks/useAssets';
 
-export function AssetListScreen({ settings, canUseApi, onOpenSettings, onSelectAsset }) {
-  const { items, status, error, refreshAssets } = useAssetList(settings, canUseApi);
+export function AssetListScreen({ settings, canUseApi, onOpenSettings, onPendingAcknowledged, onSelectAsset }) {
+  const { items, status, error, refreshAssets } = useAssetList(settings, canUseApi, { autoLoad: false });
+  const [pendingUpload, setPendingUpload] = useState(null);
+  const [pendingLoading, setPendingLoading] = useState(true);
+  const [canAcknowledgePending, setCanAcknowledgePending] = useState(false);
+  const [acknowledgementError, setAcknowledgementError] = useState(null);
+
+  const refreshAfterPendingRead = useCallback(async () => {
+    setCanAcknowledgePending(false);
+    const result = await refreshAssets();
+    if (pendingUpload && result.success && result.isLatest) {
+      setCanAcknowledgePending(true);
+    }
+    return result;
+  }, [pendingUpload, refreshAssets]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPendingThenAssets() {
+      const restored = await readUploadResultUnknown();
+      if (!isMounted) {
+        return;
+      }
+      setPendingUpload(restored);
+      setPendingLoading(false);
+      setCanAcknowledgePending(false);
+      const result = await refreshAssets();
+      if (isMounted && restored && result.success && result.isLatest) {
+        setCanAcknowledgePending(true);
+      }
+    }
+
+    loadPendingThenAssets();
+    return () => {
+      isMounted = false;
+    };
+  }, [refreshAssets]);
+
+  const acknowledgePending = useCallback(async () => {
+    if (!pendingUpload || !canAcknowledgePending) {
+      return;
+    }
+    setAcknowledgementError(null);
+    try {
+      await clearUploadResultUnknown();
+      setPendingUpload(null);
+      setCanAcknowledgePending(false);
+      onPendingAcknowledged?.();
+    } catch {
+      setAcknowledgementError('Could not clear the pending upload state.');
+    }
+  }, [canAcknowledgePending, onPendingAcknowledged, pendingUpload]);
 
   return (
     <View style={styles.container}>
@@ -20,14 +76,26 @@ export function AssetListScreen({ settings, canUseApi, onOpenSettings, onSelectA
         </View>
       ) : (
         <ActionButton
-          disabled={status === 'loading'}
+          disabled={pendingLoading || status === 'loading'}
           label={status === 'loading' ? 'Refreshing...' : 'Refresh'}
-          onPress={refreshAssets}
+          onPress={refreshAfterPendingRead}
           variant="secondary"
         />
       )}
 
       {error ? <Text style={styles.error}>{error.message}</Text> : null}
+      {pendingUpload ? (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>A previous upload may have completed. Review the refreshed list before uploading again.</Text>
+          <ActionButton
+            disabled={!canAcknowledgePending}
+            label="I reviewed the asset list"
+            onPress={acknowledgePending}
+            variant="secondary"
+          />
+        </View>
+      ) : null}
+      {acknowledgementError ? <Text style={styles.error}>{acknowledgementError}</Text> : null}
 
       <FlatList
         data={items}

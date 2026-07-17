@@ -4,9 +4,9 @@ description: steering の tasklist に従って機能を実装する
 
 # implement-feature
 
-引数: 対象 `.steering/[YYYYMMDD]-[feature-name]/` ディレクトリ
+引数: 対象 `.steering/[YYYYMMDD_N]-[feature-name]/` ディレクトリ
 
-例: `implement-feature .steering/20260407-login-refresh/`
+例: `implement-feature .steering/20260407_1-login-refresh/`
 
 このコマンドは `.steering` に作成された設計を元に
 機能を実装します。
@@ -17,13 +17,13 @@ description: steering の tasklist に従って機能を実装する
 
 ## 1. steeringディレクトリ確認
 
-- 指定された `.steering/[YYYYMMDD]-[feature-name]/` が存在するか確認する
+- 指定された `.steering/[YYYYMMDD_N]-[feature-name]/` が存在するか確認する
 - 存在しない場合は停止する
 - その中のファイルを読み込む
 
-.steering/[YYYYMMDD]-[feature-name]/requirements.md
-.steering/[YYYYMMDD]-[feature-name]/design.md
-.steering/[YYYYMMDD]-[feature-name]/tasklist.md
+.steering/[YYYYMMDD_N]-[feature-name]/requirements.md
+.steering/[YYYYMMDD_N]-[feature-name]/design.md
+.steering/[YYYYMMDD_N]-[feature-name]/tasklist.md
 
 ---
 

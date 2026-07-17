@@ -16,7 +16,7 @@ export function usePreviewReview(settings, canUseApi, assetId) {
   const [cacheStatus, setCacheStatus] = useState('idle');
   const [cacheError, setCacheError] = useState(null);
 
-  const canReview = asset?.preview_status === PREVIEW_STATUS.READY;
+  const canReview = !asset?.is_log && asset?.preview_status === PREVIEW_STATUS.READY;
 
   const videoSource = useMemo(() => {
     if (!canReview || asset?.type !== ASSET_TYPE.VIDEO) {
@@ -47,6 +47,9 @@ export function usePreviewReview(settings, canUseApi, assetId) {
   }, [asset?.type, assetId, cachedPreviewUri, canReview, settings.apiToken, settings.backendUrl]);
 
   const confirm = useCallback(async () => {
+    if (!canReview) {
+      return;
+    }
     setConfirmStatus('saving');
     setConfirmError(null);
     try {
@@ -57,9 +60,12 @@ export function usePreviewReview(settings, canUseApi, assetId) {
       setConfirmStatus('error');
       setConfirmError(toDisplayError(error));
     }
-  }, [assetId, loadAsset, settings]);
+  }, [assetId, canReview, loadAsset, settings]);
 
   const cachePreview = useCallback(async () => {
+    if (!canReview) {
+      return;
+    }
     setCacheStatus('loading');
     setCacheError(null);
     try {
@@ -71,7 +77,7 @@ export function usePreviewReview(settings, canUseApi, assetId) {
       setCacheStatus('error');
       setCacheError(toDisplayError(error));
     }
-  }, [asset?.type, assetId, settings]);
+  }, [asset?.type, assetId, canReview, settings]);
 
   return {
     asset,

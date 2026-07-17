@@ -93,7 +93,7 @@ def open_preview_stream(
         asset = get_asset(conn, asset_id)
         if asset is None:
             raise PreviewNotFoundError("asset not found")
-        if asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY:
+        if bool(asset["is_log"]) or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY:
             raise PreviewNotReadyError("preview is not ready")
         preview = get_preview_for_asset(conn, asset_id)
         if preview is None:

@@ -1,5 +1,6 @@
+import shutil
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 
 REQUIRED_DIRECTORIES = ("originals", "previews", "thumbnails", "jobs", "tmp")
@@ -54,6 +55,44 @@ def generate_preview_relative_path(extension: str) -> str:
     return f"previews/{uuid4().hex}{_normalize_extension(extension)}"
 
 
+def generate_session_original_relative_path(session_id: str, filename: str) -> str:
+    return f"originals/sessions/{_session_id(session_id)}{_safe_extension(filename)}"
+
+
+def generate_session_chunk_path(media_root: Path, session_id: str, chunk_index: int) -> Path:
+    return resolve_media_path(
+        media_root,
+        f"tmp/upload-sessions/{_session_id(session_id)}/chunks/{_chunk_index(chunk_index)}.part",
+    )
+
+
+def generate_session_assembly_path(media_root: Path, session_id: str) -> Path:
+    return resolve_media_path(
+        media_root,
+        f"tmp/upload-sessions/{_session_id(session_id)}/assembly.part",
+    )
+
+
+def generate_session_staging_path(media_root: Path, session_id: str) -> Path:
+    return resolve_media_path(
+        media_root,
+        f"tmp/upload-staging/{_session_id(session_id)}-{uuid4().hex}.part",
+    )
+
+
+def cleanup_session_temporary_files(media_root: Path, session_id: str) -> None:
+    """Remove only session-owned temporary data, never originals or derived files."""
+    normalized_session_id = _session_id(session_id)
+    canonical_dir = resolve_media_path(media_root, f"tmp/upload-sessions/{normalized_session_id}")
+    staging_dir = resolve_media_path(media_root, "tmp/upload-staging")
+
+    if canonical_dir.exists():
+        shutil.rmtree(canonical_dir)
+    if staging_dir.exists():
+        for staging_path in staging_dir.glob(f"{normalized_session_id}-*.part"):
+            staging_path.unlink(missing_ok=True)
+
+
 def resolve_media_path(media_root: Path, relative_path: str) -> Path:
     if not relative_path or Path(relative_path).is_absolute():
         raise StorageError("media path must be relative")
@@ -84,3 +123,16 @@ def _normalize_extension(extension: str) -> str:
     if normalized not in {".mp4", ".jpg"}:
         raise StorageError("unsupported preview extension")
     return normalized
+
+
+def _session_id(value: str) -> str:
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise StorageError("invalid upload session id") from exc
+
+
+def _chunk_index(value: int) -> int:
+    if not isinstance(value, int) or value < 0:
+        raise StorageError("invalid upload chunk index")
+    return value

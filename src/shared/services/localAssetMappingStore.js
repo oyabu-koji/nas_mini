@@ -34,3 +34,15 @@ export async function getLocalAssetMapping(backendAssetId) {
   const mappings = await readMappings();
   return mappings[String(backendAssetId)] ?? null;
 }
+
+/**
+ * @param {number | string} backendAssetId
+ * @returns {Promise<{ status: 'available', mapping: object } | { status: 'mapping_unavailable', mapping: null }>}
+ */
+export async function getLocalAssetMappingState(backendAssetId) {
+  const mapping = await getLocalAssetMapping(backendAssetId);
+  if (mapping) {
+    return { status: 'available', mapping };
+  }
+  return { status: 'mapping_unavailable', mapping: null };
+}

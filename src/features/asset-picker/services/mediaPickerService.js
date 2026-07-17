@@ -45,7 +45,7 @@ async function normalizePickedAsset(asset) {
     mimeType: asset.mimeType || null,
     sizeBytes,
     durationMs: asset.duration ?? null,
-    takenAt: extractTakenAt(asset.exif),
+    takenAt: normalizeTakenAtFromExif(asset.exif),
     latitude: extractCoordinate(asset.exif, 'GPSLatitude'),
     longitude: extractCoordinate(asset.exif, 'GPSLongitude'),
     exif: asset.exif ?? null,
@@ -82,11 +82,48 @@ function fallbackFilename(type, uri) {
   return type === ASSET_TYPE.IMAGE ? 'selected-image.jpg' : 'selected-video.mp4';
 }
 
-function extractTakenAt(exif) {
-  if (!exif) {
+export function normalizeTakenAtFromExif(exif) {
+  const source = exif?.DateTimeOriginal ?? exif?.DateTime;
+  if (typeof source !== 'string') {
     return null;
   }
-  return exif.DateTimeOriginal || exif.DateTime || exif.OffsetTimeOriginal || null;
+  const match = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(source);
+  if (!match || !isValidExifDateTime(match)) {
+    return null;
+  }
+
+  const normalized = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}`;
+  const offset = normalizeExifOffset(exif?.OffsetTimeOriginal);
+  return offset ? `${normalized}${offset}` : normalized;
+}
+
+function isValidExifDateTime(match) {
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+  const candidate = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  return (
+    candidate.getUTCFullYear() === year &&
+    candidate.getUTCMonth() === month - 1 &&
+    candidate.getUTCDate() === day &&
+    candidate.getUTCHours() === hour &&
+    candidate.getUTCMinutes() === minute &&
+    candidate.getUTCSeconds() === second
+  );
+}
+
+function normalizeExifOffset(value) {
+  if (value === 'Z') {
+    return 'Z';
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const match = /^([+-])(\d{2}):(\d{2})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+  const hours = Number(match[2]);
+  const minutes = Number(match[3]);
+  return hours <= 23 && minutes <= 59 ? value : null;
 }
 
 function extractCoordinate(exif, key) {

@@ -50,7 +50,7 @@
 ## フェーズ4: validate-implementation への引き継ぎ準備
 
 - [ ] `requirements.md` / `design.md` / `tasklist.md` が最新であることを確認
-- [ ] 同じ `.steering/[YYYYMMDD]-[task]/` を `validate-implementation` に渡せる状態にする
+- [ ] 同じ `.steering/[YYYYMMDD_N]-[feature-name]/` を `validate-implementation` に渡せる状態にする
 
 ## フェーズ5: ドキュメント更新
 

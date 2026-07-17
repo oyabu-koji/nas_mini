@@ -13,8 +13,8 @@
   - `docs/development-guidelines.md`
   - `docs/glossary.md`
   - `docs/ideas/initial-requirements.md`
-  - `docs/ideas/20260602-backend-foundation.md`
-  - `docs/ideas/20260622-backend-upload-api.md`
+  - `docs/ideas/20260602_1-backend-foundation.md`
+  - `docs/ideas/20260622_1-backend-upload-api.md`
 
 ## Background
 

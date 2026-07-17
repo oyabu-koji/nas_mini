@@ -12,6 +12,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import JSONResponse
 
 from app.api.deps import require_bearer_token
 from app.core.settings import load_settings
@@ -75,6 +76,12 @@ async def upload_asset(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
+
+    if metadata.type == "video":
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"code": "video_session_required", "retryable": False},
+        )
 
     try:
         return await create_upload_asset(

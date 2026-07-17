@@ -1,4 +1,6 @@
 import json
+import re
+from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
@@ -6,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 
 AssetType = Literal["image", "video"]
+TAKEN_AT_PATTERN = re.compile(
+    r"^(?P<datetime>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?P<offset>Z|[+-]\d{2}:\d{2})?$"
+)
 
 
 class UploadMetadata(BaseModel):
@@ -16,6 +21,11 @@ class UploadMetadata(BaseModel):
     longitude: float | None = None
     exif_json: Any | None = None
     is_log: bool = False
+
+    @field_validator("taken_at", mode="before")
+    @classmethod
+    def validate_taken_at(cls, value: str | None) -> str | None:
+        return normalize_taken_at(value)
 
 
 class AssetResponse(BaseModel):
@@ -134,7 +144,7 @@ def parse_upload_metadata(
     return UploadMetadata(
         type=normalized_type,  # type: ignore[arg-type]
         filename=normalized_filename,
-        taken_at=_blank_to_none(taken_at),
+        taken_at=taken_at,
         latitude=_parse_optional_float(latitude, "latitude"),
         longitude=_parse_optional_float(longitude, "longitude"),
         exif_json=_parse_optional_json(exif_json),
@@ -159,6 +169,29 @@ def _blank_to_none(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def normalize_taken_at(value: str | None) -> str | None:
+    normalized = _blank_to_none(value)
+    if normalized is None:
+        return None
+
+    match = TAKEN_AT_PATTERN.fullmatch(normalized)
+    if match is None:
+        raise ValueError("taken_at must be a seconds-precision ISO 8601 datetime")
+
+    offset = match.group("offset")
+    canonical = normalized
+    try:
+        if offset is None:
+            datetime.strptime(canonical, "%Y-%m-%dT%H:%M:%S")
+        else:
+            if offset == "Z":
+                canonical = f"{match.group('datetime')}+00:00"
+            datetime.strptime(canonical, "%Y-%m-%dT%H:%M:%S%z")
+    except ValueError as exc:
+        raise ValueError("taken_at must be a valid ISO 8601 datetime") from exc
+    return canonical
 
 
 def _parse_optional_float(value: str | None, field_name: str) -> float | None:

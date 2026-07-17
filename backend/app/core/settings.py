@@ -15,6 +15,11 @@ class Settings:
     lut_path: Path = Path("/app/assets/lut/rec709.cube")
     sqlite_busy_timeout_ms: int = 5000
     job_lease_seconds: int = 300
+    upload_session_chunk_size_bytes: int = 8_388_608
+    upload_session_max_size_bytes: int = 1_099_511_627_776
+    upload_session_active_limit: int = 2
+    upload_session_expiry_seconds: int = 604_800
+    upload_session_retry_after_seconds: int = 30
 
 
 def load_settings() -> Settings:
@@ -29,6 +34,11 @@ def load_settings() -> Settings:
         lut_path=Path(os.environ.get("LUT_PATH", "/app/assets/lut/rec709.cube")),
         sqlite_busy_timeout_ms=_positive_int("SQLITE_BUSY_TIMEOUT_MS", 5000),
         job_lease_seconds=_positive_int("JOB_LEASE_SECONDS", 300),
+        upload_session_chunk_size_bytes=_positive_int("UPLOAD_SESSION_CHUNK_SIZE_BYTES", 8_388_608),
+        upload_session_max_size_bytes=_positive_int("UPLOAD_SESSION_MAX_SIZE_BYTES", 1_099_511_627_776),
+        upload_session_active_limit=_positive_int("UPLOAD_SESSION_ACTIVE_LIMIT", 2),
+        upload_session_expiry_seconds=_positive_int("UPLOAD_SESSION_EXPIRY_SECONDS", 604_800),
+        upload_session_retry_after_seconds=_positive_int("UPLOAD_SESSION_RETRY_AFTER_SECONDS", 30),
     )
 
 

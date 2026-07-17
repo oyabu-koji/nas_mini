@@ -47,7 +47,7 @@ Before `init-project`, this template intentionally does not include application 
 - `PROJECT_CONTEXT.md` は技術前提と環境制約をまとめた文書です。
 - `docs/ideas/` は仕様専用ディレクトリです。
 - `docs/ideas/initial-requirements.md` は `define-project` で作成・更新し、プロジェクト全体の初期要件に使います。
-- 追加機能の仕様は `define-feature` で `docs/ideas/YYYYMMDD-[feature-name].md` として作成・更新します。
+- 追加機能の仕様は `define-feature` で `docs/ideas/YYYYMMDD_N-[feature-name].md` として作成・更新します。`N` は日付ごとに `1` から採番する連番です。
 - `.steering/.gitkeep` はタスク単位の計画ディレクトリを保持するためのプレースホルダーです。
 - `.agents/` には再利用可能な commands、skills、settings、review agents が入っています。
 - `.gitignore` と `.nvmrc` は共通開発環境の前提を揃えるために含めています。
@@ -65,8 +65,8 @@ Before `init-project`, this template intentionally does not include application 
 5. Keep the environment pinned to Node 24 and Expo SDK 54.
 6. Run `define-project` to create or update `docs/ideas/initial-requirements.md`.
 7. Run `setup-project` to create the six durable docs from `docs/ideas/initial-requirements.md`.
-8. Run `define-feature` to create or update a feature spec in `docs/ideas/YYYYMMDD-[feature-name].md`.
-9. Run `plan-feature` with that `docs/ideas/YYYYMMDD-[feature-name].md` file to create `.steering/[YYYYMMDD]-[task]/`.
+8. Run `define-feature` to create or update a feature spec in `docs/ideas/YYYYMMDD_N-[feature-name].md`.
+9. Run `plan-feature` with that `docs/ideas/YYYYMMDD_N-[feature-name].md` file to create `.steering/[YYYYMMDD_N]-[feature-name]/`.
 10. Run `implement-feature` for the target `.steering/...` directory.
 11. Run `validate-implementation` for the same `.steering/...` directory.
 
@@ -78,8 +78,8 @@ Before `init-project`, this template intentionally does not include application 
 5. 開発環境は Node 24 と Expo SDK 54 に固定します。
 6. `define-project` を実行して、`docs/ideas/initial-requirements.md` を作成または更新します。
 7. `setup-project` を実行して `docs/ideas/initial-requirements.md` から 6 つの永続ドキュメントを作成します。
-8. 追加機能に着手する前に、`define-feature` を実行して `docs/ideas/YYYYMMDD-[feature-name].md` を作成または更新します。
-9. `plan-feature` に対象の `docs/ideas/YYYYMMDD-[feature-name].md` を渡して `.steering/[YYYYMMDD]-[task]/` を作成します。
+8. 追加機能に着手する前に、`define-feature` を実行して `docs/ideas/YYYYMMDD_N-[feature-name].md` を作成または更新します。
+9. `plan-feature` に対象の `docs/ideas/YYYYMMDD_N-[feature-name].md` を渡して `.steering/[YYYYMMDD_N]-[feature-name]/` を作成します。
 10. `implement-feature` で対象 `.steering/...` に従って実装します。
 11. `validate-implementation` で同じ `.steering/...` を検証します。
 
@@ -117,7 +117,7 @@ After `init-project`, the next documentation step is `define-project` if `docs/i
 
 `define-project` is the entry point for creating and updating the project-wide bootstrap spec in `docs/ideas/initial-requirements.md`.
 
-`define-feature` creates or updates individual feature specs in `docs/ideas/YYYYMMDD-[feature-name].md`.
+`define-feature` creates or updates individual feature specs in `docs/ideas/YYYYMMDD_N-[feature-name].md`.
 
 `setup-project` prepares the six durable documents from `docs/ideas/initial-requirements.md`.
 
@@ -141,7 +141,7 @@ If the durable docs below do not exist yet, do not run `define-feature` or `plan
 `init-project` は Expo アプリの土台と共通環境ファイルを整えます。  
 `init-project` 後は、必要に応じて `define-project` で `docs/ideas/initial-requirements.md` をプロジェクト固有の内容に整え、その後 `setup-project` で 6 つの永続ドキュメントを作成します。
 `define-project` は `docs/ideas/initial-requirements.md` のプロジェクト初期要件を作成・更新する入口です。
-`define-feature` は `docs/ideas/YYYYMMDD-[feature-name].md` の個別機能仕様を作成・更新する入口です。
+`define-feature` は `docs/ideas/YYYYMMDD_N-[feature-name].md` の個別機能仕様を作成・更新する入口です。
 `setup-project` は `docs/ideas/initial-requirements.md` をもとに 6 つの永続ドキュメントを作ります。  
 6 つの永続ドキュメントが未作成の場合は、先に `define-feature` や `plan-feature` を実行せず、`setup-project` を実行します。
 `plan-feature` は `docs/ideas/` 配下の追加仕様ファイルを入力に使い、`initial-requirements.md` は受け付けません。  

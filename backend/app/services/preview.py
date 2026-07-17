@@ -6,7 +6,6 @@ from typing import Any, Callable
 from app.core.settings import Settings
 from app.db.connection import connect
 from app.repositories.assets import (
-    PREVIEW_STATUS_FAILED,
     PREVIEW_STATUS_PREVIEW_READY,
     get_asset,
     update_preview_status,
@@ -16,7 +15,7 @@ from app.repositories.derived_files import (
     get_preview_for_asset,
     insert_derived_file,
 )
-from app.repositories.jobs import mark_job_done, mark_job_failed
+from app.repositories.jobs import fail_job_and_asset_preview, mark_job_done
 from app.services import ffmpeg
 from app.services.storage import (
     StorageError,
@@ -47,15 +46,18 @@ def process_preview_job(
     tmp_preview_path: Path | None = None
     confirmed_preview_path: Path | None = None
     confirmed_preview_relative_path: str | None = None
-    asset_id = _job_asset_id(job)
+    asset_id: int | None = None
 
     try:
+        asset_id = _job_asset_id(job)
         _validate_payload_asset_id(job, asset_id)
+        if job.get("job_type") == "lut_preview":
+            raise PreviewProcessingError("LOG preview unavailable", asset_id)
+
         with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
             asset = get_asset(conn, asset_id) if asset_id is not None else None
             if asset is None:
-                _fail_job(conn, job["id"], "asset missing")
-                return True
+                raise PreviewProcessingError("asset missing", asset_id)
 
             existing_preview = get_preview_for_asset(conn, asset_id)
             if existing_preview is not None:
@@ -125,25 +127,38 @@ def process_preview_job(
         _cleanup_tmp_preview(tmp_preview_path)
         _mark_failed(settings, job["id"], _storage_error_message(exc), asset_id)
         return True
+    except Exception:
+        _cleanup_tmp_preview(tmp_preview_path)
+        _mark_failed(settings, job["id"], "database failure", asset_id)
+        return True
 
 
 def _job_asset_id(job: dict[str, Any]) -> int | None:
     asset_id = job.get("asset_id")
     if asset_id is None:
         return None
-    return int(asset_id)
+    if type(asset_id) is not int:
+        raise PreviewProcessingError("job asset invalid")
+    return asset_id
 
 
 def _validate_payload_asset_id(job: dict[str, Any], asset_id: int | None) -> None:
     payload_json = job.get("payload_json")
-    if not payload_json:
+    if payload_json is None or (isinstance(payload_json, str) and payload_json.strip() == ""):
         return
     try:
-        payload = json.loads(str(payload_json))
-    except json.JSONDecodeError:
+        payload = json.loads(payload_json if isinstance(payload_json, str) else str(payload_json))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise PreviewProcessingError("job payload invalid", asset_id) from exc
+    if not isinstance(payload, dict):
+        raise PreviewProcessingError("job payload invalid", asset_id)
+    if "asset_id" not in payload:
         return
-    payload_asset_id = payload.get("asset_id")
-    if payload_asset_id is not None and asset_id is not None and int(payload_asset_id) != asset_id:
+
+    payload_asset_id = payload["asset_id"]
+    if type(payload_asset_id) is not int or asset_id is None:
+        raise PreviewProcessingError("job payload asset invalid", asset_id)
+    if payload_asset_id != asset_id:
         raise PreviewProcessingError("job payload asset mismatch", asset_id)
 
 
@@ -169,20 +184,10 @@ def _handle_existing_preview(
 def _preview_spec(settings: Settings, job: dict[str, Any], asset: dict[str, Any]) -> dict[str, Any]:
     asset_id = int(asset["id"])
     asset_type = str(asset["type"])
-    job_type = str(job["job_type"])
-
-    if job_type == "lut_preview" and asset_type != "video":
-        raise PreviewProcessingError("lut preview requires video asset", asset_id)
 
     original_path = _resolve_existing_original(settings, str(asset["original_path"]), asset_id)
 
     if asset_type == "video":
-        lut_path = None
-        if job_type == "lut_preview":
-            if not settings.lut_path.is_file():
-                raise PreviewProcessingError("lut file missing", asset_id)
-            lut_path = settings.lut_path
-
         return {
             "extension": ".mp4",
             "mime_type": "video/mp4",
@@ -190,7 +195,7 @@ def _preview_spec(settings: Settings, job: dict[str, Any], asset: dict[str, Any]
             "command_builder": lambda *, input_path, output_path: ffmpeg.build_video_preview_command(
                 input_path=input_path,
                 output_path=output_path,
-                lut_path=lut_path,
+                lut_path=None,
             ),
         }
 
@@ -223,15 +228,12 @@ def _mark_failed(
     asset_id: int | None,
 ) -> None:
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
-        if asset_id is not None:
-            asset = get_asset(conn, asset_id)
-            if asset is not None:
-                update_preview_status(conn, asset_id, PREVIEW_STATUS_FAILED)
-        _fail_job(conn, job_id, error_message)
-
-
-def _fail_job(conn, job_id: int, error_message: str) -> None:
-    mark_job_failed(conn, job_id, _sanitize_error(error_message))
+        fail_job_and_asset_preview(
+            conn,
+            job_id=job_id,
+            asset_id=asset_id,
+            error_message=_sanitize_error(error_message),
+        )
 
 
 def _cleanup_tmp_preview(tmp_preview_path: Path | None) -> None:

@@ -1,10 +1,10 @@
 ---
-description: 個別機能の仕様を docs/ideas/YYYYMMDD-[feature-name].md に作成または更新する
+description: 個別機能の仕様を docs/ideas/YYYYMMDD_N-[feature-name].md に作成または更新する
 ---
 
 # define-feature
 
-このコマンドは `docs/ideas/YYYYMMDD-[feature-name].md` に置く個別機能仕様を作成または更新します。
+このコマンドは `docs/ideas/YYYYMMDD_N-[feature-name].md` に置く個別機能仕様を作成または更新します。
 
 `docs/ideas/` は仕様専用ディレクトリです。  
 プロジェクト全体の初期要件 `docs/ideas/initial-requirements.md` は `define-project` で作成または更新します。
@@ -19,9 +19,10 @@ description: 個別機能の仕様を docs/ideas/YYYYMMDD-[feature-name].md に�
 ## 入力の考え方
 
 - ざっくりしたアイデアから始めてよい
-- 既存の `docs/ideas/YYYYMMDD-[feature-name].md` を明示された場合は更新対象として扱ってよい
+- 既存の `docs/ideas/YYYYMMDD_N-[feature-name].md` を明示された場合は更新対象として扱ってよい
 - `docs/ideas/initial-requirements.md` を指定された場合は停止し、`define-project` を使うよう案内する
-- 追加仕様を新規作成する場合の命名規則は `docs/ideas/YYYYMMDD-[feature-name].md`
+- 追加仕様を新規作成する場合の命名規則は `docs/ideas/YYYYMMDD_N-[feature-name].md`
+- `N` はその日付の既存 feature spec を確認し、最大の連番に `1` を加える。削除済み番号は再利用しない
 - 追加仕様のテンプレートは `.agents/templates/feature-spec-template.md` を参照する
 - このテンプレートは `docs/ideas/initial-requirements.md` には使わない
 
@@ -39,7 +40,7 @@ description: 個別機能の仕様を docs/ideas/YYYYMMDD-[feature-name].md に�
 
 ## 追加仕様作成・更新モード
 
-- 出力先は `docs/ideas/YYYYMMDD-[feature-name].md`
+- 出力先は `docs/ideas/YYYYMMDD_N-[feature-name].md`
 - `.agents/templates/feature-spec-template.md` をベースにする
 - この spec file は後続の `plan-feature` の入力になる
 - 少なくとも以下を整理する
@@ -67,7 +68,7 @@ description: 個別機能の仕様を docs/ideas/YYYYMMDD-[feature-name].md に�
 - `setup-project` が未完了の場合は個別機能仕様を作成しない
 - `.steering/` はこのコマンドで作らない
 - コード実装は行わない
-- 追加仕様の新規作成時は `YYYYMMDD-[feature-name].md` の命名を守る
+- 追加仕様の新規作成時は `YYYYMMDD_N-[feature-name].md` の命名を守る
 
 ## 完了条件
 

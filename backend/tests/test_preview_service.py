@@ -137,21 +137,19 @@ def test_process_preview_job_success_image(tmp_path):
     assert _asset_row(settings, asset["id"])["preview_status"] == "preview_ready"
 
 
-def test_process_preview_job_success_lut_preview_uses_lut(tmp_path):
-    lut_path = tmp_path / "rec709.cube"
-    lut_path.write_text("LUT_3D_SIZE 2\n", encoding="utf-8")
-    settings = _settings(tmp_path, lut_path=lut_path)
+def test_process_preview_job_lut_preview_fails_without_ffmpeg(tmp_path):
+    settings = _settings(tmp_path)
     _prepare(settings)
-    _asset, job = _asset_and_job(settings, job_type="lut_preview")
-    commands = []
+    asset, job = _asset_and_job(settings, job_type="lut_preview")
 
-    def record_command(command, timeout_seconds):
-        commands.append(command)
-        Path(command[-1]).write_bytes(b"preview")
+    def should_not_run(command, timeout_seconds):
+        raise AssertionError("ffmpeg should not run for LOG preview")
 
-    process_preview_job(settings=settings, job=job, run_ffmpeg=record_command)
+    process_preview_job(settings=settings, job=job, run_ffmpeg=should_not_run)
 
-    assert str(lut_path) in commands[0][commands[0].index("-vf") + 1]
+    assert _asset_row(settings, asset["id"])["preview_status"] == "failed"
+    assert _job_row(settings, job["id"])["status"] == "failed"
+    assert _job_row(settings, job["id"])["error_message"] == "LOG preview unavailable"
 
 
 def test_process_preview_job_uses_jobs_asset_id_as_source_of_truth(tmp_path):
@@ -218,18 +216,7 @@ def test_process_preview_job_unsafe_original_path_fails_without_host_path(tmp_pa
     assert str(settings.media_root) not in row["error_message"]
 
 
-def test_process_preview_job_missing_lut_fails_lut_preview(tmp_path):
-    settings = _settings(tmp_path, lut_path=tmp_path / "missing.cube")
-    _prepare(settings)
-    asset, job = _asset_and_job(settings, job_type="lut_preview")
-
-    process_preview_job(settings=settings, job=job, run_ffmpeg=_run_ffmpeg_writes_output)
-
-    assert _asset_row(settings, asset["id"])["preview_status"] == "failed"
-    assert _job_row(settings, job["id"])["error_message"] == "lut file missing"
-
-
-def test_process_preview_job_image_lut_preview_fails(tmp_path):
+def test_process_preview_job_image_lut_preview_fails_before_type_validation(tmp_path):
     settings = _settings(tmp_path)
     _prepare(settings)
     asset, job = _asset_and_job(
@@ -242,7 +229,49 @@ def test_process_preview_job_image_lut_preview_fails(tmp_path):
     process_preview_job(settings=settings, job=job, run_ffmpeg=_run_ffmpeg_writes_output)
 
     assert _asset_row(settings, asset["id"])["preview_status"] == "failed"
-    assert _job_row(settings, job["id"])["error_message"] == "lut preview requires video asset"
+    assert _job_row(settings, job["id"])["error_message"] == "LOG preview unavailable"
+
+
+@pytest.mark.parametrize(
+    "payload_json",
+    [
+        "{invalid",
+        "[]",
+        "true",
+        "null",
+        '{"asset_id": true}',
+        '{"asset_id": 1.0}',
+        '{"asset_id": "1"}',
+        '{"asset_id": null}',
+    ],
+)
+def test_process_preview_job_rejects_malformed_payloads(tmp_path, payload_json):
+    settings = _settings(tmp_path)
+    _prepare(settings)
+    asset, job = _asset_and_job(settings)
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        conn.execute("UPDATE jobs SET payload_json = ? WHERE id = ?", (payload_json, job["id"]))
+        job = dict(conn.execute("SELECT * FROM jobs WHERE id = ?", (job["id"],)).fetchone())
+
+    process_preview_job(settings=settings, job=job, run_ffmpeg=_run_ffmpeg_writes_output)
+
+    assert _asset_row(settings, asset["id"])["preview_status"] == "failed"
+    assert _job_row(settings, job["id"])["status"] == "failed"
+    assert _job_row(settings, job["id"])["error_message"].startswith("job payload")
+
+
+def test_process_preview_job_allows_empty_payload(tmp_path):
+    settings = _settings(tmp_path)
+    _prepare(settings)
+    asset, job = _asset_and_job(settings)
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        conn.execute("UPDATE jobs SET payload_json = '   ' WHERE id = ?", (job["id"],))
+        job = dict(conn.execute("SELECT * FROM jobs WHERE id = ?", (job["id"],)).fetchone())
+
+    process_preview_job(settings=settings, job=job, run_ffmpeg=_run_ffmpeg_writes_output)
+
+    assert _asset_row(settings, asset["id"])["preview_status"] == "preview_ready"
+    assert _job_row(settings, job["id"])["status"] == "done"
 
 
 def test_process_preview_job_ffmpeg_failure_cleans_tmp_and_fails(tmp_path):

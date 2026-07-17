@@ -57,7 +57,7 @@ docs/development-guidelines.md
 ### 新規開発時
 1. `./guides/implementation.md` で規約確認
 2. `./guides/process.md` で作業フロー確認
-3. `.steering/[YYYYMMDD]-[task]/` を準備
+3. `.steering/[YYYYMMDD_N]-[feature-name]/` を準備
 4. `npm run lint`、`npm test`、`npx expo start` を基準に進める
 
 ### コードレビュー時

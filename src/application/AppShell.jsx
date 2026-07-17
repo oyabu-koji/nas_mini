@@ -17,6 +17,14 @@ export function AppShell() {
   const openUpload = React.useCallback(() => setRoute({ screen: 'picker', selectedAssetId: null }), []);
   const openAssets = React.useCallback(() => setRoute({ screen: 'assets', selectedAssetId: null }), []);
   const openAssetDetail = React.useCallback((assetId) => setRoute({ screen: 'assetDetail', selectedAssetId: assetId }), []);
+  const markMappingUnavailable = React.useCallback((assetId) => {
+    setRoute((currentRoute) => {
+      if (currentRoute.screen !== 'assetDetail' || currentRoute.selectedAssetId !== assetId) {
+        return currentRoute;
+      }
+      return { ...currentRoute, mappingUnavailable: true };
+    });
+  }, []);
   const openPreview = React.useCallback((assetId) => setRoute({ screen: 'previewReview', selectedAssetId: assetId }), []);
 
   return (
@@ -32,6 +40,8 @@ export function AppShell() {
         {route.screen === 'picker' ? (
           <AssetPickerScreen
             canUseApi={settingsState.canUseApi}
+            onMappingUnavailable={markMappingUnavailable}
+            onOpenAssets={openAssets}
             onOpenSettings={openSettings}
             onUploaded={openAssetDetail}
             settings={settingsState.settings}
@@ -41,6 +51,7 @@ export function AppShell() {
           <AssetListScreen
             canUseApi={settingsState.canUseApi}
             onOpenSettings={openSettings}
+            onPendingAcknowledged={openUpload}
             onSelectAsset={openAssetDetail}
             settings={settingsState.settings}
           />
@@ -50,6 +61,7 @@ export function AppShell() {
             assetId={route.selectedAssetId}
             canUseApi={settingsState.canUseApi}
             onBack={openAssets}
+            mappingUnavailable={route.mappingUnavailable === true}
             onPreview={openPreview}
             settings={settingsState.settings}
           />

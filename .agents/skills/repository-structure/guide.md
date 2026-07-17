@@ -76,7 +76,7 @@
 
 - 純粋ロジックは feature 近傍か `logic/` 近傍に置く
 - component test は feature 配下の `__tests__/`
-- 実機確認結果は `.steering/[YYYYMMDD]-[task]/tasklist.md`
+- 実機確認結果は `.steering/[YYYYMMDD_N]-[feature-name]/tasklist.md`
 
 ## コマンドとの整合
 

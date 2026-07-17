@@ -10,6 +10,7 @@ from app.repositories.jobs import (
     recover_expired_jobs,
 )
 from app.services.preview import process_preview_job
+from app.services.upload_finalize import process_upload_finalize_job
 from app.services.storage import initialize_storage
 
 
@@ -27,6 +28,8 @@ def run_once() -> bool:
         job = claim_next_job(conn, settings.job_lease_seconds, SUPPORTED_JOB_TYPES)
         if job is None:
             return False
+    if job["job_type"] == "upload_finalize":
+        return process_upload_finalize_job(settings=settings, job=job)
     return process_preview_job(settings=settings, job=job)
 
 

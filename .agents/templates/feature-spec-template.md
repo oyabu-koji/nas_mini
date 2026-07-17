@@ -1,6 +1,6 @@
 # Feature Spec Template
 
-このテンプレートは、追加機能の仕様を `docs/ideas/YYYYMMDD-[feature-name].md` として作成するときに使います。
+このテンプレートは、追加機能の仕様を `docs/ideas/YYYYMMDD_N-[feature-name].md` として作成するときに使います。
 
 ## 役割
 
@@ -16,9 +16,10 @@
 
 ## 命名規則
 
-- 形式: `YYYYMMDD-[feature-name].md`
-- 例: `20260407-login-refresh.md`
+- 形式: `YYYYMMDD_N-[feature-name].md`
+- 例: `20260407_1-login-refresh.md`
 - `YYYYMMDD` は仕様を作成または大きく更新した日付
+- `N` は同じ日付に新規作成した feature spec の `1` 始まりの連番。既存最大値に `1` を加え、削除済み番号は再利用しない
 - `[feature-name]` は英小文字のケバブケースを使う
 
 ---

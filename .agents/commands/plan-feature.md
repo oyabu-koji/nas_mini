@@ -1,14 +1,14 @@
 ---
-description: docs/ideas/YYYYMMDD-[feature-name].md を入力に steering を作成する（実装は行わない）
+description: docs/ideas/YYYYMMDD_N-[feature-name].md を入力に steering を作成する（実装は行わない）
 ---
 
 # plan-feature
 
-引数: `docs/ideas/YYYYMMDD-[feature-name].md` の個別機能仕様ファイル
+引数: `docs/ideas/YYYYMMDD_N-[feature-name].md` の個別機能仕様ファイル
 
-例: `plan-feature docs/ideas/20260407-login-refresh.md`
+例: `plan-feature docs/ideas/20260407_1-login-refresh.md`
 
-このコマンドは `docs/ideas/YYYYMMDD-[feature-name].md` の個別機能仕様をもとに、新機能の**設計のみ**を作成します。
+このコマンドは `docs/ideas/YYYYMMDD_N-[feature-name].md` の個別機能仕様をもとに、新機能の**設計のみ**を作成します。
 コードの実装は行いません。
 
 ---
@@ -21,7 +21,8 @@ description: docs/ideas/YYYYMMDD-[feature-name].md を入力に steering を作�
 - `docs/ideas/` 配下の候補ファイルを列挙し、対象ファイルを指定するよう案内する
 - 指定ファイルが存在しない場合は停止する
 - 指定ファイルが `docs/ideas/` 配下にない場合は停止する
-- 指定ファイル名が `YYYYMMDD-[feature-name].md` 形式でない場合は停止する
+- 指定ファイル名が `YYYYMMDD_N-[feature-name].md` 形式でない場合は停止する
+- `N` が `1` 以上の10進整数でない場合、または `[feature-name]` が英小文字のケバブケースでない場合は停止する
 - 指定ファイルが `docs/ideas/initial-requirements.md` の場合は停止する
 - `docs/ideas/initial-requirements.md` はプロジェクト初期要件なので、先に `setup-project` を実行するよう案内する
 
@@ -42,9 +43,9 @@ description: docs/ideas/YYYYMMDD-[feature-name].md を入力に steering を作�
 
 ## 3. 機能の理解
 
-- 指定された `docs/ideas/YYYYMMDD-[feature-name].md` を読み、以下を整理する
+- 指定された `docs/ideas/YYYYMMDD_N-[feature-name].md` を読み、以下を整理する
 - 会話中の短い補足コメントがある場合は考慮してよい
-- ただし仕様の正本は `docs/ideas/YYYYMMDD-[feature-name].md` とする
+- ただし仕様の正本は `docs/ideas/YYYYMMDD_N-[feature-name].md` とする
 
 - 機能の目的
 - ユーザー操作
@@ -56,16 +57,16 @@ description: docs/ideas/YYYYMMDD-[feature-name].md を入力に steering を作�
 
 ## 4. steeringディレクトリ作成
 
-- 仕様ファイル名をもとに対象タスク名を決める
+- 仕様ファイル名から `.md` を除いた basename を対象ディレクトリ名に使う
 - 以下のディレクトリを作成する
 
-.steering/[YYYYMMDD]-[feature-name]/
+.steering/[YYYYMMDD_N]-[feature-name]/
 
 その中に次のファイルを作成する
 
-.steering/[YYYYMMDD]-[feature-name]/requirements.md
-.steering/[YYYYMMDD]-[feature-name]/design.md
-.steering/[YYYYMMDD]-[feature-name]/tasklist.md
+.steering/[YYYYMMDD_N]-[feature-name]/requirements.md
+.steering/[YYYYMMDD_N]-[feature-name]/design.md
+.steering/[YYYYMMDD_N]-[feature-name]/tasklist.md
 
 ---
 

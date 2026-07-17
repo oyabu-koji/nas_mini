@@ -43,7 +43,7 @@
 
 ## 参照ドキュメント
 
-- `docs/ideas/YYYYMMDD-[feature-name].md` - 元の feature spec
+- `docs/ideas/YYYYMMDD_N-[feature-name].md` - 元の feature spec
 - `docs/product-requirements.md` - プロダクト要求定義書
 - `docs/functional-design.md` - 機能設計書
 - `docs/architecture.md` - アーキテクチャ設計書

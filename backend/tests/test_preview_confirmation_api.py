@@ -28,24 +28,25 @@ def _auth_cases():
     ]
 
 
-def _insert_asset(conn):
+def _insert_asset(conn, *, is_log=False):
+    ordinal = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
     return insert_asset(
         conn,
         type="video",
         filename="clip.mov",
-        original_path="originals/clip.mov",
+        original_path=f"originals/clip-{ordinal}.mov",
         size_bytes=10,
         server_sha256="abc123",
         taken_at=None,
         latitude=None,
         longitude=None,
         exif_json=None,
-        is_log=False,
+        is_log=is_log,
     )
 
 
-def _ready_preview(conn, media_root, *, path="previews/clip.mp4", mime_type="video/mp4", write_file=True):
-    asset = _insert_asset(conn)
+def _ready_preview(conn, media_root, *, path="previews/clip.mp4", mime_type="video/mp4", write_file=True, is_log=False):
+    asset = _insert_asset(conn, is_log=is_log)
     update_preview_status(conn, asset["id"], "preview_ready")
     if write_file:
         preview_path = media_root / path
@@ -140,6 +141,21 @@ def test_preview_confirmation_requires_preview_record(monkeypatch, tmp_path):
         with connect(database_path, 5000) as conn:
             asset = _insert_asset(conn)
             update_preview_status(conn, asset["id"], "preview_ready")
+
+        response = client.post(
+            f"/assets/{asset['id']}/preview-confirmation",
+            headers=_auth_headers(),
+        )
+
+    assert response.status_code == 409
+
+
+def test_preview_confirmation_rejects_log_asset_even_if_old_worker_marks_it_ready(monkeypatch, tmp_path):
+    media_root, database_path = _set_required_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        with connect(database_path, 5000) as conn:
+            asset = _ready_preview(conn, media_root, is_log=True)
 
         response = client.post(
             f"/assets/{asset['id']}/preview-confirmation",

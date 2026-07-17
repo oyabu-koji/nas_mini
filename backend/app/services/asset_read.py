@@ -61,7 +61,7 @@ def confirm_preview(settings: Settings, *, asset_id: int) -> AssetReadResponse:
         asset = get_asset(conn, asset_id)
         if asset is None:
             raise AssetNotFoundError("asset not found")
-        if asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY:
+        if bool(asset["is_log"]) or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY:
             raise PreviewNotReadyError("preview is not ready")
 
         preview = get_preview_for_asset(conn, asset_id)
@@ -85,7 +85,7 @@ def build_asset_read_response(
     preview: dict[str, Any] | None,
 ) -> AssetReadResponse:
     asset_id = int(asset["id"])
-    preview_response = _build_preview_metadata(asset_id, preview)
+    preview_response = None if bool(asset["is_log"]) else _build_preview_metadata(asset_id, preview)
 
     return AssetReadResponse(
         id=asset_id,

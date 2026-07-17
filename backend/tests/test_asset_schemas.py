@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.assets import AssetResponse, parse_upload_metadata
+from app.schemas.assets import AssetResponse, normalize_taken_at, parse_upload_metadata
 
 
 def _asset_response(original_path: str) -> AssetResponse:
@@ -75,3 +75,35 @@ def test_parse_upload_metadata_rejects_invalid_is_log():
             exif_json=None,
             is_log="yes",
         )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("2026-07-11T12:34:56", "2026-07-11T12:34:56"),
+        ("2026-07-11T12:34:56Z", "2026-07-11T12:34:56+00:00"),
+        ("2026-07-11T12:34:56+09:00", "2026-07-11T12:34:56+09:00"),
+        ("2026-07-11T12:34:56-05:00", "2026-07-11T12:34:56-05:00"),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_normalize_taken_at_accepts_only_canonical_seconds_precision(value, expected):
+    assert normalize_taken_at(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-07-11",
+        "2026-07-11 12:34:56",
+        "2026-07-11T12:34:56.123",
+        "+09:00",
+        "null",
+        "2026-02-30T12:34:56",
+        "2026-07-11T12:34:56+24:00",
+    ],
+)
+def test_normalize_taken_at_rejects_invalid_values(value):
+    with pytest.raises(ValueError):
+        normalize_taken_at(value)

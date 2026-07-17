@@ -13,7 +13,7 @@
   - `docs/development-guidelines.md`
   - `docs/glossary.md`
   - `docs/ideas/initial-requirements.md`
-  - `docs/ideas/20260602-backend-foundation.md`
+  - `docs/ideas/20260602_1-backend-foundation.md`
 
 ## Background
 
@@ -257,7 +257,7 @@ MediaVault Phase 1 MVPは、iPhoneからMac mini backendへ写真・動画のori
 - Orphan original file cleanup:
   - このfeatureでは、DB失敗時に保存済みoriginalを削除しようとし、削除できなかった場合はログに残す。
   - 本格的なorphan file検出/清掃は別featureとして扱う。
-  - Backlog: `docs/ideas/pre/pre-ideas.md`
+  - Backlog: 正式化する際は `docs/ideas/YYYYMMDD_N-orphan-original-cleanup.md` として個別 feature spec を作成する。
 
 ## Durable Docs Impact
 

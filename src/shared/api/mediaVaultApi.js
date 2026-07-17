@@ -5,8 +5,13 @@ import {
   createTimeoutError,
   messageForErrorCode,
 } from '../utils/errors';
+import { File } from 'expo-file-system';
+import { fetch as expoFetch } from 'expo/fetch';
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+export const UPLOAD_REQUEST_TIMEOUT_MS = 600000;
+export const SESSION_REQUEST_TIMEOUT_MS = 60000;
+export const SESSION_CHUNK_TIMEOUT_MS = 600000;
 
 export function normalizeBaseUrl(input) {
   const trimmed = String(input ?? '').trim();
@@ -56,6 +61,7 @@ export async function requestJson({
   headers = {},
   requiresAuth = true,
   timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  fetchImpl = fetch,
 }) {
   const requestHeaders = {
     Accept: 'application/json',
@@ -67,7 +73,7 @@ export async function requestJson({
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
-    response = await fetch(joinApiUrl(baseUrl, path), {
+    response = await fetchImpl(joinApiUrl(baseUrl, path), {
       method,
       headers: requestHeaders,
       body,
@@ -84,7 +90,7 @@ export async function requestJson({
 
   const payload = await parseJsonSafely(response);
   if (!response.ok) {
-    throw createHttpError(response.status);
+    throw createHttpError(response.status, payload?.code, payload?.retryable);
   }
   return payload;
 }
@@ -123,9 +129,89 @@ export async function uploadAsset({ settings, pickedAsset, isLog }) {
     path: '/assets/upload',
     method: 'POST',
     body: formData,
+    timeoutMs: UPLOAD_REQUEST_TIMEOUT_MS,
   });
 
   return sanitizeUploadResponse(payload);
+}
+
+export async function createUploadSession({ settings, session }) {
+  return sanitizeSession(
+    await requestJson({
+      baseUrl: settings.backendUrl,
+      apiToken: settings.apiToken,
+      path: '/upload-sessions',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(session),
+      timeoutMs: SESSION_REQUEST_TIMEOUT_MS,
+    }),
+  );
+}
+
+export async function getUploadSession({ settings, sessionId }) {
+  return sanitizeSession(
+    await requestJson({
+      baseUrl: settings.backendUrl,
+      apiToken: settings.apiToken,
+      path: `/upload-sessions/${encodeURIComponent(sessionId)}`,
+      timeoutMs: SESSION_REQUEST_TIMEOUT_MS,
+    }),
+  );
+}
+
+export async function uploadUploadSessionChunk({
+  settings,
+  sessionId,
+  uri,
+  chunkIndex,
+  offset,
+  length,
+  totalSize,
+  sha256,
+}) {
+  const file = new File(uri);
+  const body = file.slice(offset, offset + length);
+  return requestJson({
+    baseUrl: settings.backendUrl,
+    apiToken: settings.apiToken,
+    path: `/upload-sessions/${encodeURIComponent(sessionId)}/chunks/${chunkIndex}`,
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Range': `bytes ${offset}-${offset + length - 1}/${totalSize}`,
+      'X-Chunk-SHA256': sha256,
+    },
+    body,
+    timeoutMs: SESSION_CHUNK_TIMEOUT_MS,
+    fetchImpl: expoFetch,
+  });
+}
+
+export async function finalizeUploadSession({ settings, sessionId }) {
+  const payload = await requestJson({
+    baseUrl: settings.backendUrl,
+    apiToken: settings.apiToken,
+    path: `/upload-sessions/${encodeURIComponent(sessionId)}/finalize`,
+    method: 'POST',
+    timeoutMs: SESSION_REQUEST_TIMEOUT_MS,
+  });
+  return {
+    ...payload,
+    session: sanitizeSession(payload?.session),
+  };
+}
+
+export async function cancelUploadSession({ settings, sessionId }) {
+  return sanitizeSession(
+    await requestJson({
+      baseUrl: settings.backendUrl,
+      apiToken: settings.apiToken,
+      path: `/upload-sessions/${encodeURIComponent(sessionId)}`,
+      method: 'DELETE',
+      timeoutMs: SESSION_REQUEST_TIMEOUT_MS,
+    }),
+  );
 }
 
 export async function listAssets(settings) {
@@ -209,4 +295,24 @@ export function sanitizeAsset(asset) {
   const safeAsset = { ...asset };
   delete safeAsset.original_path;
   return safeAsset;
+}
+
+function sanitizeSession(session) {
+  if (!session) {
+    return null;
+  }
+  return {
+    id: session.id,
+    status: session.status,
+    size_bytes: session.size_bytes,
+    chunk_size_bytes: session.chunk_size_bytes,
+    total_chunks: session.total_chunks,
+    expected_file_sha256: session.expected_file_sha256,
+    expires_at: session.expires_at,
+    missing_chunk_indexes: Array.isArray(session.missing_chunk_indexes) ? session.missing_chunk_indexes : [],
+    retryable: Boolean(session.retryable),
+    failure_code: session.failure_code ?? null,
+    asset_id: session.asset_id ?? null,
+    finalization_job_id: session.finalization_job_id ?? null,
+  };
 }

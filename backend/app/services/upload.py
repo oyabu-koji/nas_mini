@@ -113,6 +113,7 @@ async def create_upload_asset(
                         asset_type=metadata.type,
                         is_log=metadata.is_log,
                     ),
+                    dedup_key=f"initial-preview:{asset['id']}",
                 )
             db_committed = True
 

@@ -17,6 +17,8 @@ project-root/
 ├── package.json
 ├── assets/
 │   └── ...
+├── modules/
+│   └── streaming-sha256/
 ├── src/
 │   ├── application/
 │   │   ├── navigation/
@@ -87,19 +89,21 @@ project-root/
 ### `src/shared/api/`
 
 - Backend URL、Authorizationヘッダー、API response処理を集約する。
-- Backend URLはLAN IP、Tailscale IP、MagicDNS名のprivate endpointを扱う。
+- 選択中のserver profileに対応するBackend URL、Authorization、`capabilities`、preset一覧、preview/job response処理を集約する。
+- 自宅用のBackend URLはLAN IP、Tailscale IP、MagicDNS名のprivate endpointを扱う。将来のApp Review用profileはHTTPS endpointだけを扱う。
 - Tokenをログ出力しない。
 
 ### `src/shared/services/`
 
 - `expo-media-library`、通常設定保存、`expo-secure-store`など端末依存処理を集約する。
-- Backend URLは通常設定保存領域、固定APIトークンはPhase 1から`expo-secure-store`へ保存する。
+- server profileのURL・名称は通常設定保存領域、固定APIトークンはserver IDごとに`expo-secure-store`へ保存する。初期リリースでQRコードからtokenをimportしない。
 - Tailscale接続状態そのものはアプリ内認証として扱わず、固定APIトークンを常に送信する。
 - 写真ライブラリ選択、metadata取得、local asset identifier保持、iPhone側original手動削除要求は`mediaLibraryService.js`へ閉じ込める。
 
 ### `src/features/preview-review/`
 
 - preview再生、内容確認、確認済み更新を担当する。
+- 要求・適用preset、色変換状態、Apple Log未変換表示を担当する。
 - `preview_status = preview_ready`かつ`review_status = preview_confirmed`のassetだけ、iPhone側original手動削除導線を表示する。
 - Backend側original削除APIを呼ばない。
 
@@ -112,7 +116,7 @@ project-root/
 
 ### `backend/app/core/`
 
-- `MEDIA_ROOT`、固定APIトークン、LUT path、preview設定などの環境設定。
+- `MEDIA_ROOT`、`USER_LUT_ROOT`、固定APIトークン、管理preset/manifest、preview設定などの環境設定。
 
 ### `backend/app/db/`
 
@@ -124,12 +128,17 @@ project-root/
 
 ### `backend/app/repositories/`
 
-- assets、derived_files、jobsのDB操作。
+- assets、derived_files、jobs、LUT preset/manifestのDB操作。
 
 ### `backend/app/services/`
 
-- upload保存、SHA256計算、preview生成、path生成。
+- upload保存、SHA256計算、Apple Log判定、preset検証、preview生成、path生成。
 - original非改変ルールを守る。
+
+### `modules/streaming-sha256/`
+
+- Phase 2Aで追加するin-repository Expo Module。iOS/Android native codeでlocal videoのwhole-file/byte-range SHA256をbounded memoryで計算する。
+- Expo Goでは使わず、Development Buildでのみ検証・利用する。
 
 ### `backend/app/workers/`
 
@@ -139,9 +148,9 @@ project-root/
 
 ### `backend/assets/lut/`
 
-- Backend workerがLOG preview生成時に使うLUT fileを置く。
-- Phase 1の既定LUTは`backend/assets/lut/rec709.cube`とする。
-- Docker image内では`/app/assets/lut/rec709.cube`として参照する。
+- Backend workerが管理presetとmanifestを読む場所。自前生成のApple Log to Rec.709 preset、identity/test LUTなど、リポジトリで管理可能な資産だけを置く。
+- manifestにはpreset id、source/target profile、version、SHA-256、generatorまたはsource URL、利用条件の参照を記録する。identity LUTをRec.709変換用として扱わない。
+- Docker image内では`/app/assets/lut/`として参照する。custom LUTはimageとGitへ含めず、Mac mini側のrepo外`USER_LUT_ROOT`をread-only mountして参照する。任意のLUTをMobileからuploadしない。
 
 ### `backend/pyproject.toml`, `backend/uv.lock`
 
@@ -163,6 +172,8 @@ ${MEDIA_ROOT}/
 ├── jobs/
 └── tmp/
 ```
+
+custom LUTは`${USER_LUT_ROOT}/`配下にmanifestとともに配置し、`MEDIA_ROOT`のimmutable original・derived fileとは分離する。
 
 ## 命名規則
 
@@ -205,6 +216,6 @@ backend workers -> services -> repositories -> db
 ## ドキュメント配置
 
 - `docs/ideas/initial-requirements.md`: bootstrap spec。
-- `docs/ideas/YYYYMMDD-[feature].md`: 個別仕様。
+- `docs/ideas/YYYYMMDD_N-[feature-name].md`: 個別仕様。`N` は日付ごとに `1` から採番する連番。
 - `docs/*.md`: 長期維持する設計文書。
-- `.steering/[YYYYMMDD]-[task]/`: 実装計画と進捗。
+- `.steering/[YYYYMMDD_N]-[feature-name]/`: feature spec と同じ basename を使う実装計画と進捗。

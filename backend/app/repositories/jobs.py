@@ -1,9 +1,10 @@
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
+from uuid import uuid4
 
 
-SUPPORTED_JOB_TYPES: set[str] = {"preview", "lut_preview"}
+SUPPORTED_JOB_TYPES: set[str] = {"preview", "lut_preview", "upload_finalize"}
 MAX_ERROR_MESSAGE_LENGTH = 200
 
 
@@ -19,15 +20,55 @@ def insert_job(
     conn: sqlite3.Connection,
     *,
     job_type: str,
-    asset_id: int,
+    asset_id: int | None,
     payload_json: str,
+    dedup_key: str | None = None,
 ) -> dict[str, Any]:
+    if not _has_dedup_key_column(conn):
+        cursor = conn.execute(
+            """
+            INSERT INTO jobs (job_type, status, asset_id, payload_json)
+            VALUES (?, 'queued', ?, ?)
+            """,
+            (job_type, asset_id, payload_json),
+        )
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        if row is None:
+            raise RuntimeError("inserted legacy job could not be loaded")
+        return dict(row)
+    job, _ = insert_or_return_job(
+        conn,
+        job_type=job_type,
+        asset_id=asset_id,
+        payload_json=payload_json,
+        dedup_key=dedup_key or f"adhoc:{uuid4().hex}",
+    )
+    return job
+
+
+def insert_or_return_job(
+    conn: sqlite3.Connection,
+    *,
+    job_type: str,
+    asset_id: int | None,
+    payload_json: str,
+    dedup_key: str,
+) -> tuple[dict[str, Any], bool]:
+    if not dedup_key:
+        raise ValueError("dedup key is required")
+
+    existing = get_job_by_dedup_key(conn, dedup_key)
+    if existing is not None:
+        if existing["job_type"] != job_type or existing["asset_id"] != asset_id:
+            raise ValueError("dedup key conflicts with a different job")
+        return existing, False
+
     cursor = conn.execute(
         """
-        INSERT INTO jobs (job_type, status, asset_id, payload_json)
-        VALUES (?, 'queued', ?, ?)
+        INSERT INTO jobs (job_type, status, asset_id, payload_json, dedup_key)
+        VALUES (?, 'queued', ?, ?, ?)
         """,
-        (job_type, asset_id, payload_json),
+        (job_type, asset_id, payload_json, dedup_key),
     )
     row = conn.execute(
         "SELECT * FROM jobs WHERE id = ?",
@@ -35,6 +76,39 @@ def insert_job(
     ).fetchone()
     if row is None:
         raise RuntimeError("inserted job could not be loaded")
+    return dict(row), True
+
+
+def get_job_by_dedup_key(conn: sqlite3.Connection, dedup_key: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM jobs WHERE dedup_key = ?",
+        (dedup_key,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _has_dedup_key_column(conn: sqlite3.Connection) -> bool:
+    return any(
+        row["name"] == "dedup_key"
+        for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+    )
+
+
+def requeue_retryable_finalize_job(conn: sqlite3.Connection, job_id: int) -> dict[str, Any]:
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'queued', error_message = NULL, claimed_at = NULL,
+            lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND job_type = 'upload_finalize' AND status = 'failed'
+        """,
+        (job_id,),
+    )
+    if cursor.rowcount != 1:
+        raise ValueError("finalization job is not retryable")
+    row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    if row is None:
+        raise RuntimeError("requeued job could not be loaded")
     return dict(row)
 
 
@@ -119,6 +193,38 @@ def mark_job_failed(
 ) -> None:
     sanitized_error = error_message[:MAX_ERROR_MESSAGE_LENGTH]
     with conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'failed',
+                error_message = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (sanitized_error, job_id),
+        )
+
+
+def fail_job_and_asset_preview(
+    conn: sqlite3.Connection,
+    *,
+    job_id: int,
+    asset_id: int | None,
+    error_message: str,
+) -> None:
+    """Terminally fail a preview job and its existing target asset together."""
+    sanitized_error = error_message[:MAX_ERROR_MESSAGE_LENGTH]
+    with conn:
+        if asset_id is not None:
+            conn.execute(
+                """
+                UPDATE assets
+                SET preview_status = 'failed',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (asset_id,),
+            )
         conn.execute(
             """
             UPDATE jobs

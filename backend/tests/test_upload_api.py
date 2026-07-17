@@ -111,8 +111,8 @@ def test_upload_accepts_image_and_creates_asset_and_preview_job(monkeypatch, tmp
     }
 
 
-def test_upload_accepts_video_log_and_creates_lut_preview_job(monkeypatch, tmp_path):
-    _set_required_env(monkeypatch, tmp_path)
+def test_upload_rejects_direct_video_without_creating_asset_or_job(monkeypatch, tmp_path):
+    media_root, database_path = _set_required_env(monkeypatch, tmp_path)
 
     with TestClient(app) as client:
         response = _upload(
@@ -121,11 +121,14 @@ def test_upload_accepts_video_log_and_creates_lut_preview_job(monkeypatch, tmp_p
             content=b"video-bytes",
         )
 
-    assert response.status_code == 201
+    assert response.status_code == 409
     body = response.json()
-    assert body["asset"]["type"] == "video"
-    assert body["asset"]["is_log"] is True
-    assert body["job"]["job_type"] == "lut_preview"
+    assert body == {"code": "video_session_required", "retryable": False}
+    assert "clip.mov" not in response.text
+    assert list((media_root / "originals").iterdir()) == []
+    with connect(database_path, 5000) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
 
 
 def test_upload_rejects_invalid_type(monkeypatch, tmp_path):
@@ -144,6 +147,39 @@ def test_upload_rejects_invalid_exif_json(monkeypatch, tmp_path):
         response = _upload(client, data={"exif_json": "{not-json"})
 
     assert response.status_code == 422
+
+
+def test_upload_canonicalizes_valid_taken_at(monkeypatch, tmp_path):
+    _set_required_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        utc = _upload(client, data={"taken_at": "2026-07-11T12:34:56Z"})
+        offset = _upload(client, data={"taken_at": "2026-07-11T12:34:56-05:00"})
+        local = _upload(client, data={"taken_at": "2026-07-11T12:34:56"})
+
+    assert utc.status_code == 201
+    assert utc.json()["asset"]["taken_at"] == "2026-07-11T12:34:56+00:00"
+    assert offset.status_code == 201
+    assert offset.json()["asset"]["taken_at"] == "2026-07-11T12:34:56-05:00"
+    assert local.status_code == 201
+    assert local.json()["asset"]["taken_at"] == "2026-07-11T12:34:56"
+
+
+def test_upload_rejects_invalid_taken_at(monkeypatch, tmp_path):
+    _set_required_env(monkeypatch, tmp_path)
+    invalid_values = [
+        "2026-07-11",
+        "2026-07-11 12:34:56",
+        "2026-07-11T12:34:56.123",
+        "+09:00",
+        "null",
+        "2026-02-30T12:34:56",
+    ]
+
+    with TestClient(app) as client:
+        responses = [_upload(client, data={"taken_at": value}) for value in invalid_values]
+
+    assert all(response.status_code == 422 for response in responses)
 
 
 def test_upload_rejects_too_large_file_and_cleans_tmp(monkeypatch, tmp_path):

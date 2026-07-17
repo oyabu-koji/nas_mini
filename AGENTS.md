@@ -34,8 +34,8 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 2. Run `init-project` to create the Expo managed workflow baseline
 3. Use `define-project` to create or update `docs/ideas/initial-requirements.md`
 4. Run `setup-project` to create the six durable docs
-5. Use `define-feature` to create or update `docs/ideas/YYYYMMDD-[feature-name].md`
-6. Use `plan-feature` with the target `docs/ideas/YYYYMMDD-[feature-name].md` file to create `.steering/[YYYYMMDD]-[task]/`
+5. Use `define-feature` to create or update `docs/ideas/YYYYMMDD_N-[feature-name].md`
+6. Use `plan-feature` with the target `docs/ideas/YYYYMMDD_N-[feature-name].md` file to create `.steering/[YYYYMMDD_N]-[feature-name]/`
 7. Use `implement-feature` with the target `.steering/...` directory to make changes and update `tasklist.md`
 8. Use `validate-implementation` with the same `.steering/...` directory to review the implementation strictly
 9. Start the app with `npx expo start`
@@ -44,7 +44,7 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 ### 日本語説明
 基本フローは、まず `PROJECT_CONTEXT.md` を読み、`define-project` でプロジェクト初期要件を整えてから進める形です。
 最初に `init-project` で Expo managed workflow の土台を整え、その後 `define-project` と `setup-project` で初期要件と永続ドキュメントを作成します。
-追加仕様は `define-feature` で `docs/ideas/YYYYMMDD-[feature-name].md` として管理し、設計は `plan-feature`、実装は `implement-feature`、厳しめの検証は `validate-implementation` を使います。
+追加仕様は `define-feature` で `docs/ideas/YYYYMMDD_N-[feature-name].md` として管理し、設計は `plan-feature`、実装は `implement-feature`、厳しめの検証は `validate-implementation` を使います。
 起動確認は `npx expo start`、リモート端末確認は `npx expo start --tunnel` を使います。
 
 ## Working Rules
@@ -58,7 +58,8 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 - Keep specs only in `docs/ideas/`
 - Keep workflow notes and temporary operational notes out of `docs/ideas/`; use `.agents/workspaces/` for those
 - Treat `docs/ideas/initial-requirements.md` as the bootstrap input for `setup-project`
-- Treat `docs/ideas/YYYYMMDD-[feature-name].md` as the standard input for `plan-feature`
+- Treat `docs/ideas/YYYYMMDD_N-[feature-name].md` as the standard input for `plan-feature`
+- Assign `N` per date from `1`; for a new feature spec, use one greater than the highest existing `N` for that date and do not reuse removed numbers
 - Use `define-project` for project-wide bootstrap requirements
 - Use `define-feature` only for individual feature specs
 - Keep short-term task planning in `.steering/`
@@ -75,7 +76,8 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 - 仕様は `docs/ideas/` にのみ置きます。
 - ワークフロー作業メモや一時的な運用メモは `docs/ideas/` に置かず、`.agents/workspaces/` に置きます。
 - `docs/ideas/initial-requirements.md` は `setup-project` の入力として扱います。
-- `docs/ideas/YYYYMMDD-[feature-name].md` は `plan-feature` の標準入力として扱います。
+- `docs/ideas/YYYYMMDD_N-[feature-name].md` は `plan-feature` の標準入力として扱います。
+- `N` は日付単位で `1` から採番し、新規 feature spec では既存最大値に `1` を加え、削除済み番号も再利用しません。
 - プロジェクト全体の初期要件は `define-project` で扱います。
 - 個別機能仕様は `define-feature` で扱います。
 - 短期タスク管理は `.steering/`、長期的に残す設計文書は `docs/` に置きます。
@@ -89,11 +91,11 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 ### Specs
 
 - `docs/ideas/initial-requirements.md`
-- `docs/ideas/YYYYMMDD-[feature-name].md`
+- `docs/ideas/YYYYMMDD_N-[feature-name].md`
 
 #### 日本語説明
 `docs/ideas/` は仕様専用ディレクトリです。  
-`initial-requirements.md` はプロジェクト全体の初期要件、`YYYYMMDD-[feature-name].md` は追加機能の仕様を表します。
+`initial-requirements.md` はプロジェクト全体の初期要件、`YYYYMMDD_N-[feature-name].md` は追加機能の仕様を表します。`N` は同じ日付内の作成順を表す `1` 始まりの連番です。
 ワークフロー改造メモや一時メモは `.agents/workspaces/` に置きます。
 
 ### Durable docs
@@ -110,12 +112,12 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 
 ### Task-level planning
 
-- `.steering/[YYYYMMDD]-[task]/requirements.md`
-- `.steering/[YYYYMMDD]-[task]/design.md`
-- `.steering/[YYYYMMDD]-[task]/tasklist.md`
+- `.steering/[YYYYMMDD_N]-[feature-name]/requirements.md`
+- `.steering/[YYYYMMDD_N]-[feature-name]/design.md`
+- `.steering/[YYYYMMDD_N]-[feature-name]/tasklist.md`
 
 #### 日本語説明
-各タスクごとに `.steering/[YYYYMMDD]-[task]/` を作り、要求整理、設計、進捗管理を分けて記録します。
+各 feature spec と同じ basename の `.steering/[YYYYMMDD_N]-[feature-name]/` を作り、要求整理、設計、進捗管理を分けて記録します。
 
 ## Template Notes
 

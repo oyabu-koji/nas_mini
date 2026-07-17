@@ -9,15 +9,21 @@ from app.repositories.assets import (
     update_review_status,
 )
 from app.repositories.derived_files import get_preview_for_asset, insert_derived_file
-from app.repositories.jobs import insert_job, mark_job_done, mark_job_failed
+from app.repositories.jobs import (
+    fail_job_and_asset_preview,
+    insert_job,
+    mark_job_done,
+    mark_job_failed,
+)
 
 
 def _insert_asset(conn):
+    ordinal = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
     return insert_asset(
         conn,
         type="video",
         filename="clip.mov",
-        original_path="originals/clip.mov",
+        original_path=f"originals/clip-{ordinal}.mov",
         size_bytes=10,
         server_sha256="abc123",
         taken_at=None,
@@ -144,3 +150,46 @@ def test_job_done_and_failed_helpers(tmp_path):
     assert len(failed["error_message"]) == 200
     assert done["status"] == "done"
     assert done["error_message"] is None
+
+
+def test_terminal_preview_failure_rolls_back_when_job_update_fails(tmp_path):
+    database_path = tmp_path / "db.sqlite3"
+
+    with connect(database_path, 5000) as conn:
+        run_migrations(conn)
+        with conn:
+            asset = _insert_asset(conn)
+            job = insert_job(
+                conn,
+                job_type="preview",
+                asset_id=asset["id"],
+                payload_json="{}",
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER abort_preview_failure
+                BEFORE UPDATE OF status ON jobs
+                WHEN NEW.status = 'failed'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced job update failure');
+                END;
+                """
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="forced job update failure"):
+            fail_job_and_asset_preview(
+                conn,
+                job_id=job["id"],
+                asset_id=asset["id"],
+                error_message="preview failure",
+            )
+
+        asset_row = get_asset(conn, asset["id"])
+        job_row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job["id"],)).fetchone()
+
+    assert asset_row is not None
+    assert asset_row["preview_status"] == "preview_generating"
+    assert job_row["status"] == "queued"
+import sqlite3
+
+import pytest

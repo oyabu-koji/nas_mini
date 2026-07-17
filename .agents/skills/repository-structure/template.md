@@ -199,4 +199,4 @@ npx expo start
 
 ## 実機確認の記録先
 
-- `.steering/[YYYYMMDD]-[task]/tasklist.md`
+- `.steering/[YYYYMMDD_N]-[feature-name]/tasklist.md`

@@ -7,7 +7,7 @@ description: `plan-feature` で作成した作業計画を維持し、`implement
 
 ## 役割
 
-- `.steering/[YYYYMMDD]-[task]/` を作業単位の正本として扱う
+- `.steering/[YYYYMMDD_N]-[feature-name]/` を作業単位の正本として扱う
 - `implement-feature` 中は `tasklist.md` と実装を同期する
 - 実装完了後に同じ `.steering/...` を `validate-implementation` へ引き渡せる状態を保つ
 
@@ -15,8 +15,8 @@ description: `plan-feature` で作成した作業計画を維持し、`implement
 
 1. `define-project` が `docs/ideas/initial-requirements.md` を作成または更新する
 2. `setup-project` が `docs/` の永続ドキュメント6点を作成する
-3. `define-feature` が `docs/ideas/YYYYMMDD-[feature-name].md` を作成または更新する
-4. `plan-feature <docs/ideas/YYYYMMDD-[feature-name].md>` が `.steering/...` を作成する
+3. `define-feature` が `docs/ideas/YYYYMMDD_N-[feature-name].md` を作成または更新する
+4. `plan-feature <docs/ideas/YYYYMMDD_N-[feature-name].md>` が `.steering/...` を作成する
 5. `implement-feature <.steering/...>` が `tasklist.md` に従って実装する
 6. `validate-implementation <.steering/...>` が実装を検証する
 
@@ -24,9 +24,10 @@ description: `plan-feature` で作成した作業計画を維持し、`implement
 
 - `docs/ideas/` は仕様専用ディレクトリ
 - `docs/ideas/initial-requirements.md` は `define-project` が扱う `setup-project` 用の初期要件
-- `docs/ideas/YYYYMMDD-[feature-name].md` は `define-feature` が扱う個別機能仕様
-- `plan-feature` に渡すのは `docs/ideas/YYYYMMDD-[feature-name].md`
-- `implement-feature` と `validate-implementation` に渡すのは対象 `.steering/[YYYYMMDD]-[task]/`
+- `docs/ideas/YYYYMMDD_N-[feature-name].md` は `define-feature` が扱う個別機能仕様
+- `N` は日付単位で `1` から採番し、新規 spec は既存最大値に `1` を加える
+- `plan-feature` に渡すのは `docs/ideas/YYYYMMDD_N-[feature-name].md`
+- `implement-feature` と `validate-implementation` に渡すのは、spec と同じ basename の `.steering/[YYYYMMDD_N]-[feature-name]/`
 
 ## 計画時
 

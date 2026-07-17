@@ -28,7 +28,7 @@ def _auth_cases():
     ]
 
 
-def _insert_asset(conn):
+def _insert_asset(conn, *, is_log=False):
     return insert_asset(
         conn,
         type="video",
@@ -40,12 +40,12 @@ def _insert_asset(conn):
         latitude=None,
         longitude=None,
         exif_json=None,
-        is_log=False,
+        is_log=is_log,
     )
 
 
-def _ready_preview(conn, media_root, *, content=b"0123456789", path="previews/clip.mp4", mime_type="video/mp4"):
-    asset = _insert_asset(conn)
+def _ready_preview(conn, media_root, *, content=b"0123456789", path="previews/clip.mp4", mime_type="video/mp4", is_log=False):
+    asset = _insert_asset(conn, is_log=is_log)
     update_preview_status(conn, asset["id"], "preview_ready")
     preview_path = media_root / path
     preview_path.parent.mkdir(parents=True, exist_ok=True)
@@ -197,6 +197,18 @@ def test_preview_stream_missing_preview_record(monkeypatch, tmp_path):
         response = client.get(f"/assets/{asset['id']}/preview", headers=_auth_headers())
 
     assert response.status_code == 404
+
+
+def test_preview_stream_rejects_log_asset_even_if_old_worker_marks_it_ready(monkeypatch, tmp_path):
+    media_root, database_path = _set_required_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        with connect(database_path, 5000) as conn:
+            asset = _ready_preview(conn, media_root, is_log=True)
+
+        response = client.get(f"/assets/{asset['id']}/preview", headers=_auth_headers())
+
+    assert response.status_code == 409
 
 
 def test_preview_stream_storage_failures_are_sanitized(monkeypatch, tmp_path):

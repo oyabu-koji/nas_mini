@@ -10,14 +10,14 @@ description: Deprecated. Use define-project -> setup-project -> define-feature -
 1. `define-project`
 2. `setup-project` （初期要件から永続ドキュメントを作る段階で必要）
 3. `define-feature`
-4. `plan-feature <docs/ideas/YYYYMMDD-[feature-name].md>`
+4. `plan-feature <docs/ideas/YYYYMMDD_N-[feature-name].md>`
 5. `implement-feature <.steering/...>`
 6. `validate-implementation <.steering/...>`
 
 ## 理由
 
 - 設計と実装と検証を明確に分離するため
-- `.steering/[YYYYMMDD]-[task]/` の更新責務を分かりやすくするため
+- `.steering/[YYYYMMDD_N]-[feature-name]/` の更新責務を分かりやすくするため
 - AI エージェントの役割を一貫させるため
 
 ## 置き換え手順

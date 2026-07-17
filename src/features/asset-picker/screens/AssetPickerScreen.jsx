@@ -6,8 +6,8 @@ import { MAX_UPLOAD_SIZE_BYTES } from '../../../shared/constants/assetStatuses';
 import { formatBytes } from '../../../shared/utils/fileSize';
 import { useAssetUpload } from '../hooks/useAssetUpload';
 
-export function AssetPickerScreen({ settings, canUseApi, onUploaded, onOpenSettings }) {
-  const upload = useAssetUpload({ settings, canUseApi, onUploaded });
+export function AssetPickerScreen({ settings, canUseApi, onMappingUnavailable, onOpenAssets, onUploaded, onOpenSettings }) {
+  const upload = useAssetUpload({ settings, canUseApi, onMappingUnavailable, onUploaded });
   const asset = upload.pickedAsset;
 
   return (
@@ -24,7 +24,15 @@ export function AssetPickerScreen({ settings, canUseApi, onUploaded, onOpenSetti
         </View>
       ) : null}
 
-      <ActionButton disabled={upload.status === 'picking'} label="Choose photo or video" onPress={upload.pickAsset} />
+      <ActionButton disabled={!upload.canPickAsset} label="Choose photo or video" onPress={upload.pickAsset} />
+
+      {upload.pendingLoading ? <Text style={styles.meta}>Checking the previous upload state...</Text> : null}
+      {upload.pendingUpload ? (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>A previous upload may have completed. Check the asset list before uploading again.</Text>
+          <ActionButton label="Open asset list" onPress={onOpenAssets} variant="secondary" />
+        </View>
+      ) : null}
 
       {asset ? (
         <View style={styles.summary}>
@@ -44,13 +52,16 @@ export function AssetPickerScreen({ settings, canUseApi, onUploaded, onOpenSetti
               <Text style={styles.toggleTitle}>LOG material</Text>
               <Text style={styles.meta}>Apply backend LOG preview pipeline.</Text>
             </View>
-            <Switch onValueChange={upload.setIsLog} value={upload.isLog} />
+            <Switch disabled={Boolean(upload.pendingUpload) || upload.pendingLoading} onValueChange={upload.setIsLog} value={upload.isLog} />
           </View>
           <ActionButton
             disabled={!upload.canUpload}
-            label={upload.status === 'uploading' ? 'Uploading...' : 'Upload'}
+            label={uploadLabel(asset, upload)}
             onPress={upload.startUpload}
           />
+          {asset.type === 'video' ? (
+            <VideoUploadState upload={upload} />
+          ) : null}
         </View>
       ) : null}
 
@@ -60,6 +71,55 @@ export function AssetPickerScreen({ settings, canUseApi, onUploaded, onOpenSetti
       ) : null}
     </View>
   );
+}
+
+function VideoUploadState({ upload }) {
+  const status = upload.status;
+  const progress = upload.resumableVideo?.progress;
+  const canCancel = upload.resumableVideo?.canCancel;
+
+  return (
+    <View style={styles.videoState}>
+      <Text style={styles.meta}>{videoStatusLabel(status)}</Text>
+      {progress?.totalBytes ? (
+        <Text style={styles.meta}>{formatBytes(progress.uploadedBytes)} / {formatBytes(progress.totalBytes)}</Text>
+      ) : null}
+      {canCancel ? <ActionButton label="Cancel upload" onPress={upload.resumableVideo.cancelUpload} variant="secondary" /> : null}
+    </View>
+  );
+}
+
+function uploadLabel(asset, upload) {
+  if (asset.type !== 'video') {
+    return upload.status === 'uploading' ? 'Uploading...' : 'Upload';
+  }
+  if (upload.status === 'retryable_failed') {
+    return 'Resume upload';
+  }
+  if (upload.status === 'cancelled' || upload.status === 'expired' || upload.status === 'terminal_failed') {
+    return 'Start new upload';
+  }
+  if (['resolving_local_media', 'hashing', 'creating_session', 'uploading_chunks', 'finalizing'].includes(upload.status)) {
+    return 'Uploading...';
+  }
+  return 'Upload video';
+}
+
+function videoStatusLabel(status) {
+  const labels = {
+    resolving_local_media: 'Resolving video...',
+    hashing: 'Verifying video...',
+    creating_session: 'Preparing upload...',
+    uploading_chunks: 'Uploading video...',
+    finalizing: 'Finalizing video...',
+    retryable_failed: 'Upload paused',
+    media_unavailable: 'Video unavailable',
+    cancelled: 'Upload cancelled',
+    expired: 'Upload expired',
+    terminal_failed: 'Upload failed',
+    completed: 'Upload completed',
+  };
+  return labels[status] ?? 'Ready to upload video';
 }
 
 const styles = StyleSheet.create({
@@ -85,6 +145,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     backgroundColor: '#ffffff',
+  },
+  videoState: {
+    gap: 8,
   },
   filename: {
     color: '#0f172a',

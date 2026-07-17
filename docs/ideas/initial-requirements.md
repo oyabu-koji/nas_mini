@@ -54,12 +54,13 @@ Use this document as the starting point for `setup-project`.
 - preview確認はiPhoneアプリ側で行う。
 - Phase 1のSHA256はサーバー側計算・記録であり、iPhone側期待hashとの照合は行わない。
 - Phase 2以降のhash検証はファイル完全性確認、preview確認はユーザーによる内容確認として役割を分ける。
-- LOG動画はLUT適用previewを生成できるようにする。
-- LOG素材のPhase 1 previewはRec.709変換用LUTを適用して生成する。
-- MVPでは、LOG素材かどうかはユーザーがアップロード時に選択できるようにする。
+- Apple Log previewはPhase 2Bで、Phase 2Aの`file_verified` originalに対してだけ生成する。
+- Phase 2BではApple Logを自動判定し、要求LUTが未登録または無効化済みなら、未変換であることを表示した`compress-only` previewを成功として返す。登録済みLUTの検証・適用失敗だけをpreview失敗として扱う。
+- Phase 1のLOG hint素材はLUT変換previewを生成せず、`preview_status = failed`として安全に扱う。
+- `is_log`はMobileのlegacy hintであり、正式なApple Log判定やLUT適用の根拠にしない。
 - 将来のAI解析/画像解析/動画解析に備えてjob管理方式にする。
 - Expo Goは開発初期確認のみ。
-- 実運用はApple Developer Program前提のDevelopment Build / Internal Distributionを想定する。
+- 開発時の実機確認はApple Developer Program前提のDevelopment Buildを使う。正式配布はApp StoreまたはUnlisted Appを目標とし、審査時は自宅環境から分離したHTTPS backendを用意する。
 
 ## In Scope
 
@@ -72,13 +73,13 @@ Phase 1は安全削除の本番運用ではなく、アップロードからprev
 - `104857600 bytes`を超える大容量ProRes/LOG動画の本番退避はPhase 2以降のchunk/resume uploadで扱う。
 - iPhoneアプリからoriginalファイルを選択する。
 - 可能な範囲で撮影日時・位置情報・EXIFを取得する。
-- LOG素材として扱うかをユーザーが選択できる。
+- LOG素材として扱うかのユーザー選択はlegacy hintとして保存できるが、Phase 1のpreview変換を許可しない。
 - Mac miniへ通常アップロードする。
 - `originals` ディレクトリへ保存する。
 - Mac mini側でSHA256を計算して記録する。
 - preview生成jobを登録する。
 - ffmpegでpreviewを生成する。
-- LOG対象動画はLUT適用previewを生成する。
+- LOG hint対象動画はPhase 1 safety gateでpreviewをfailedにする。
 - iPhoneアプリでpreviewをダウンロード/再生する。
 - ユーザーがpreviewを確認する。
 - `review_status` を `preview_confirmed` に更新する。
@@ -89,8 +90,8 @@ Phase 1は安全削除の本番運用ではなく、アップロードからprev
 - 取得できるメタデータはOS/APIが返せる範囲に限定する。
 - 取得できないEXIF、位置情報、撮影日時はnullableとして扱う。
 - iCloud上にあり端末ローカルに存在しない素材は、Phase 1では対象外またはアップロード失敗として扱う。
-- ProRes/LOGの自動判定はPhase 1では行わない。
-- LOG素材かどうかはユーザー選択を正とする。
+- ProRes/Apple Logの自動判定はPhase 1では行わない。
+- LOG hintは正式判定ではなく、Phase 2Bのapproved detector manifestだけがApple Log変換を許可する。
 - 実運用に必要な権限・ファイルアクセス検証はDevelopment Buildで行う。
 
 ### Phase 1 Security Assumptions
@@ -110,13 +111,13 @@ Phase 1は安全削除の本番運用ではなく、アップロードからprev
 - Resolution: 1080p upper bound, aspect ratio preserved
 - Color:
   - Non-LOG素材は通常previewを生成する。
-  - LOG指定素材はRec.709変換用LUTを適用したpreviewを生成する。
+  - LOG hint素材はPhase 1ではpreviewをfailedにする。Phase 2Bでは高信頼にApple Logを自動判定し、承認済みpresetがあればRec.709 preview、なければ未変換表示付き`compress-only` previewを生成する。
 - Image preview:
   - Format: JPEG
   - Resolution: 長辺2048px上限、縦横比を維持する。
   - EXIF orientationを反映した表示向きで生成する。
 - LUT:
-  - Rec.709変換用LUTをbackend設定で指定できるようにする。
+  - Phase 2Bでは自前生成または利用条件を確認済みのApple Log to Rec.709 presetと、Mac mini側でmanifest管理するcustom LUTをserver presetとして使う。MobileからLUTファイルをuploadしない。
   - originalにはLUTを適用しない。
 
 ### MVP対象外だが将来必須の機能
@@ -228,18 +229,19 @@ Phase 1は安全削除の本番運用ではなく、アップロードからprev
 
 ### Phase 2 API
 
+- `POST /assets/upload`
+  - 新規video uploadは `409 video_session_required` で拒否し、imageはPhase 1と同じdirect uploadを維持する。
 - `POST /upload-sessions`
   - upload sessionを作成する。
-  - iPhone側で算出した `expected_file_sha256` を登録する。
-- `PUT /upload-sessions/{session_id}/chunks/{chunk_index}`
-  - chunkをアップロードする。
-  - chunk hashを送る。
+  - Mobileの`client_upload_id`、iPhone側で算出した`expected_file_sha256`、immutable metadataを登録する。
 - `GET /upload-sessions/{session_id}`
-  - session状態とアップロード済みchunkを取得する。
-- `POST /upload-sessions/{session_id}/complete`
-  - 全chunk完了後に結合と全体SHA256計算を開始する。
-- `POST /upload-sessions/{session_id}/resume`
-  - resumeに必要な状態を返す。
+  - session状態、missing chunk、retryable failure、completed asset/jobを取得する。
+- `PUT /upload-sessions/{session_id}/chunks/{chunk_index}`
+  - 固定byte rangeとchunk hashを送る。
+- `POST /upload-sessions/{session_id}/finalize`
+  - 全chunk検証後に一意な`upload_finalize` jobを開始またはretryable failureから再queueする。
+- `DELETE /upload-sessions/{session_id}`
+  - 未完了sessionをcancelし、temporary chunk cleanupを要求する。
 
 ## DB Design
 
@@ -335,11 +337,10 @@ MediaVaultは将来の安全削除候補判定に備え、状態を役割ごと�
 
 - `not_started`
 - `server_hash_recorded`
-- `chunk_verified`
 - `file_verified`
 - `failed`
 
-Phase 1では `server_hash_recorded` までを扱う。`chunk_verified` と `file_verified` はPhase 2以降で扱う。
+Phase 1では `server_hash_recorded` までを扱う。Phase 2ではassetを結合後hash一致時に作成して`file_verified`にする。chunk検証はasset statusではなく`upload_chunks.status = verified`で表す。
 
 ### preview_status
 
@@ -369,6 +370,9 @@ Phase 2以降で、以下をすべて満たした場合のみ `safe_to_delete_ca
 - `assets.verification_status = file_verified`
   - iPhone側の `expected_file_sha256` とMac mini側の `server_sha256` が一致している。
 - `assets.preview_status = preview_ready`
+- Phase 2Cのvideoでは、`assets.formal_preview_id`が対応するpreview provenanceを指す。
+  - `log_detection_status = apple_log`では、有効なLUTを適用した`transform_kind = lut`の完全なLUT provenance、または`transform_kind = none`、`applied_preset_id = compress-only`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を持つ未変換fallback provenanceを要求する。
+  - `log_detection_status = not_log`または`unknown`では、`transform_kind = none`と対応する色変換状態を持つprovenanceを要求する。有効なユーザー選択LUTを適用した場合だけ`transform_kind = lut`を許可する。
 - `assets.review_status = preview_confirmed`
 
 ## Directory Structure
@@ -484,7 +488,7 @@ Tasks:
   - Select photo/video from iPhone library.
   - Read available metadata: taken_at, location, EXIF where possible.
   - Treat missing metadata as nullable.
-  - Allow user to mark an upload as LOG material.
+  - Allow the user to record `is_log` only as a legacy metadata hint; it does not select a transform in Phase 1.
   - Configure backend URL and fixed API token in Settings.
   - Upload selected file with metadata to backend.
   - Show upload progress/status.
@@ -505,7 +509,7 @@ Tasks:
   - Register preview generation job.
   - Run ffmpeg preview generation.
   - Generate H.264 MP4 preview with 1080p upper bound.
-  - Generate Rec.709 LUT-applied preview for LOG assets.
+  - Treat a Phase 1 video with the legacy `is_log` hint as a failed preview rather than applying an unverified LUT.
   - Generate JPEG image preview with 2048px long-edge upper bound and applied EXIF orientation.
   - Serve preview files.
   - Implement preview confirmation endpoint.
@@ -559,7 +563,7 @@ Backlog:
 - Backend computes and records server SHA256 without claiming end-to-end hash verification in Phase 1.
 - Backend creates a preview generation job.
 - Backend generates an H.264 MP4 preview with 1080p upper bound using ffmpeg.
-- LOG-marked videos can produce Rec.709 LUT-applied preview.
+- A Phase 1 LOG hint never produces a LUT-applied preview; it remains failed until the Phase 2B Apple Log capability is available.
 - Image assets can produce JPEG preview with 2048px long-edge upper bound and applied EXIF orientation.
 - iPhone app can fetch and play/download the preview.
 - User can mark preview as confirmed.
@@ -578,7 +582,7 @@ Backlog:
 
 ## Open Questions
 
-- Which concrete Rec.709 LUT file should be bundled or configured for LOG preview in Phase 1?
+- Which Apple Log auto-detection evidence, self-generated transform parameters, quality threshold, and LUT manifest schema satisfy the Phase 2B implementation gate?
 - Which preview bitrate should be the default?
 - How should the Phase 1 single worker be supervised and restarted in Docker?
 - What local network discovery or backend URL setup is required for iPhone to connect to Mac mini?

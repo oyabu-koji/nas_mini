@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["StreamingSha256Module"]
+  },
+  "android": {
+    "modules": ["expo.modules.streamingsha256.StreamingSha256Module"]
+  }
+}
