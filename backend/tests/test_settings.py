@@ -20,11 +20,13 @@ def test_load_settings_defaults(monkeypatch, tmp_path):
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "db.sqlite3"))
     monkeypatch.delenv("SQLITE_BUSY_TIMEOUT_MS", raising=False)
     monkeypatch.delenv("JOB_LEASE_SECONDS", raising=False)
+    monkeypatch.delenv("PROCESSED_RESULT_RECOVERY_GRACE_SECONDS", raising=False)
 
     settings = load_settings()
 
     assert settings.sqlite_busy_timeout_ms == 5000
     assert settings.job_lease_seconds == 300
+    assert settings.processed_result_recovery_grace_seconds == 300
     assert settings.upload_session_chunk_size_bytes == 8_388_608
     assert settings.upload_session_max_size_bytes == 1_099_511_627_776
     assert settings.upload_session_active_limit == 2
@@ -63,6 +65,7 @@ def test_load_settings_allows_upload_session_limits_to_be_overridden(monkeypatch
     monkeypatch.setenv("UPLOAD_SESSION_ACTIVE_LIMIT", "3")
     monkeypatch.setenv("UPLOAD_SESSION_EXPIRY_SECONDS", "60")
     monkeypatch.setenv("UPLOAD_SESSION_RETRY_AFTER_SECONDS", "5")
+    monkeypatch.setenv("PROCESSED_RESULT_RECOVERY_GRACE_SECONDS", "20")
 
     settings = load_settings()
 
@@ -71,6 +74,7 @@ def test_load_settings_allows_upload_session_limits_to_be_overridden(monkeypatch
     assert settings.upload_session_active_limit == 3
     assert settings.upload_session_expiry_seconds == 60
     assert settings.upload_session_retry_after_seconds == 5
+    assert settings.processed_result_recovery_grace_seconds == 20
 
 
 def test_settings_error_does_not_include_token_value(monkeypatch, tmp_path):

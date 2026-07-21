@@ -1,12 +1,17 @@
 import json
+import hashlib
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.db.connection import connect
 from app.main import app
-from app.repositories.assets import insert_asset, update_preview_status
+from app.repositories.assets import insert_asset, insert_verified_video_asset, update_preview_status
 from app.repositories.derived_files import insert_derived_file
+from app.repositories.processed_results import (
+    insert_ready_processed_result,
+    set_active_processed_result,
+)
 
 
 def _set_required_env(monkeypatch, tmp_path):
@@ -44,6 +49,66 @@ def _insert_asset(conn, *, filename="clip.mov"):
         exif_json=json.dumps({"camera": "iPhone"}, separators=(",", ":")),
         is_log=False,
     )
+
+
+def _insert_deliverable_phase2a_asset(conn, media_root):
+    content = b"processed-result"
+    asset = insert_verified_video_asset(
+        conn,
+        filename="phase2a.mov",
+        original_path="originals/phase2a.mov",
+        size_bytes=10,
+        server_sha256="a" * 64,
+        taken_at=None,
+        latitude=None,
+        longitude=None,
+        exif_json=None,
+        is_log=False,
+    )
+    update_preview_status(conn, asset["id"], "preview_ready")
+    relative_path = "previews/" + "a" * 32 + ".mp4"
+    (media_root / relative_path).parent.mkdir(parents=True, exist_ok=True)
+    (media_root / relative_path).write_bytes(content)
+    derived = insert_derived_file(
+        conn,
+        asset_id=asset["id"],
+        kind="preview",
+        path=relative_path,
+        mime_type="video/mp4",
+        size_bytes=len(content),
+    )
+    result, _created = insert_ready_processed_result(
+        conn,
+        asset_id=asset["id"],
+        derived_file_id=derived["id"],
+        mime_type="video/mp4",
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+        result_id="b" * 32,
+    )
+    set_active_processed_result(conn, asset_id=asset["id"], result_id=result["id"])
+    conn.execute(
+        """
+        INSERT INTO upload_sessions (
+            id, client_upload_id, type, filename, size_bytes,
+            expected_file_sha256, chunk_size_bytes, original_relative_path,
+            status, last_activity_at, expires_at, asset_id
+        ) VALUES (?, ?, 'video', ?, ?, ?, ?, ?, 'completed', ?, ?, ?)
+        """,
+        (
+            "phase2a-session",
+            "phase2a-client",
+            "phase2a.mov",
+            10,
+            "a" * 64,
+            10,
+            "originals/phase2a.mov",
+            "2026-07-18T00:00:00+00:00",
+            "2026-07-25T00:00:00+00:00",
+            asset["id"],
+        ),
+    )
+    return asset, result, relative_path
 
 
 def test_asset_list_requires_authentication(monkeypatch, tmp_path):
@@ -110,6 +175,7 @@ def test_asset_list_returns_pagination_order_and_preview_metadata(monkeypatch, t
     assert "local_delete_status" not in body["items"][0]
     assert "previews/second.mp4" not in response.text
     assert str(media_root) not in response.text
+    assert "active_processed_result" not in body["items"][0]
 
 
 def test_asset_list_validates_pagination(monkeypatch, tmp_path):
@@ -156,3 +222,28 @@ def test_asset_detail_missing_returns_404(monkeypatch, tmp_path):
         response = client.get("/assets/999", headers=_auth_headers())
 
     assert response.status_code == 404
+
+
+def test_asset_detail_returns_only_verified_active_processed_result(monkeypatch, tmp_path):
+    media_root, database_path = _set_required_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        with connect(database_path, 5000) as conn:
+            with conn:
+                asset, result, relative_path = _insert_deliverable_phase2a_asset(conn, media_root)
+
+        detail = client.get(f"/assets/{asset['id']}", headers=_auth_headers())
+        listing = client.get("/assets", headers=_auth_headers())
+        (media_root / relative_path).unlink()
+        missing_file_detail = client.get(f"/assets/{asset['id']}", headers=_auth_headers())
+
+    assert detail.status_code == 200
+    active = detail.json()["active_processed_result"]
+    assert active["result_id"] == result["id"]
+    assert active["url"] == f"/assets/{asset['id']}/results/{result['id']}"
+    assert active["sha256"] == result["sha256"]
+    assert "id" not in active
+    assert "active_processed_result" not in listing.json()["items"][0]
+    assert missing_file_detail.status_code == 200
+    assert missing_file_detail.json()["active_processed_result"] is None
+    assert relative_path not in missing_file_detail.text

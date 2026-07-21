@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 AssetType = Literal["image", "video"]
@@ -73,7 +73,7 @@ class PreviewMetadataResponse(BaseModel):
     created_at: str
 
 
-class AssetReadResponse(BaseModel):
+class AssetReadBaseResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -96,8 +96,30 @@ class AssetReadResponse(BaseModel):
     preview: PreviewMetadataResponse | None
 
 
+class ProcessedResultMetadataResponse(BaseModel):
+    result_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    mime_type: str
+    size_bytes: int = Field(gt=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: str
+    url: str
+
+
+class AssetListItemResponse(AssetReadBaseResponse):
+    pass
+
+
+class AssetDetailResponse(AssetReadBaseResponse):
+    active_processed_result: ProcessedResultMetadataResponse | None
+
+
+# Kept as an import-compatible name for existing callers while list and detail
+# now have separate response models.
+AssetReadResponse = AssetDetailResponse
+
+
 class AssetListResponse(BaseModel):
-    items: list[AssetReadResponse]
+    items: list[AssetListItemResponse]
     limit: int
     offset: int
     total: int

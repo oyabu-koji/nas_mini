@@ -49,6 +49,10 @@
 
 - screenからExpo APIやHTTP clientを直接呼ばない。
 - `expo-media-library`など端末APIはserviceに閉じ込める。
+- 処理済みvideo保存はAsset Detailの明示操作だけで開始し、`processedResultSaveStore`をsource originalのmapping storeから分離する。保存成功は`review_status`、削除候補、source original mappingを変更しない。
+- processed result downloadはasset/result IDから再構築したcanonical same-origin pathだけを使う。responseのabsolute URL、query、fragment、path不一致にはAuthorization headerを送らない。
+- `video/mp4`だけを検証済みresult ID由来のcache `.mp4`へdownloadし、response header、size、native streaming SHA-256が一致してから写真ライブラリへ保存する。token、URI、storage pathをAsyncStorageへ保存しない。
+- 写真ライブラリpermissionは保存操作時だけ要求する。`createAssetAsync`直前に`unknown` write-ahead recordを永続化し、saved recordを書いてからtemporary fileをbest-effort cleanupする。保存結果が不明なら自動再保存しない。
 - 固定APIトークンをログ出力しない。
 - metadata欠落をエラーにせずnullableとして扱う。
 - `taken_at` は秒精度の ISO 8601 datetime に正規化する。正規化不能なEXIF日時やoffset単体はnullとして送信し、文字列`null`を送らない。
@@ -76,11 +80,13 @@
 - retryable finalizationだけは同一`upload_finalize` jobを`failed -> queued`へ戻せる。terminal failureをgeneric workerが再queueしてはならない。
 - 大容量動画のSHA256はnative streaming moduleで計算する。chunk digestを再hashしてcompleted-file digestとしてはならず、videoをJS memoryへ全量読み込みしてはならない。
 - ffmpegはoriginalを読み取り入力とし、derived fileを別パスへ生成する。
+- processed resultはready video derived fileのimmutable identityとして扱う。active pointerはsame-assetのready resultだけを指し、new result、old result supersede、pointer、asset preview state、preview job完了は同一transactionで確定する。
+- result delivery endpointはasset/resultを同時に検索し、shared deliverability serviceでfile integrityとPhase 2A/2B gateを検証する。inactive resultを新active resultのbytesに置換して返さない。
 - Apple Log判定とLUT適用はoriginal確定後のworkerだけが行う。要求presetが未登録または無効化済みなら、`compress-only` previewを成功として生成し、`color_transform_status = unavailable`と`color_transform_error_code = lut_preset_unavailable`をprovenanceへ保存する。登録済みLUTのmanifest/hash/形式/FFmpeg適用失敗だけはpreviewをfailedにする。
 - LUTは管理manifestを持つserver presetだけを使い、Mobileまたはasset単位の任意file uploadを受け付けない。custom LUTはrepo外の`USER_LUT_ROOT`で管理し、workerは要求・適用preset、version、SHA-256、色変換状態をprovenanceへ保存する。Apple Log fallbackと非Logは`transform_kind = none`、適用済みLUTは`transform_kind = lut`とする。
 - `file_verified`動画の`preview_ready`、stream、confirmationは`formal_preview_id`とそのprovenanceを検証する。Phase 1 direct image/videoはこのPhase 2B triggerの対象外とする。
 - 外部SSD未接続、容量不足、I/O失敗を明示的に扱う。
-- `/assets/upload`, `/upload-sessions`, `/upload-sessions/{session_id}`, `/upload-sessions/{session_id}/chunks/{chunk_index}`, `/upload-sessions/{session_id}/finalize`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`は固定APIトークンを要求する。
+- `/assets/upload`, `/upload-sessions`, `/upload-sessions/{session_id}`, `/upload-sessions/{session_id}/chunks/{chunk_index}`, `/upload-sessions/{session_id}/finalize`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/results/{result_id}`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`は固定APIトークンを要求する。
 - API要求は`Authorization: Bearer <token>`形式とする。
 - Tailscaleは通信経路であり、backend認証の代替にはしない。
 
@@ -92,6 +98,7 @@
 - `review_status`: ユーザー確認状態のみ。
 - `delete_candidate_status`: 安全削除候補状態のみ。
 - `local_delete_status`: Mobile側local stateとして、iPhone側original手動削除状態のみ。Backend asset statusではない。
+- processed result save state: Mobile側local stateとして、処理済みcopyの保存状態のみ。source original削除状態やBackend asset statusではない。
 - 単一status列へ再統合しない。
 
 ## Jobルール
@@ -119,6 +126,8 @@
 - component/実機 test: 未登録または無効化済みLUTのApple Log assetで、未変換表示付き`preview_ready`、再生、confirmation、削除導線を確認する。登録済みだが不正なLUTの`failed` assetには同導線を出さない。mapping未取得時に削除導線を出さないことも確認する。
 - component test: Settings、Asset Picker、Upload Queue、Preview Review。
 - unit/component test: iPhone側original削除導線がpreview確認後だけ表示されること。
+- unit/component test: canonical processed-result URL以外へtokenを送らないこと、header/size/digest mismatchで写真ライブラリへ保存しないこと、unknown write-ahead/save cleanup順序、source-original mappingとの非参照を確認する。
+- 実機確認: Development Buildでprocessed resultのdownload、permission denial、network interruption、無進捗timeout、cancel、supersession、unknown outcome、restart cleanupを確認する。
 - 実機確認: Development Buildで権限許可/拒否、iCloud-only素材、metadata欠落、ライブラリアクセス、TailscaleまたはLAN経由の通信、preview再生、削除キャンセルを確認する。
 
 ### Backend
@@ -130,6 +139,7 @@
 - API/worker test: Apple Logの高信頼判定、未登録presetの`compress-only` fallback、登録済みLUTのhash検証、provenance付きready、temporary safety triggerの置換を確認する。
 - API/worker test: session create/chunk/finalizeのidempotency、concurrent finalize、lease reclaim、promote後DB失敗、commit後timeout、expiry/cancel、`upload_finalize`の復旧を確認する。
 - API/worker test: Apple Logと非Logのformal provenance、`preview_ready`を拒否するSQLite trigger、stream/confirmationのprovenance gateを確認する。
+- migration/API test: processed resultのFK、active pointer trigger、transaction rollback/backfill、inactive/cross-asset result、`200`/`206`/`416` Range delivery、descriptor open前後のpointer切替を確認する。
 - migration test: Phase 2B profile-aware jobのdedup insert成功時だけasset generation/stateを更新し、queued/done/failed jobが既存の再実行ではstateを戻さないこと、generation `0`の旧Phase 2A jobがlate commitしてもformal preview/review stateを変更しないことを確認する。
 - 実機 test: Apple Log、通常動画、判定不能動画でのpreview表示と、Phase 2Aのchunk完了後だけpreview jobが登録されることを確認する。
 - integration test: tmp保存、original確定保存、ffmpeg成功/失敗、SSD未接続、容量不足。

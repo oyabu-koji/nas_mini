@@ -20,6 +20,14 @@ def get_preview_for_asset(conn: sqlite3.Connection, asset_id: int) -> dict[str, 
     return dict(row) if row is not None else None
 
 
+def get_derived_file(conn: sqlite3.Connection, derived_file_id: int) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM derived_files WHERE id = ?",
+        (derived_file_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
 def insert_derived_file(
     conn: sqlite3.Connection,
     *,

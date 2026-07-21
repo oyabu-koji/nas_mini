@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -6,7 +7,7 @@ import pytest
 from app.core.settings import Settings
 from app.db.connection import connect
 from app.db.migrations import run_migrations
-from app.repositories.assets import insert_asset
+from app.repositories.assets import insert_asset, insert_verified_video_asset
 from app.repositories.derived_files import insert_derived_file
 from app.repositories.jobs import insert_job
 from app.services import ffmpeg
@@ -93,6 +94,64 @@ def _asset_row(settings: Settings, asset_id: int):
         return conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
 
 
+def _phase2a_existing_preview(settings: Settings, *, name: str):
+    content = b"existing-phase2a-preview"
+    relative_path = "previews/" + name * (32 // len(name)) + ".mp4"
+    preview_path = settings.media_root / relative_path
+    preview_path.write_bytes(content)
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        with conn:
+            asset = insert_verified_video_asset(
+                conn,
+                filename=f"{name}.mov",
+                original_path=f"originals/{name}.mov",
+                size_bytes=10,
+                server_sha256="a" * 64,
+                taken_at=None,
+                latitude=None,
+                longitude=None,
+                exif_json=None,
+                is_log=False,
+            )
+            derived = insert_derived_file(
+                conn,
+                asset_id=asset["id"],
+                kind="preview",
+                path=relative_path,
+                mime_type="video/mp4",
+                size_bytes=len(content),
+            )
+            job = insert_job(
+                conn,
+                job_type="preview",
+                asset_id=asset["id"],
+                payload_json="{}",
+                dedup_key=f"preview-existing:{name}",
+            )
+            conn.execute(
+                """
+                INSERT INTO upload_sessions (
+                    id, client_upload_id, type, filename, size_bytes,
+                    expected_file_sha256, chunk_size_bytes, original_relative_path,
+                    status, last_activity_at, expires_at, asset_id
+                ) VALUES (?, ?, 'video', ?, ?, ?, ?, ?, 'completed', ?, ?, ?)
+                """,
+                (
+                    f"session-existing-{name}",
+                    f"client-existing-{name}",
+                    f"{name}.mov",
+                    10,
+                    "a" * 64,
+                    10,
+                    f"originals/{name}.mov",
+                    "2026-07-18T00:00:00+00:00",
+                    "2026-07-25T00:00:00+00:00",
+                    asset["id"],
+                ),
+            )
+    return asset, derived, job, preview_path
+
+
 def test_process_preview_job_success_video(tmp_path):
     settings = _settings(tmp_path)
     _prepare(settings)
@@ -106,6 +165,7 @@ def test_process_preview_job_success_video(tmp_path):
 
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         derived = conn.execute("SELECT * FROM derived_files").fetchone()
+        result_count = conn.execute("SELECT COUNT(*) FROM processed_results").fetchone()[0]
 
     assert processed is True
     assert derived["kind"] == "preview"
@@ -115,6 +175,7 @@ def test_process_preview_job_success_video(tmp_path):
     assert (settings.media_root / asset["original_path"]).read_bytes() == b"original"
     assert _asset_row(settings, asset["id"])["preview_status"] == "preview_ready"
     assert _job_row(settings, job["id"])["status"] == "done"
+    assert result_count == 0
 
 
 def test_process_preview_job_success_image(tmp_path):
@@ -131,10 +192,12 @@ def test_process_preview_job_success_image(tmp_path):
 
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         derived = conn.execute("SELECT * FROM derived_files").fetchone()
+        result_count = conn.execute("SELECT COUNT(*) FROM processed_results").fetchone()[0]
 
     assert derived["mime_type"] == "image/jpeg"
     assert derived["path"].endswith(".jpg")
     assert _asset_row(settings, asset["id"])["preview_status"] == "preview_ready"
+    assert result_count == 0
 
 
 def test_process_preview_job_lut_preview_fails_without_ffmpeg(tmp_path):
@@ -337,6 +400,67 @@ def test_process_preview_job_existing_preview_record_missing_file_fails(tmp_path
     assert _asset_row(settings, asset["id"])["preview_status"] == "failed"
 
 
+def test_existing_phase2a_preview_replay_backfills_missing_active_result(tmp_path):
+    settings = _settings(tmp_path)
+    _prepare(settings)
+    asset, derived, job, _preview_path = _phase2a_existing_preview(settings, name="a")
+
+    process_preview_job(settings=settings, job=job)
+
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        active = conn.execute(
+            """
+            SELECT processed_results.*
+            FROM assets
+            JOIN processed_results ON processed_results.id = assets.active_processed_result_id
+            WHERE assets.id = ?
+            """,
+            (asset["id"],),
+        ).fetchone()
+
+    assert active is not None
+    assert active["derived_file_id"] == derived["id"]
+    assert _asset_row(settings, asset["id"])["preview_status"] == "preview_ready"
+    assert _job_row(settings, job["id"])["status"] == "done"
+
+
+def test_existing_phase2a_preview_replay_marks_retryable_backfill_failure_without_hiding_preview(
+    monkeypatch,
+    tmp_path,
+):
+    settings = _settings(tmp_path)
+    _prepare(settings)
+    asset, _derived, job, preview_path = _phase2a_existing_preview(settings, name="b")
+
+    def raise_database_error(*_args, **_kwargs):
+        raise sqlite3.OperationalError("forced database error")
+
+    monkeypatch.setattr("app.services.preview.finalize_ready_processed_result", raise_database_error)
+
+    process_preview_job(settings=settings, job=job)
+
+    assert preview_path.exists()
+    assert _asset_row(settings, asset["id"])["preview_status"] == "preview_ready"
+    assert _job_row(settings, job["id"])["status"] == "failed"
+    assert _job_row(settings, job["id"])["error_message"] == "processed_result_backfill_retryable_failure"
+
+
+def test_existing_phase2a_preview_replay_marks_integrity_failure_terminal(tmp_path):
+    settings = _settings(tmp_path)
+    _prepare(settings)
+    asset, _derived, job, preview_path = _phase2a_existing_preview(settings, name="c")
+    preview_path.write_bytes(b"corrupt")
+
+    process_preview_job(settings=settings, job=job)
+
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        result_count = conn.execute("SELECT COUNT(*) FROM processed_results").fetchone()[0]
+
+    assert result_count == 0
+    assert _asset_row(settings, asset["id"])["preview_status"] == "failed"
+    assert _job_row(settings, job["id"])["status"] == "failed"
+
+
 def test_process_preview_job_db_failure_after_move_cleans_confirmed_preview(
     monkeypatch,
     tmp_path,
@@ -345,10 +469,10 @@ def test_process_preview_job_db_failure_after_move_cleans_confirmed_preview(
     _prepare(settings)
     asset, job = _asset_and_job(settings)
 
-    def raise_insert_error(*args, **kwargs):
+    def raise_finalize_error(*args, **kwargs):
         raise RuntimeError("database write failed")
 
-    monkeypatch.setattr("app.services.preview.insert_derived_file", raise_insert_error)
+    monkeypatch.setattr("app.services.preview.finalize_ready_processed_result", raise_finalize_error)
 
     processed = process_preview_job(
         settings=settings,
@@ -362,6 +486,53 @@ def test_process_preview_job_db_failure_after_move_cleans_confirmed_preview(
     job_row = _job_row(settings, job["id"])
     assert job_row["status"] == "failed"
     assert job_row["error_message"] == "database failure"
+
+
+def test_phase2a_finalizer_failure_cleans_promoted_preview_and_marks_terminal_failure(
+    monkeypatch,
+    tmp_path,
+):
+    settings = _settings(tmp_path)
+    _prepare(settings)
+    asset, job = _asset_and_job(settings)
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        with conn:
+            conn.execute(
+                "UPDATE assets SET verification_status = 'file_verified' WHERE id = ?",
+                (asset["id"],),
+            )
+            conn.execute(
+                """
+                INSERT INTO upload_sessions (
+                    id, client_upload_id, type, filename, size_bytes,
+                    expected_file_sha256, chunk_size_bytes, original_relative_path,
+                    status, last_activity_at, expires_at, asset_id
+                ) VALUES ('phase2a-finalizer-failure', 'phase2a-finalizer-failure-client',
+                          'video', 'input.mov', 8, ?, 8, 'originals/input.mov',
+                          'completed', ?, ?, ?)
+                """,
+                (
+                    "a" * 64,
+                    "2026-07-18T00:00:00+00:00",
+                    "2026-07-25T00:00:00+00:00",
+                    asset["id"],
+                ),
+            )
+
+    def raise_finalize_error(*_args, **_kwargs):
+        raise RuntimeError("forced finalizer failure")
+
+    monkeypatch.setattr("app.services.preview.finalize_ready_processed_result", raise_finalize_error)
+
+    process_preview_job(settings=settings, job=job, run_ffmpeg=_run_ffmpeg_writes_output)
+
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        result_count = conn.execute("SELECT COUNT(*) FROM processed_results").fetchone()[0]
+
+    assert list((settings.media_root / "previews").iterdir()) == []
+    assert result_count == 0
+    assert _asset_row(settings, asset["id"])["preview_status"] == "failed"
+    assert _job_row(settings, job["id"])["status"] == "failed"
 
 
 def test_process_preview_job_mkdir_failure_marks_storage_failure(

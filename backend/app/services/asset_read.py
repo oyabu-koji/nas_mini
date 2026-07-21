@@ -12,12 +12,15 @@ from app.repositories.assets import (
 )
 from app.repositories.derived_files import get_preview_for_asset
 from app.schemas.assets import (
+    AssetDetailResponse,
+    AssetListItemResponse,
     AssetListResponse,
-    AssetReadResponse,
+    ProcessedResultMetadataResponse,
     PreviewMetadataResponse,
     exif_json_from_text,
 )
 from app.services.storage import StorageError, resolve_media_path
+from app.services.processed_result_delivery import resolve_deliverable_result
 
 
 class AssetNotFoundError(RuntimeError):
@@ -38,7 +41,7 @@ def list_asset_reads(
         assets = list_assets(conn, limit=limit, offset=offset)
         total = count_assets(conn)
         items = [
-            build_asset_read_response(
+            build_asset_list_item_response(
                 asset=asset,
                 preview=get_preview_for_asset(conn, int(asset["id"])),
             )
@@ -47,16 +50,25 @@ def list_asset_reads(
     return AssetListResponse(items=items, limit=limit, offset=offset, total=total)
 
 
-def get_asset_read(settings: Settings, *, asset_id: int) -> AssetReadResponse:
+def get_asset_read(settings: Settings, *, asset_id: int) -> AssetDetailResponse:
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         asset = get_asset(conn, asset_id)
         if asset is None:
             raise AssetNotFoundError("asset not found")
         preview = get_preview_for_asset(conn, asset_id)
-    return build_asset_read_response(asset=asset, preview=preview)
+        deliverable_result = resolve_deliverable_result(
+            settings=settings,
+            conn=conn,
+            asset=asset,
+        )
+    return build_asset_detail_response(
+        asset=asset,
+        preview=preview,
+        active_processed_result=deliverable_result,
+    )
 
 
-def confirm_preview(settings: Settings, *, asset_id: int) -> AssetReadResponse:
+def confirm_preview(settings: Settings, *, asset_id: int) -> AssetDetailResponse:
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         asset = get_asset(conn, asset_id)
         if asset is None:
@@ -75,19 +87,28 @@ def confirm_preview(settings: Settings, *, asset_id: int) -> AssetReadResponse:
         if updated_asset is None:
             raise AssetNotFoundError("asset not found")
         updated_preview = get_preview_for_asset(conn, asset_id)
+        deliverable_result = resolve_deliverable_result(
+            settings=settings,
+            conn=conn,
+            asset=updated_asset,
+        )
 
-    return build_asset_read_response(asset=updated_asset, preview=updated_preview)
+    return build_asset_detail_response(
+        asset=updated_asset,
+        preview=updated_preview,
+        active_processed_result=deliverable_result,
+    )
 
 
-def build_asset_read_response(
+def build_asset_list_item_response(
     *,
     asset: dict[str, Any],
     preview: dict[str, Any] | None,
-) -> AssetReadResponse:
+) -> AssetListItemResponse:
     asset_id = int(asset["id"])
     preview_response = None if bool(asset["is_log"]) else _build_preview_metadata(asset_id, preview)
 
-    return AssetReadResponse(
+    return AssetListItemResponse(
         id=asset_id,
         type=str(asset["type"]),
         filename=str(asset["filename"]),
@@ -106,6 +127,43 @@ def build_asset_read_response(
         created_at=str(asset["created_at"]),
         updated_at=str(asset["updated_at"]),
         preview=preview_response,
+    )
+
+
+def build_asset_detail_response(
+    *,
+    asset: dict[str, Any],
+    preview: dict[str, Any] | None,
+    active_processed_result,
+) -> AssetDetailResponse:
+    list_item = build_asset_list_item_response(asset=asset, preview=preview)
+    result_metadata = None
+    if active_processed_result is not None:
+        result = active_processed_result.result
+        result_metadata = ProcessedResultMetadataResponse(
+            result_id=str(result["id"]),
+            mime_type=str(result["mime_type"]),
+            size_bytes=int(result["size_bytes"]),
+            sha256=str(result["sha256"]),
+            created_at=_result_created_at(str(result["created_at"])),
+            url=f"/assets/{list_item.id}/results/{result['id']}",
+        )
+    return AssetDetailResponse(
+        **list_item.model_dump(),
+        active_processed_result=result_metadata,
+    )
+
+
+def build_asset_read_response(
+    *,
+    asset: dict[str, Any],
+    preview: dict[str, Any] | None,
+) -> AssetDetailResponse:
+    """Compatibility helper for callers that do not need result resolution."""
+    return build_asset_detail_response(
+        asset=asset,
+        preview=preview,
+        active_processed_result=None,
     )
 
 
@@ -143,3 +201,9 @@ def _validate_confirmable_preview(
 
     if not preview_path.is_file():
         raise PreviewNotReadyError("preview is not ready")
+
+
+def _result_created_at(value: str) -> str:
+    if "T" in value:
+        return value
+    return value.replace(" ", "T", 1) + "Z"

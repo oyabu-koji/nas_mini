@@ -1,5 +1,9 @@
+import sqlite3
 from pathlib import Path
 
+import pytest
+
+import app.db.migrations as migrations
 from app.db.connection import connect
 from app.db.migrations import run_migrations
 from app.repositories.assets import get_asset, insert_asset
@@ -19,7 +23,64 @@ def test_run_migrations_creates_expected_tables(tmp_path):
             ).fetchall()
         }
 
-    assert {"schema_migrations", "assets", "derived_files", "jobs"}.issubset(tables)
+    assert {
+        "schema_migrations",
+        "assets",
+        "derived_files",
+        "jobs",
+        "processed_results",
+    }.issubset(tables)
+
+
+def test_run_migrations_rolls_back_failed_migration_schema_and_ledger(tmp_path, monkeypatch):
+    database_path = tmp_path / "db.sqlite3"
+    migration_dir = tmp_path / "migrations"
+    migration_dir.mkdir()
+    (migration_dir / "001_base.sql").write_text(
+        "CREATE TABLE base_table (id INTEGER PRIMARY KEY);\n",
+        encoding="utf-8",
+    )
+    broken_migration = migration_dir / "002_broken.sql"
+    broken_migration.write_text(
+        "\n".join(
+            (
+                "CREATE TABLE partial_table (id INTEGER PRIMARY KEY);",
+                "SELECT missing_column FROM missing_table;",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(migrations, "MIGRATIONS_DIR", migration_dir)
+
+    with connect(database_path, 5000) as conn:
+        with pytest.raises(sqlite3.OperationalError):
+            migrations.run_migrations(conn)
+
+        tables_after_failure = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        applied_after_failure = {
+            row["version"]
+            for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+
+        broken_migration.write_text(
+            "CREATE TABLE recovered_table (id INTEGER PRIMARY KEY);\n",
+            encoding="utf-8",
+        )
+        migrations.run_migrations(conn)
+        applied_after_retry = {
+            row["version"]
+            for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+
+    assert "base_table" in tables_after_failure
+    assert "partial_table" not in tables_after_failure
+    assert applied_after_failure == {"001_base"}
+    assert applied_after_retry == {"001_base", "002_broken"}
 
 
 def test_connection_sets_wal_and_busy_timeout(tmp_path):

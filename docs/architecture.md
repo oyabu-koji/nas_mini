@@ -58,6 +58,8 @@ graph LR
 - サーバー名、Backend URL、固定APIトークンの設定。URLと名称は通常設定保存、トークンはサーバーIDごとに`expo-secure-store`へ保存する。初期リリースでQR importは実装しない。
 - Tailscale IPまたはMagicDNS名を含むprivate endpoint URLの設定。
 - upload進捗、asset状態、要求・適用presetと色変換状態を含むpreview表示、確認操作。
+- Asset Detailでactive processed resultを明示downloadし、temporary fileのresponse identity、size、native streaming SHA-256を検証してから`expo-media-library`へ保存する。
+- 処理済みcopyの保存状態は`processedResultSaveStore`で管理し、source originalの`localAssetMappingStore`やBackend review/delete stateを変更しない。
 - 自動削除は実行しない。
 - preview確認後にユーザーが明示操作した場合のみ、iPhone写真ライブラリ上のoriginal削除を端末service経由で実行する。
 - Backend側original、derived file、asset DB recordはMobileの削除操作では削除しない。
@@ -68,7 +70,7 @@ graph LR
 - upload size/type検証。
 - 安全なファイル名と保存パスの生成。
 - original保存、SHA256計算、SQLite記録。
-- preview job登録、asset/job参照、preview配信、確認済み更新。
+- preview job登録、asset/job参照、preview配信、処理済みresult配信、確認済み更新。
 
 ### Job Service
 
@@ -92,6 +94,7 @@ graph LR
 - DBファイル配置はbackend設定で指定する。
 - assets、derived_files、jobsをPhase 1で作成する。
 - upload_sessions、upload_chunksはPhase 2で追加する。sessionはclient idempotency key、immutable metadata、expected hash、failure/retry、expiry、lease、asset/job参照を持ち、chunkは`UNIQUE(session_id, chunk_index)`とverified hashを持つ。
+- processed_resultsはPhase 2Aのdeliverable video identityである。assetsのdeferred active pointerはsame-assetの`ready` resultだけを指し、result/derived file/size/SHA-256/pointer/job完了は一つのtransactionで確定する。
 - Phase 2BではLUT preset/detector manifestとpreview provenanceを追加する。provenanceは要求・適用preset、version、SHA-256、色変換状態・未適用理由を記録し、Apple Log fallbackを含む`transform_kind = none`も扱う。
 - statusは一つの列へ集約せず、役割ごとに分離する。
 
@@ -101,6 +104,7 @@ graph LR
 - iPhone側original手動削除の状態はMobile側で管理し、Backend側originalの状態と混同しない。
 - local asset identifierは端末内の素材削除にのみ使い、backendへ保存先pathとして送らない。
 - upload timeout後の`result_unknown`はtoken、URI、filenameを含めず端末に保存する。local asset idがない場合はglobal pending markerを使い、asset一覧確認済みの明示操作までuploadを再開しない。
+- source originalのmappingとは別に、処理済みcopyの保存を`backend_asset_id`、`backend_result_id`、result SHA-256で識別する。写真ライブラリnative call直前に`unknown` markerを永続化し、成功時だけsaved local asset identifierを記録する。
 - サーバー設定はサーバーID、名称、URLを通常設定へ保存し、tokenは`expo-secure-store`へ分離保存する。
 
 ### External SSD
@@ -163,6 +167,8 @@ ${MEDIA_ROOT}/
 - Phase 2ではiPhone側`expected_file_sha256`とMac mini側`server_sha256`が一致した場合のみ`file_verified`とする。
 - Phase 2Aでは結合、hash照合、original確定保存の完了後にだけpreview jobを登録する。
 - Phase 2Aではworker lease回収時にdeterministic tmp/final pathを検査し、hash一致のpromoted fileから同一sessionを完了するか、verified chunkから再構築する。DB commit後のclient timeoutはsession statusでcompleted assetを返す。
+- processed resultのfile integrity確認とRange解釈をdelivery transaction前に行う。その後`BEGIN IMMEDIATE`でactive pointerを最終再読込し、同じtransaction内でrequested file descriptorをopenしてcommitする。descriptor open後はそのresultのbytesだけをstreamし、pointer切替後の別resultへ差し替えない。
+- Phase 2Aのresultはnormal `file_verified` video previewだけを配信対象にする。Phase 2B導入後はformal preview ID、generation、provenance validatorを同じdeliverability境界へ追加する。
 - iPhone側original削除の失敗、権限拒否、ユーザーキャンセルはBackend側保存済みassetの状態を壊さない。
 - upload timeoutでMobileがrequestを中断した場合、backend保存結果は不明として扱う。Mobileは同一素材を自動再送せず、asset一覧で結果を確認する。
 - identity LUTで生成済みのLOG previewはRec.709変換済みとして扱わず、要求・適用presetと色変換状態を持つformal provenanceがなければpreview配信と確認を拒否する。derived fileは自動削除しない。

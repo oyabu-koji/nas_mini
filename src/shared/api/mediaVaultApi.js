@@ -13,6 +13,9 @@ export const UPLOAD_REQUEST_TIMEOUT_MS = 600000;
 export const SESSION_REQUEST_TIMEOUT_MS = 60000;
 export const SESSION_CHUNK_TIMEOUT_MS = 600000;
 
+const RESULT_ID_PATTERN = /^[0-9a-f]{32}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
 export function normalizeBaseUrl(input) {
   const trimmed = String(input ?? '').trim();
   if (!trimmed) {
@@ -262,6 +265,30 @@ export function buildPreviewSource({ baseUrl, apiToken, assetId }) {
   };
 }
 
+export function buildProcessedResultPath(assetId, resultId) {
+  const safeAssetId = normalizeBackendAssetId(assetId);
+  const safeResultId = normalizeResultId(resultId);
+  return `/assets/${safeAssetId}/results/${safeResultId}`;
+}
+
+export function buildProcessedResultUrl(baseUrl, assetId, resultId) {
+  return joinApiUrl(baseUrl, buildProcessedResultPath(assetId, resultId));
+}
+
+export function buildProcessedResultSource({ baseUrl, apiToken, assetId, result }) {
+  const safeResult = sanitizeProcessedResult(result, assetId);
+  if (!safeResult) {
+    throw createAppError(
+      'processed_result_invalid_identity',
+      messageForErrorCode('processed_result_invalid_identity'),
+    );
+  }
+  return {
+    uri: buildProcessedResultUrl(baseUrl, assetId, safeResult.result_id),
+    headers: createAuthHeaders(apiToken),
+  };
+}
+
 function defaultMimeTypeForAsset(asset) {
   if (asset.type === 'image') {
     return 'image/jpeg';
@@ -294,7 +321,70 @@ export function sanitizeAsset(asset) {
 
   const safeAsset = { ...asset };
   delete safeAsset.original_path;
+  if (Object.prototype.hasOwnProperty.call(safeAsset, 'active_processed_result')) {
+    safeAsset.active_processed_result = sanitizeProcessedResult(
+      safeAsset.active_processed_result,
+      safeAsset.id,
+    );
+  }
   return safeAsset;
+}
+
+export function sanitizeProcessedResult(result, assetId) {
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+
+  let canonicalPath;
+  try {
+    canonicalPath = buildProcessedResultPath(assetId, result.result_id);
+  } catch {
+    return null;
+  }
+
+  if (
+    result.url !== canonicalPath
+    || result.mime_type !== 'video/mp4'
+    || !Number.isSafeInteger(result.size_bytes)
+    || result.size_bytes <= 0
+    || typeof result.sha256 !== 'string'
+    || !SHA256_PATTERN.test(result.sha256)
+    || typeof result.created_at !== 'string'
+    || !result.created_at.trim()
+  ) {
+    return null;
+  }
+
+  return {
+    result_id: result.result_id,
+    mime_type: result.mime_type,
+    size_bytes: result.size_bytes,
+    sha256: result.sha256,
+    created_at: result.created_at,
+    url: canonicalPath,
+  };
+}
+
+function normalizeBackendAssetId(assetId) {
+  const numericAssetId = typeof assetId === 'number' ? assetId : Number(assetId);
+  if (!Number.isSafeInteger(numericAssetId) || numericAssetId <= 0) {
+    throw createAppError(
+      'processed_result_invalid_identity',
+      messageForErrorCode('processed_result_invalid_identity'),
+    );
+  }
+  return numericAssetId;
+}
+
+function normalizeResultId(resultId) {
+  const normalizedResultId = String(resultId ?? '');
+  if (!RESULT_ID_PATTERN.test(normalizedResultId)) {
+    throw createAppError(
+      'processed_result_invalid_identity',
+      messageForErrorCode('processed_result_invalid_identity'),
+    );
+  }
+  return normalizedResultId;
 }
 
 function sanitizeSession(session) {

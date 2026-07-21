@@ -12,6 +12,7 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "MediaVault needs photo library access so you can upload selected photos and videos to your private backend.",
+        "NSPhotoLibraryAddUsageDescription": "MediaVault needs permission to save verified processed videos to your photo library.",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true,
           "NSAllowsLocalNetworking": true
@@ -36,6 +37,7 @@
         "expo-media-library",
         {
           "photosPermission": "MediaVault needs photo library access to resolve selected videos for resumable upload.",
+          "savePhotosPermission": "MediaVault needs permission to save verified processed videos to your photo library.",
           "granularPermissions": [
             "photo",
             "video"

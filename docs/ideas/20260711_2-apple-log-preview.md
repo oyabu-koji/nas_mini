@@ -3,133 +3,242 @@
 ## Metadata
 
 - Date: 2026-07-11
-- Feature name: Apple Log preview with selectable managed LUT provenance
+- Feature name: Apple Log detection and formal preview provenance
 - Status: draft
 - Related files:
-  - docs/product-requirements.md
-  - docs/functional-design.md
-  - docs/architecture.md
-  - docs/development-guidelines.md
-  - docs/glossary.md
-  - docs/repository-structure.md
-  - docs/ideas/20260711_3-resumable-original-finalization.md (Phase 2A prerequisite)
+  - `docs/product-requirements.md`
+  - `docs/functional-design.md`
+  - `docs/architecture.md`
+  - `docs/development-guidelines.md`
+  - `docs/glossary.md`
+  - `docs/repository-structure.md`
+  - `docs/ideas/20260711_3-resumable-original-finalization.md` (Phase 2A prerequisite)
+  - `docs/ideas/20260718_1-processed-video-delivery.md` (result-delivery prerequisite)
+  - `docs/ideas/20260718_2-managed-preview-presets.md` (managed-preset prerequisite)
+  - `docs/ideas/iphone_applelog_app_distribution_and_lut_policy.md`
 
 ## Background
 
-Current LOG safety gates correctly prevent an identity LUT from being presented as Rec.709 conversion, but they also prevent users from reviewing a verified Apple Log original when no transform is available. Phase 2B operates only on the file_verified original produced by Phase 2A. It always preserves the exact detection, requested preset, applied preset, and transform evidence used for each preview.
+The current LOG safety gate correctly prevents an identity LUT from being presented as
+an Apple Log to Rec.709 conversion, but it also keeps a verified Apple Log original from
+being reviewed when no transform is available. Phase 2B must preserve the exact detection
+and transform evidence for every ready Apple Log preview while allowing a clearly labelled
+unconverted `compress-only` result when a requested preset is unavailable.
 
-Apple documents that Final Cut Pro uses an Apple 3D LUT to convert Apple Log to Rec.709, but that documentation is not a grant to extract or redistribute a LUT file. The project must not bundle a LUT copied from Final Cut Pro or another Apple product. Source: https://support.apple.com/ja-jp/guide/final-cut-pro/ver24f966423/mac
+This specification is now the third implementation stage. Processed-video delivery is
+defined first, and managed preset discovery, validation, and generic LUT rendering are
+defined second. This stage adds high-confidence Apple Log detection and the provenance
+gate that makes an Apple Log fallback safe to play, confirm, and deliver without claiming
+Rec.709 conversion.
 
 ## Implementation Gate
 
-Phase 2Bの`compress-only` fallbackは、Rec.709変換用LUTが未登録でも実装できる。以下の証跡は、それぞれ該当機能を有効化する前に承認manifestへ記録する。
+The following evidence must exist before the corresponding behavior is enabled.
 
-1. Apple Logの自動判定を有効化する前に、controlled Apple Log/non-Apple-Log fixtureで、pinned Docker ffmpeg/ffprobe上の正確なmetadata ruleを検証する。detector manifestにはfield path、許容値、rule version、fixture digest、source referenceを記録し、filename、Mobile flag、pixel analysisを根拠にしない。
-2. `generated-apple-log-rec709`を有効化する前に、公開プロファイルまたは利用条件を確認済みのsource、generator/library version、parameter、LUT SHA-256、Rec.709 tag、fixture比較結果をmanifestへ記録する。
-3. custom LUTを有効化する前に、Mac mini側のrepo外LUT rootに置くmanifestへpreset id、由来、利用条件、version、SHA-256、形式・grid検証結果を記録する。
+1. Before the worker sets `log_detection_status = apple_log`, controlled Apple
+   Log/non-Apple-Log fixtures must prove the exact metadata field paths and values on the
+   pinned Docker ffmpeg/ffprobe version. The detector manifest records the rule version,
+   fixture digests, allowed values, and source reference. Filenames, the Mobile `is_log`
+   hint, and pixel heuristics are never detector evidence.
+2. The managed-preset feature must provide a validated `compress-only` record and the
+   requested/applied-preset snapshot contract before this feature enables an unconverted
+   fallback.
+3. `generated-apple-log-rec709` remains disabled until a later dedicated feature has
+   recorded its legal/source evidence, generator or library version, parameters, LUT
+   SHA-256, Rec.709 output tags, and fixture comparison result. This feature must not
+   create, bundle, extract, or imply that transform.
 
-要求presetが未登録または無効化済みの場合、identity LUTを変換として扱わず、`compress-only`の未変換previewを生成する。登録済みLUTの改ざん、hash不一致、形式不備、FFmpeg適用失敗はterminal failureとする。
+When a requested preset is missing or disabled, this feature creates an unconverted
+`compress-only` preview/result and completes its job. A registered preset that is altered,
+hash-mismatched, malformed, or rejected by ffmpeg is a terminal failure. Availability and
+integrity are intentionally different outcomes.
 
 ## Target Users / Use Cases
 
-- iPhone users who record Apple Log video and need to review a verified backup before and after a Rec.709 transform becomes available.
-- Users who need to distinguish a verified Apple Log conversion, an explicitly unconverted Apple Log preview, and a normal video preview.
-- A Mac mini administrator who manages server-side custom LUT presets without allowing arbitrary LUT files from Mobile.
+- An iPhone user who records Apple Log and needs to review a verified backup before an
+  approved Rec.709 transform becomes available.
+- A user who must distinguish a transformed result, an explicitly unconverted Apple Log
+  result, and an ordinary video result.
+- A Mac mini administrator who enables managed presets under the preceding feature but
+  must not allow arbitrary Mobile LUT input or mislabel a custom LUT as Apple Log to
+  Rec.709.
 
 ## Scope
 
-- Run only after Phase 2A has finalized the original with verification_status = file_verified; do not run during chunk upload or assembly.
-- Persist log_detection_status as apple_log, not_log, or unknown, plus nullable log_profile, detector rule version, and a bounded evidence summary. is_log remains a legacy hint and never authorizes a transform.
-- Detect only the single initial profile apple_log. Apple Log 2, unrecognized future profiles, and ambiguous metadata are unknown until separately specified and approved.
-- Always expose the server-provided `compress-only` preset. When the detector identifies apple_log, request `generated-apple-log-rec709` by default unless the user selected an enabled custom LUT.
-- Register the generated Apple Log to Rec.709 preset only after its transform evidence is approved. Its manifest includes source profile, target profile, generator/source, version, LUT SHA-256, and license/terms reference.
-- Allow Mac mini-side custom LUT presets only from the repo-external LUT root and only when their manifest validates. Mobile selects a returned preset but never uploads LUT files.
-- Create exactly one formal preview_provenance record for every Phase 2B ready video preview. Apple Log Rec.709/custom-LUT output uses transform_kind = lut. Non-Log and Apple Log fallback use transform_kind = none, with requested/applied preset and color-transform status recorded.
-- Replace the temporary LOG safety trigger with SQLite triggers that reject preview_ready without a matching formal provenance record. Trigger conditions are based on log_detection_status, never on legacy is_log.
-- Show detection, requested/applied preset, and transform state in Asset Detail. Show that an Apple Log fallback is unconverted; suppress preview and confirmation only for failed or unprovenanced assets.
-- Keep Phase 1 is_log = true assets failed and audit-only. They must be uploaded through Phase 2A before they can be considered for Apple Log processing.
-- At Phase 2B rollout, migrate only Phase 2A session-derived assets where type = video and verification_status = file_verified. Direct Phase 1 assets are excluded and retain their existing preview behavior.
+- Run only after Phase 2A finalizes a video original with
+  `verification_status = file_verified`. Chunk upload, assembly, unverified originals,
+  and Phase 1 direct assets are outside the processing boundary.
+- Record `log_detection_status` as `apple_log`, `not_log`, or `unknown`, plus nullable
+  profile name, detector rule version, detector-manifest SHA-256, and bounded evidence
+  summary. The legacy Mobile `is_log` field remains audit-only and never authorizes a
+  transform or detection result.
+- Initially recognize only the approved `apple_log` profile. Apple Log 2, unsupported
+  future profiles, and ambiguous metadata are `unknown`.
+- Use the managed-preset feature's requested-preset snapshot. For a detected Apple Log
+  asset with no user-selected valid custom preset, request
+  `generated-apple-log-rec709` only when that preset is enabled. While it is disabled or
+  absent, request and apply `compress-only`.
+- Create formal preview provenance for each ready Phase 2B session-derived video. It
+  records detection evidence; requested and applied preset; transform kind; color
+  transform state; and, when a LUT was actually applied, the preset version, LUT SHA-256,
+  and preset-manifest SHA-256. Its derived file is also the active `processed_result`;
+  the result's generation must equal the asset generation.
+- For a detected Apple Log fallback, require `transform_kind = none`,
+  `applied_preset_id = compress-only`,
+  `color_transform_status = unavailable`, and
+  `color_transform_error_code = lut_preset_unavailable`. Mobile displays this result as
+  unconverted Apple Log, never as Rec.709.
+- Replace the temporary LOG safety trigger with Phase 2B SQLite constraints that reject
+  `preview_ready` for a verified session-derived video unless its active formal preview
+  has matching provenance. A direct database update or an old worker cannot bypass this
+  gate.
+- Migrate only Phase 2A session-derived `file_verified` videos. The migration creates one
+  profile-aware preview job per eligible asset and fences old-generation preview jobs so
+  they cannot overwrite the active preview, review state, or provenance.
+- Permit playback, confirmation, and the preceding result-delivery feature only for the
+  active provenance-backed ready preview. An Apple Log fallback is eligible because the
+  user is confirming an immutable verified original and a visibly unconverted derived
+  result, not a color-quality claim.
 
 ## Out of Scope
 
-- Pixel-based LOG inference, approximate color heuristics, filename inference, or silently treating unknown videos as Apple Log.
-- Manual override for unknown profiles.
-- LUT upload from Mobile, Pixel-based custom-LUT recommendation, Apple Log 2, multiple output color spaces, HDR targets, or creative-LUT authoring UI.
-- Administrator UI/API for LUT preset management. This feature manages manifests and files on the Mac mini only.
-- Preview retry UI, original alteration, Backend original deletion, and automatic iPhone deletion.
-- Upload-session creation, chunk transfer, resume, hash verification, and original finalization, which belong to Phase 2A.
+- Processed-video download/save, generic preset catalog management, identity/test LUT
+  generation, custom LUT manifest authoring, and Mobile preset upload; these belong to
+  the preceding feature ideas.
+- The implementation or enabling of Apple Log to Rec.709 conversion. It needs a future
+  dedicated feature after the implementation gate is met.
+- Pixel-based LOG inference, filename inference, manual override for an unknown profile,
+  Apple Log 2, HDR targets, multiple output color spaces, or creative-LUT authoring.
+- Backend original deletion, automatic iPhone deletion, preview retry UI, cloud review
+  infrastructure, or App Review configuration.
+- Reclassifying Phase 1 direct assets or serving historical identity-LUT files as formal
+  Apple Log previews.
 
 ## User Flow
 
-1. Phase 2A finalizes the original with verification_status = file_verified.
-2. A profile-aware preview worker reads only approved, sanitized ffprobe fields and records the detection result before rendering a preview.
-3. For apple_log with an enabled Rec.709 or custom preset, the worker validates the manifest and LUT SHA-256, applies the preset, records transform_kind = lut provenance, and commits provenance and preview_ready together.
-4. For not_log, unknown, or a missing/disabled requested preset, the worker generates a `compress-only` preview, records transform_kind = none provenance, and commits it with preview_ready. Apple Log fallback includes `color_transform_status = unavailable` and `color_transform_error_code = lut_preset_unavailable`.
-5. For a registered preset with manifest validation, hash, format, or ffmpeg failure, the worker terminally fails the job and preview without exposing a preview stream or confirmation action.
-6. Mobile shows the detection and transform result and permits playback/confirmation only for a provenance-backed ready preview. Apple Log fallback is visibly unconverted.
-7. Phase 2B migration atomically creates one unique profile-aware preview job with dedup key `phase2b-profile-preview:{asset_id}` for each eligible Phase 2A session-derived video. Only when that insert succeeds does it invalidate the old formal preview/review state and increment the asset preview generation. It does not delete historical derived files or requeue Phase 1 direct assets.
+1. Phase 2A retains and verifies a video original.
+2. The managed-preset feature snapshots the user's selection or provides the current
+   `compress-only` default for the rendition.
+3. A profile-aware worker reads only the approved, sanitized ffprobe metadata described
+   by the detector manifest and persists `apple_log`, `not_log`, or `unknown`.
+4. For `apple_log` without an enabled approved Rec.709 preset, the worker renders the
+   `compress-only` output, writes formal fallback provenance, and marks it ready.
+5. For `not_log` or `unknown`, the worker writes formal `transform_kind = none`
+   provenance for the managed-preset result unless a valid selected LUT was applied.
+6. A registered preset with validation, hash, format, or ffmpeg failure terminally fails
+   its job and exposes neither playback, confirmation, nor result delivery.
+7. Mobile shows detection, requested/applied preset, and transform state. It visibly
+   labels Apple Log fallback as unconverted and may then play, confirm, or explicitly
+   save the derived result.
+8. When a later approved Rec.709 preset is enabled, it creates a new generation from the
+   same immutable original. It never rewrites the historical fallback result or its
+   provenance.
 
 ## Functional Requirements
 
-### Detection and Preset Contracts
+### Detection and Provenance Contract
 
-- is_log remains a legacy Mobile hint and never authorizes LUT use.
-- Apple Log processing accepts only a Phase 2A-finalized, file_verified video original.
-- The detector reads an approved detector manifest, not ad hoc code constants. The manifest identifies an exact ffmpeg/ffprobe version, allowed metadata field paths and values, detector rule version, fixture SHA-256, and source reference.
-- The preset manifest is verified before ffmpeg executes. A missing or disabled requested preset causes `compress-only` fallback; an altered, hash-mismatched, malformed, or ffmpeg-rejected registered LUT is a terminal failure.
-- A generated Apple Log transform output is tagged Rec.709 and retains H.264/AAC/1080p preview constraints. `compress-only` and custom LUT output must not claim Rec.709 unless its approved preset explicitly establishes that target.
-- The project retains managed generator/test assets inside the Backend image and repo-external custom LUT files under the configured Mac mini LUT root. It does not log LUT contents, raw full metadata, original paths, local URIs, or tokens.
+- The detector reads an approved manifest, not ad hoc code constants. The manifest pins
+  ffmpeg/ffprobe version, approved field paths/values, rule version, fixture digest, and
+  source reference.
+- `is_log` remains a legacy hint only. It cannot set `log_detection_status`, select a
+  LUT, or make a preview deliverable.
+- `preview_provenance` has one row per formal derived preview and references its asset
+  and derived file. It stores detection result, source profile, target color space,
+  detector evidence digest, requested/applied preset IDs, transform kind, color
+  transform state/error, and nullable LUT/preset evidence.
+- For `apple_log` with a validated applied LUT, `transform_kind = lut` and all applicable
+  LUT/preset evidence is required. For the Apple Log fallback, the required
+  `compress-only` unavailable fields are mandatory. For `not_log` or `unknown`,
+  `transform_kind = none` and `color_transform_status = not_requested` are required
+  unless the managed-preset feature applied a valid selected LUT.
+- A formal preview cannot be marked ready until its provenance and derived file are
+  committed together in one transaction. The same transaction creates the new active
+  `processed_result` with matching generation and changes
+  `active_processed_result_id`. Preview streaming, confirmation, and result delivery
+  validate the active provenance and active-result relation each time. The
+  `processed_results` foreign-key, same-asset, ready-state, and unique-derived-file
+  invariants from the delivery feature apply to this transaction.
 
-### Detection and Provenance Persistence
+### Migration and Preview Generation Fence
 
-- assets stores log_detection_status, nullable log_profile, log_detection_rule_version, and bounded log_detection_evidence_json. Evidence stores only the approved field/value summary and fixture/rule identifiers.
-- preview_provenance has one row per formal derived preview and references its asset and derived file. It stores transform_kind, source profile, target color space, detector rule version, detector_manifest_sha256, evidence digest, creation time, requested preset ID, applied preset ID, color_transform_status, nullable color_transform_error_code, and nullable LUT preset version, SHA-256, and preset_manifest_sha256.
-- assets has nullable formal_preview_id, pointing to its one active formal derived preview. preview_provenance.derived_file_id is unique, and a transaction may replace formal_preview_id only after writing the matching provenance.
-- For apple_log with a registered applied LUT, transform_kind = lut and the applicable LUT/preset-manifest fields are required. For apple_log fallback, transform_kind = none, applied preset = compress-only, color_transform_status = unavailable, and color_transform_error_code = lut_preset_unavailable are required. For not_log or unknown, transform_kind = none and color_transform_status = not_requested unless a valid user-selected LUT was applied.
-- A BEFORE INSERT OR UPDATE SQLite trigger applies only when type = video AND verification_status = file_verified. It rejects preview_status = preview_ready unless formal_preview_id has matching provenance. It permits lut or the specified fallback none provenance for apple_log, and none or a valid selected-lut provenance for not_log/unknown.
-- Preview streaming and confirmation use formal_preview_id and its provenance row for those Phase 2B videos; a direct database write or old worker cannot bypass it. Phase 1 direct images and videos remain outside this provenance trigger.
-- Existing identity-LUT derived files and historical jobs remain for audit and are never served as Rec.709 formal previews. A new `compress-only` fallback preview is formal only when it records the required provenance and unconverted state.
+- `assets.preview_generation` is a non-null monotonically increasing integer.
+  `jobs.preview_generation` is null for non-preview jobs and required for every
+  session-derived video preview job.
+- The Phase 2B migration initializes eligible Phase 2A assets and their preview jobs at
+  generation `0`, then inserts one new profile-aware job at generation `1` with dedup key
+  `phase2b-profile-preview:{asset_id}`. Only a successful new insert increments the asset
+  generation, clears its active formal preview and `active_processed_result_id`, sets
+  `preview_generating`, and resets review status in the same transaction.
+- Deployment enters maintenance mode before this migration: all pre-Phase-2B API and
+  worker processes stop and drain, migration completes, and only generation-aware workers
+  start afterwards.
+- A claimed, recovered, or late old-generation preview job may not write a derived file,
+  provenance, asset preview status, or review state. It terminates with stable operational
+  error code `preview_generation_superseded`.
 
-### Phase 2B Migration and Preview Generation Fence
+### Failure and Presentation Contract
 
-- `assets.preview_generation` is a non-null monotonically increasing integer. `jobs.preview_generation` is null for non-preview jobs and is required for every session-derived video preview job. A preview worker may mutate its asset, formal preview, or review state only when its job generation equals the current asset generation at both claim and commit time.
-- The Phase 2B migration adds both columns, initializes existing eligible Phase 2A assets and their `preview` or `lut_preview` jobs to generation `0`, and gives every new profile-aware job generation `1`. Future formal-preview invalidations must increment the generation and create a job carrying that exact new value.
-- Deploy the migration in maintenance mode: stop and drain every pre-Phase-2B API/worker process before the transaction begins, apply the schema and data migration, then start only workers that enforce the generation check. A running pre-fence worker is not allowed to coexist with the migration.
-- For each eligible asset, one SQLite transaction first performs `INSERT ... ON CONFLICT(dedup_key) DO NOTHING` for the generation-`current + 1` profile-aware job. Only if that insert creates a row does the transaction increment `assets.preview_generation`, clear `formal_preview_id`, set `preview_status = preview_generating`, and reset `review_status = not_reviewed`. An existing dedup key, regardless of its job status, leaves every asset field unchanged.
-- A queued, recovered, or otherwise stale Phase 2A preview job whose generation does not equal the asset generation is terminally marked `failed` with stable error code `preview_generation_superseded`. It writes no derived file, provenance, asset preview status, formal preview, or review state. The error is operational history, not a user-visible preview failure.
-
-### Phase 2C Compatibility
-
-- Phase 2C requires provenance-backed preview_ready for every video. Apple Log Rec.709/custom-LUT preview is backed by lut provenance, and non-Log or unconverted Apple Log fallback by none provenance. All may satisfy the same safe-delete precondition after preview_confirmed because the immutable original's verification and the user's content confirmation, not a color-quality claim, are the deletion basis.
+- A missing or disabled requested preset falls back before any LUT filter invocation.
+  It is not a job failure.
+- An enabled registered LUT whose manifest, file hash, format, grid, numeric contents,
+  or ffmpeg application fails is terminally failed. It is not silently replaced by a
+  different LUT.
+- The UI must show the distinction among transformed, unconverted/unavailable, and
+  failed states. It must not label `compress-only`, identity, test, or custom output as
+  Apple Log to Rec.709 without the later approved transform evidence.
 
 ## Non-Functional / Technical Notes
 
-- Keep React Native + Expo, FastAPI, SQLite, ffmpeg, and the original non-mutation rule.
-- Keep detector lookup, manifest validation, ffmpeg command construction, provenance persistence, and SQLite trigger installation in separate Backend services/repositories.
-- The Phase 2A finalization boundary is reusable by normal and Apple Log preview jobs. Phase 2B replaces new session lut_preview creation with one profile-aware preview job; historical lut_preview jobs remain audit-only.
+- Keep React Native + Expo, FastAPI, SQLite, ffmpeg, managed preset manifests, and the
+  immutable-original rule.
+- The detector consumes bounded, sanitized metadata only. It does not retain raw full
+  ffprobe output, original paths, local URIs, tokens, or LUT contents in routine logs or
+  API responses.
+- Controlled fixtures must cover Apple Log, ordinary video, unknown profile, Apple Log
+  2, a missing preset, a disabled preset, and a registered invalid preset.
+- Historical identity-LUT derived files and old `lut_preview` jobs remain audit-only.
+  They are never served as formal Rec.709 previews.
 
 ## Acceptance Criteria
 
-- A detected Apple Log fixture whose requested Rec.709 preset is not registered or is disabled produces a `compress-only` preview, completes the job, records `color_transform_status = unavailable` and `color_transform_error_code = lut_preset_unavailable`, and displays that it is unconverted.
-- The approved Apple Log fixture produces a Rec.709 preview with complete lut provenance and becomes preview_ready only after preset and detector manifest hashes validate.
-- The approved non-Apple-Log and unknown-profile fixtures generate a normal `compress-only` preview with complete none provenance and become preview_ready.
-- An Apple Log 2 fixture remains unknown and is never presented as Rec.709 converted.
-- A missing or disabled LUT falls back before ffmpeg LUT processing. An altered, malformed, hash-mismatched, or ffmpeg-rejected registered LUT fails before serving a preview.
-- Direct updates and an old-worker simulation cannot set any Phase 2B video to preview_ready without the required provenance. apple_log may use none only for the specified unconverted fallback; a lut provenance requires a valid applied preset.
-- Altering either stored manifest after preview generation causes the provenance validation path to reject that preview for stream/confirmation until a new formal preview is generated.
-- Existing Phase 1 is_log = true assets remain failed until they are uploaded through Phase 2A.
-- Phase 2B migration requeues every eligible Phase 2A session-derived file_verified video exactly once. In one transaction it inserts the generation-`current + 1` profile-aware preview job with dedup key `phase2b-profile-preview:{asset_id}` and, only when that insert is new, increments the asset generation, clears formal_preview_id, sets preview_status = preview_generating, and resets review_status = not_reviewed. Repeating the migration after a queued, done, or failed Phase 2B job creates no duplicate job and leaves the formal preview/review state unchanged.
-- A queued or lease-recovered Phase 2A preview or lut_preview job at generation `0` is fenced after Phase 2B increments the asset generation: it cannot change the asset, formal preview, or review state and becomes `preview_generation_superseded`. The deployment procedure stops all pre-fence workers before migration, and an integration test covers a stale job attempting to commit after the migration.
-- The Phase 2A validation suite has already demonstrated that no preview job is created before original finalization and hash verification.
-- Development Build tests cover transformed Apple Log playback, unconverted Apple Log fallback playback and label, normal video playback, custom-LUT selection, and registered-invalid-LUT failure using Phase 2A-finalized originals.
+- A verified Apple Log fixture with no enabled Rec.709 preset produces a ready
+  `compress-only` result with formal provenance,
+  `color_transform_status = unavailable`, and
+  `color_transform_error_code = lut_preset_unavailable`; the UI calls it unconverted.
+- Approved ordinary and unknown-profile fixtures produce ready provenance-backed results
+  without a false Apple Log or Rec.709 claim.
+- An Apple Log 2 fixture remains `unknown` and is never presented as Rec.709 converted.
+- A missing or disabled preset falls back before LUT processing. An altered, malformed,
+  hash-mismatched, or ffmpeg-rejected registered LUT fails without playback,
+  confirmation, or delivery.
+- Direct updates and stale-worker simulations cannot set an eligible Phase 2B video to
+  `preview_ready` without matching formal provenance.
+- Migration requeues each eligible Phase 2A video exactly once. Repeating it with an
+  existing queued, done, or failed Phase 2B job does not change asset state or duplicate
+  a job.
+- A generation-`0` Phase 2A preview or `lut_preview` job cannot overwrite the formal
+  preview or review state after the Phase 2B migration.
+- This feature does not enable `generated-apple-log-rec709` or make a Rec.709 claim until
+  the future transform feature satisfies its separate implementation gate.
 
 ## Open Questions
 
-- The fixture-verified ffprobe metadata fields and values are an implementation gate for Apple Log auto-detection. Before approval, the system must not identify a video as Apple Log or claim Rec.709 conversion.
-- The Apple Log transform's exact formula/library, generator version, fixture comparison threshold, and Rec.709 tags must be approved before `generated-apple-log-rec709` is enabled.
-- The custom-LUT manifest schema, supported formats/grid limits, and Mac mini administration workflow need separate specification. Mobile LUT upload remains out of scope.
+- The exact fixture-verified ffprobe metadata fields and allowed values for the initial
+  Apple Log detector.
+- The later Apple Log to Rec.709 transform's generator/library, parameters, quality
+  threshold, Rec.709 tags, and source/license evidence.
+- The detailed migration path by which the managed-preset rendition model becomes the
+  active formal preview model. It must preserve existing Phase 1 behavior and the
+  generation fence above.
 
 ## Durable Docs Impact
 
-- Updated now: product requirements, functional design, architecture, repository structure, development guidelines, and glossary.
-- This feature follows the validated Phase 2A finalization boundary. Before planning implementation, review this specification together with the Apple Log distribution and LUT policy, then define the custom-LUT manifest and versioned API contract.
+- Update candidates: `product-requirements.md`, `functional-design.md`,
+  `architecture.md`, `development-guidelines.md`, `glossary.md`, and
+  `repository-structure.md`.
+- Update timing: review the delivery, managed-preset, and this Apple Log specification
+  together; then update durable documentation once their shared result/provenance model
+  is confirmed.
+- Reason: this stage preserves the durable safety requirements but moves generic result
+  delivery and preset ownership into explicit prerequisite features.

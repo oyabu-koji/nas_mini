@@ -82,6 +82,9 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - original確定保存と`file_verified`を、preview jobを登録できる前提状態として扱う。
 - 新規動画の`POST /assets/upload`は`409 video_session_required`で拒否し、imageだけPhase 1 direct uploadを継続する。
 - session作成、chunk再送、finalizationを冪等にし、finalizationはleaseを持つ`upload_finalize` jobで実行・回復する。
+- `file_verified`の通常動画previewは、不変の`processed_result`としてsizeとSHA-256を記録し、assetごとに一つのactive resultだけを配信対象にする。再render時は既存resultを更新せず、新resultへ切り替えて旧resultを履歴として保持する。
+- Asset Detailはactive resultのopaque `result_id`、MIME type、size、SHA-256、作成時刻、認証付きdownload URLだけを返す。`GET /assets/{asset_id}/results/{result_id}`はそのexact resultだけを返し、inactive resultを新しいresultへ置換して返さない。
+- iPhoneはユーザーの明示操作で処理済みvideoをdownload、header/size/SHA-256を検証してから写真ライブラリへ保存できる。保存状態はsource originalのmappingと別に管理し、保存成功はpreview確認やoriginal削除条件を変更しない。
 - この段階では`safe_to_delete_candidate`を有効化しない。
 
 ### Phase 2B: Apple Log preview
@@ -135,6 +138,17 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - 写真previewはJPEG、長辺2048px上限、EXIF orientation反映で生成できる。
 - 確認後に`review_status = preview_confirmed`となる。
 
+### P0: 処理済みvideoの保存
+
+ユーザーとして、Mac miniが生成した軽量化済みvideoをiPhone写真ライブラリへ保存したい。
+
+**受け入れ条件**
+
+- `file_verified`でdeliverableな通常動画resultだけに保存操作を表示する。
+- 保存はユーザーの明示操作で開始し、result ID、response header、size、SHA-256が一致した場合だけ写真ライブラリへ進む。
+- 保存済みの処理済みcopyはsource originalのmapping、`review_status`、`safe_to_delete_candidate`を変更しない。
+- resultがsuperseded、not ready、または保存結果が不明な場合は成功表示せず、新しいresultの自動保存を行わない。
+
 ### P0: preview確認後のiPhone側original手動削除
 
 ユーザーとして、Mac mini側に保存された軽量previewを確認した後、iPhone容量を空けるためにiPhone側originalを自分の操作で削除したい。
@@ -184,12 +198,14 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - originalはderived fileと別ディレクトリへ保存する。
 - original保存後のpreview生成はoriginalを読み取り専用入力として扱う。
 - Phase 1ではSHA256をサーバー側で計算・記録するが、end-to-end検証済みとは表示しない。
+- 処理済みvideoはimmutable result ID、size、SHA-256に結び付け、active pointer切替中に別resultのbytesを保存しない。
+- iPhone写真ライブラリへの保存直前にlocal `unknown` markerを書き、アプリ中断後は自動で再保存しない。
 - iPhone側original削除はpreview確認後のユーザー操作に限定し、バックグラウンドで自動実行しない。
 - 外部SSD未接続、容量不足、ffmpeg失敗をエラーとして記録する。
 
 ### セキュリティ
 
-- `/assets/upload`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`は固定APIトークンを要求する。
+- `/assets/upload`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/results/{result_id}`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`は固定APIトークンを要求する。
 - トークンや機密値をログへ出力しない。
 - 保存パスはbackend側で生成し、クライアント由来のパスを信用しない。
 - Phase 1のHTTP通信はLANまたはTailscale private network内に限定する。

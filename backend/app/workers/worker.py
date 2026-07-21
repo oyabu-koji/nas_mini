@@ -9,6 +9,8 @@ from app.repositories.jobs import (
     claim_next_job,
     recover_expired_jobs,
 )
+from app.services.processed_result_backfill import backfill_eligible_processed_results
+from app.services.processed_result_recovery import recover_unreferenced_generated_previews
 from app.services.preview import process_preview_job
 from app.services.upload_finalize import process_upload_finalize_job
 from app.services.storage import initialize_storage
@@ -25,6 +27,9 @@ def run_once() -> bool:
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         run_migrations(conn)
         recover_expired_jobs(conn)
+    recover_unreferenced_generated_previews(settings=settings)
+    backfill_eligible_processed_results(settings=settings)
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         job = claim_next_job(conn, settings.job_lease_seconds, SUPPORTED_JOB_TYPES)
         if job is None:
             return False

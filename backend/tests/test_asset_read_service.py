@@ -1,6 +1,10 @@
 import json
 
-from app.services.asset_read import build_asset_read_response
+from app.core.settings import Settings
+from app.db.connection import connect
+from app.db.migrations import run_migrations
+from app.repositories.assets import insert_asset
+from app.services.asset_read import build_asset_read_response, list_asset_reads
 
 
 def _asset_row():
@@ -51,3 +55,36 @@ def test_build_asset_read_response_allows_missing_preview():
     response = build_asset_read_response(asset=_asset_row(), preview=None)
 
     assert response.preview is None
+
+
+def test_asset_list_does_not_resolve_or_hash_processed_results(monkeypatch, tmp_path):
+    settings = Settings(
+        media_root=tmp_path / "media",
+        api_token="test-token",
+        database_path=tmp_path / "db.sqlite3",
+    )
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        run_migrations(conn)
+        insert_asset(
+            conn,
+            type="video",
+            filename="clip.mov",
+            original_path="originals/clip.mov",
+            size_bytes=10,
+            server_sha256="a" * 64,
+            taken_at=None,
+            latitude=None,
+            longitude=None,
+            exif_json=None,
+            is_log=False,
+        )
+
+    def should_not_resolve(*_args, **_kwargs):
+        raise AssertionError("asset list must not resolve processed results")
+
+    monkeypatch.setattr("app.services.asset_read.resolve_deliverable_result", should_not_resolve)
+
+    response = list_asset_reads(settings, limit=10, offset=0)
+
+    assert len(response.items) == 1
+    assert "active_processed_result" not in response.items[0].model_dump()

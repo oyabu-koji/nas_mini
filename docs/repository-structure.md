@@ -28,6 +28,7 @@ project-root/
 │   │   ├── settings/
 │   │   ├── asset-picker/
 │   │   ├── upload-queue/
+│   │   ├── processed-results/
 │   │   ├── asset-detail/
 │   │   └── preview-review/
 │   └── shared/
@@ -80,6 +81,7 @@ project-root/
 - 画面状態、非同期処理、状態遷移を調停する。
 - API client、platform serviceを呼び出す。
 - preview確認後のiPhone側original手動削除は、screenではなくhookで条件判定し、shared serviceへ委譲する。
+- `processed-results/hooks/`は処理済みvideoのdownload、verify、photo-library save状態と起動時temporary file cleanupを調停する。source original削除hookから参照しない。
 
 ### `src/features/[feature]/components/`
 
@@ -92,6 +94,7 @@ project-root/
 - 選択中のserver profileに対応するBackend URL、Authorization、`capabilities`、preset一覧、preview/job response処理を集約する。
 - 自宅用のBackend URLはLAN IP、Tailscale IP、MagicDNS名のprivate endpointを扱う。将来のApp Review用profileはHTTPS endpointだけを扱う。
 - Tokenをログ出力しない。
+- processed result metadataをsanitizeし、validated asset/result IDからcanonical relative delivery pathを再構築する。response URLをそのまま認証付きrequestへ渡さない。
 
 ### `src/shared/services/`
 
@@ -128,11 +131,11 @@ project-root/
 
 ### `backend/app/repositories/`
 
-- assets、derived_files、jobs、LUT preset/manifestのDB操作。
+- assets、derived_files、jobs、processed_results、LUT preset/manifestのDB操作。transaction境界はserviceが所有し、repository helperはcommitしない。
 
 ### `backend/app/services/`
 
-- upload保存、SHA256計算、Apple Log判定、preset検証、preview生成、path生成。
+- upload保存、SHA256計算、Apple Log判定、preset検証、preview生成、path生成、processed result integrity/backfill/finalize/delivery/range stream。
 - original非改変ルールを守る。
 
 ### `modules/streaming-sha256/`

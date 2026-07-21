@@ -191,18 +191,8 @@ def mark_job_failed(
     job_id: int,
     error_message: str,
 ) -> None:
-    sanitized_error = error_message[:MAX_ERROR_MESSAGE_LENGTH]
     with conn:
-        conn.execute(
-            """
-            UPDATE jobs
-            SET status = 'failed',
-                error_message = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (sanitized_error, job_id),
-        )
+        set_job_failed_in_transaction(conn, job_id=job_id, error_message=error_message)
 
 
 def fail_job_and_asset_preview(
@@ -213,42 +203,70 @@ def fail_job_and_asset_preview(
     error_message: str,
 ) -> None:
     """Terminally fail a preview job and its existing target asset together."""
-    sanitized_error = error_message[:MAX_ERROR_MESSAGE_LENGTH]
     with conn:
-        if asset_id is not None:
-            conn.execute(
-                """
-                UPDATE assets
-                SET preview_status = 'failed',
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (asset_id,),
-            )
-        conn.execute(
-            """
-            UPDATE jobs
-            SET status = 'failed',
-                error_message = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (sanitized_error, job_id),
+        fail_job_and_asset_preview_in_transaction(
+            conn,
+            job_id=job_id,
+            asset_id=asset_id,
+            error_message=error_message,
         )
 
 
 def mark_job_done(conn: sqlite3.Connection, job_id: int) -> None:
     with conn:
+        set_job_done_in_transaction(conn, job_id=job_id)
+
+
+def set_job_failed_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    job_id: int,
+    error_message: str,
+) -> None:
+    sanitized_error = error_message[:MAX_ERROR_MESSAGE_LENGTH]
+    conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed',
+            error_message = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (sanitized_error, job_id),
+    )
+
+
+def fail_job_and_asset_preview_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    job_id: int,
+    asset_id: int | None,
+    error_message: str,
+) -> None:
+    if asset_id is not None:
         conn.execute(
             """
-            UPDATE jobs
-            SET status = 'done',
-                error_message = NULL,
+            UPDATE assets
+            SET preview_status = 'failed',
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (job_id,),
+            (asset_id,),
         )
+    set_job_failed_in_transaction(conn, job_id=job_id, error_message=error_message)
+
+
+def set_job_done_in_transaction(conn: sqlite3.Connection, *, job_id: int) -> None:
+    conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'done',
+            error_message = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (job_id,),
+    )
 
 
 def fail_unsupported_job(conn: sqlite3.Connection, job: dict[str, Any]) -> None:

@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse
 from app.api.deps import require_bearer_token
 from app.core.settings import load_settings
 from app.schemas.assets import (
+    AssetDetailResponse,
     AssetListResponse,
-    AssetReadResponse,
     UploadAssetResponse,
     parse_upload_metadata,
 )
@@ -35,6 +35,13 @@ from app.services.preview_stream import (
     PreviewNotReadyError as StreamPreviewNotReadyError,
     PreviewStorageError,
     open_preview_stream,
+)
+from app.services.processed_result_stream import (
+    ProcessedResultNotFoundError,
+    ProcessedResultNotReadyError,
+    ProcessedResultRangeNotSatisfiableError,
+    ProcessedResultSupersededError,
+    open_processed_result_stream,
 )
 from app.services.upload import UploadTooLargeError, create_upload_asset
 
@@ -108,8 +115,44 @@ def list_assets(
     )
 
 
-@router.get("/{asset_id}", response_model=AssetReadResponse)
-def get_asset_detail(asset_id: int) -> AssetReadResponse:
+@router.get("/{asset_id}/results/{result_id}")
+def stream_processed_result(
+    asset_id: int,
+    result_id: str,
+    range_header: Annotated[str | None, Header(alias="Range")] = None,
+):
+    try:
+        return open_processed_result_stream(
+            settings=load_settings(),
+            asset_id=asset_id,
+            result_id=result_id,
+            range_header=range_header,
+        )
+    except ProcessedResultNotFoundError:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"code": "processed_result_not_found", "retryable": False},
+        )
+    except ProcessedResultSupersededError:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"code": "processed_result_superseded", "retryable": False},
+        )
+    except ProcessedResultNotReadyError:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"code": "processed_result_not_ready", "retryable": False},
+        )
+    except ProcessedResultRangeNotSatisfiableError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+            content={"code": "processed_result_range_not_satisfiable", "retryable": False},
+            headers={"Content-Range": f"bytes */{exc.total_size}"},
+        )
+
+
+@router.get("/{asset_id}", response_model=AssetDetailResponse)
+def get_asset_detail(asset_id: int) -> AssetDetailResponse:
     try:
         return get_asset_read(settings=load_settings(), asset_id=asset_id)
     except AssetNotFoundError as exc:
@@ -155,8 +198,8 @@ def stream_asset_preview(
         ) from exc
 
 
-@router.post("/{asset_id}/preview-confirmation", response_model=AssetReadResponse)
-def confirm_asset_preview(asset_id: int) -> AssetReadResponse:
+@router.post("/{asset_id}/preview-confirmation", response_model=AssetDetailResponse)
+def confirm_asset_preview(asset_id: int) -> AssetDetailResponse:
     try:
         return confirm_preview(settings=load_settings(), asset_id=asset_id)
     except AssetNotFoundError as exc:

@@ -1,5 +1,6 @@
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any, Callable
 
@@ -11,12 +12,17 @@ from app.repositories.assets import (
     update_preview_status,
 )
 from app.repositories.derived_files import (
-    DERIVED_KIND_PREVIEW,
     get_preview_for_asset,
-    insert_derived_file,
 )
-from app.repositories.jobs import fail_job_and_asset_preview, mark_job_done
+from app.repositories.jobs import fail_job_and_asset_preview, set_job_failed_in_transaction
+from app.repositories.processed_results import is_phase2a_session_video_asset
 from app.services import ffmpeg
+from app.services.processed_result_finalizer import finalize_ready_processed_result
+from app.services.processed_result_integrity import (
+    ProcessedResultIntegrityError,
+    hash_file_sha256,
+    inspect_derived_preview,
+)
 from app.services.storage import (
     StorageError,
     generate_preview_relative_path,
@@ -61,7 +67,17 @@ def process_preview_job(
 
             existing_preview = get_preview_for_asset(conn, asset_id)
             if existing_preview is not None:
-                _handle_existing_preview(settings, conn, job["id"], asset_id, existing_preview)
+                phase2a_result_expected = is_phase2a_session_video_asset(
+                    conn,
+                    asset_id=asset_id,
+                )
+                _handle_existing_preview(
+                    settings=settings,
+                    job_id=job["id"],
+                    asset_id=asset_id,
+                    existing_preview=existing_preview,
+                    phase2a_result_expected=phase2a_result_expected,
+                )
                 return True
 
         preview_spec = _preview_spec(settings, job, asset)
@@ -93,19 +109,27 @@ def process_preview_job(
             )
             raise PreviewProcessingError("storage failure", asset_id) from exc
 
+        sha256: str | None = None
+        if preview_spec["mime_type"] == "video/mp4":
+            try:
+                sha256 = hash_file_sha256(confirmed_preview_path)
+            except OSError as exc:
+                _cleanup_confirmed_preview(
+                    confirmed_preview_path,
+                    confirmed_preview_relative_path,
+                )
+                raise PreviewProcessingError("storage failure", asset_id) from exc
+
         try:
-            with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
-                with conn:
-                    insert_derived_file(
-                        conn,
-                        asset_id=asset_id,
-                        kind=DERIVED_KIND_PREVIEW,
-                        path=confirmed_preview_relative_path,
-                        mime_type=preview_spec["mime_type"],
-                        size_bytes=size_bytes,
-                    )
-                    update_preview_status(conn, asset_id, PREVIEW_STATUS_PREVIEW_READY)
-                    mark_job_done(conn, job["id"])
+            finalize_ready_processed_result(
+                settings=settings,
+                job_id=job["id"],
+                asset_id=asset_id,
+                preview_relative_path=confirmed_preview_relative_path,
+                mime_type=preview_spec["mime_type"],
+                size_bytes=size_bytes,
+                sha256=sha256,
+            )
         except Exception:
             _cleanup_confirmed_preview(
                 confirmed_preview_path,
@@ -163,22 +187,54 @@ def _validate_payload_asset_id(job: dict[str, Any], asset_id: int | None) -> Non
 
 
 def _handle_existing_preview(
+    *,
     settings: Settings,
-    conn,
     job_id: int,
     asset_id: int,
     existing_preview: dict[str, Any],
+    phase2a_result_expected: bool,
 ) -> None:
+    sha256: str | None = None
     try:
-        preview_path = resolve_media_path(settings.media_root, str(existing_preview["path"]))
+        if existing_preview["mime_type"] == "video/mp4":
+            inspected = inspect_derived_preview(settings=settings, derived_file=existing_preview)
+            sha256 = inspected.sha256
+        else:
+            preview_path = resolve_media_path(settings.media_root, str(existing_preview["path"]))
+            if not preview_path.is_file():
+                raise PreviewProcessingError("preview file missing", asset_id)
+    except ProcessedResultIntegrityError as exc:
+        message = "preview file missing" if exc.code == "processed_result_file_missing" else "preview integrity failure"
+        raise PreviewProcessingError(message, asset_id) from exc
     except StorageError as exc:
         raise PreviewProcessingError(_storage_error_message(exc), asset_id) from exc
 
-    if not preview_path.is_file():
-        raise PreviewProcessingError("preview file missing", asset_id)
+    try:
+        finalize_ready_processed_result(
+            settings=settings,
+            job_id=job_id,
+            asset_id=asset_id,
+            preview_relative_path=str(existing_preview["path"]),
+            mime_type=str(existing_preview["mime_type"]),
+            size_bytes=int(existing_preview["size_bytes"]),
+            sha256=sha256,
+            existing_derived_file_id=int(existing_preview["id"]),
+        )
+    except sqlite3.DatabaseError:
+        if not phase2a_result_expected:
+            raise
+        _mark_existing_preview_retryable(settings=settings, job_id=job_id, asset_id=asset_id)
 
-    update_preview_status(conn, asset_id, PREVIEW_STATUS_PREVIEW_READY)
-    mark_job_done(conn, job_id)
+
+def _mark_existing_preview_retryable(*, settings: Settings, job_id: int, asset_id: int) -> None:
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        with conn:
+            update_preview_status(conn, asset_id, PREVIEW_STATUS_PREVIEW_READY)
+            set_job_failed_in_transaction(
+                conn,
+                job_id=job_id,
+                error_message="processed_result_backfill_retryable_failure",
+            )
 
 
 def _preview_spec(settings: Settings, job: dict[str, Any], asset: dict[str, Any]) -> dict[str, Any]:

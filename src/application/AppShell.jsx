@@ -5,11 +5,13 @@ import { StatusBar } from 'expo-status-bar';
 import { AssetPickerScreen } from '../features/asset-picker/screens/AssetPickerScreen';
 import { AssetDetailScreen } from '../features/assets/screens/AssetDetailScreen';
 import { AssetListScreen } from '../features/assets/screens/AssetListScreen';
+import { useProcessedResultStartupCleanup } from '../features/processed-results/hooks/useProcessedResultSave';
 import { PreviewReviewScreen } from '../features/preview-review/screens/PreviewReviewScreen';
 import { useSettings } from '../features/settings/hooks/useSettings';
 import { SettingsScreen } from '../features/settings/screens/SettingsScreen';
 
 export function AppShell() {
+  useProcessedResultStartupCleanup();
   const settingsState = useSettings();
   const [route, setRoute] = React.useState({ screen: 'settings', selectedAssetId: null });
 

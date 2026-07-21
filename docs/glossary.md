@@ -84,6 +84,18 @@ Expo Goでは足りない実運用向け権限や動作を検証するための�
 
 `expo-media-library`が扱うiPhone写真ライブラリ上の素材識別子。iPhone側original手動削除に使う。Backend側保存pathやasset idとは別物として扱う。
 
+### processed result
+
+軽量化又は後続LUT renditionとして生成したvideo derived fileの不変な配信単位。opaqueな32桁lowercase UUID hexの`result_id`、asset、derived file、MIME、size、SHA-256、状態を持つ。`ready` resultだけがassetのactive pointerになれ、再renderでは新resultを作って旧resultを`superseded`として保持する。originalではない。
+
+### processed result save store
+
+iPhone写真ライブラリへのprocessed result保存だけを管理するMobile local store。`backend_asset_id`、`backend_result_id`、SHA-256、save state、保存済みcopyのlocal asset identifierだけを扱う。source originalの`mobile local asset mapping`と混用せず、token、URI、pathを保存しない。
+
+### save outcome unknown
+
+写真ライブラリnative saveの直前に保存するwrite-ahead状態。native call後にアプリが中断し成功可否を確認できない場合に残る。自動再保存やsource original削除を行わず、ユーザーが明示的に再試行する前に写真ライブラリを確認する。
+
 ## エンティティ
 
 ### asset
@@ -105,6 +117,10 @@ Mobileがupload timeoutでrequestを中断した後、backendがoriginal保存�
 ### derived_files
 
 assetから生成したpreview等のファイルを記録する。
+
+### processed_results
+
+`processed result`のBackend永続record。`derived_file_id`は一意で、active pointerは同一assetのready recordだけを指す。ready/superseded recordのidentity fieldsと参照derived fileは変更・削除できない。Phase 2Bではformal preview、generation、provenanceとの一致も配信条件になる。
 
 ### jobs
 

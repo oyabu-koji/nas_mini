@@ -106,9 +106,18 @@ graph LR
 | `GET` | `/assets` | asset一覧取得 |
 | `GET` | `/assets/{asset_id}` | asset詳細取得 |
 | `GET` | `/assets/{asset_id}/preview` | preview取得 |
+| `GET` | `/assets/{asset_id}/results/{result_id}` | active processed videoの取得 |
 | `POST` | `/assets/{asset_id}/preview-confirmation` | preview確認済み更新 |
 | `GET` | `/jobs` | job一覧取得 |
 | `GET` | `/jobs/{job_id}` | job詳細取得 |
+
+### Phase 2A processed result API契約
+
+- Asset Detailだけがnullableな`active_processed_result`を返す。metadataは32桁lowercase UUID hexの`result_id`、`mime_type`、`size_bytes`、SHA-256、作成時刻、canonical relative URLだけとし、filesystem path、token、original pathは返さない。asset listには含めない。
+- `GET /assets/{asset_id}/results/{result_id}`はBearer tokenを要求し、asset/resultを同時に検索する。未知または別assetのresultは`404 processed_result_not_found`、inactive historical resultは`409 processed_result_superseded`、activeでない又はintegrity/provenance gateを満たさないresultは`409 processed_result_not_ready`とする。
+- full responseは`200`、single rangeは`206`、malformed又はunsatisfiable rangeは`416 processed_result_range_not_satisfiable`とする。成功responseは`ETag`、`X-Processed-Result-Id`、`X-Processed-Result-SHA256`、`X-Processed-Result-Size`、`Accept-Ranges`、正しい`Content-Length`を返す。
+- Mobileはdetailのmetadataを捕捉し、asset/result IDからcanonical pathを再構築したsame-origin requestだけにAuthorization headerを付与する。`video/mp4`だけをtemporary `.mp4`へdownloadし、header、size、native streaming SHA-256を照合してから写真ライブラリへ保存する。
+- `processedResultSaveStore`はsource originalの`mobile local asset mapping`とは別のAsyncStorage namespaceである。`unknown` write-ahead markerを`createAssetAsync`直前に保存し、成功時だけ`saved_local_asset_identifier`を記録してからtemporary fileをbest-effort cleanupする。
 
 ### Phase 2B API契約
 
@@ -135,7 +144,7 @@ graph LR
 
 | Field | 説明 |
 |-------|------|
-| `id`, `formal_preview_id`, `preview_generation` | asset識別子、Phase 2Bでactive formal previewを指すnullable derived file識別子、formal previewを無効化するたびに増加するnon-null世代番号 |
+| `id`, `active_processed_result_id`, `formal_preview_id`, `preview_generation` | asset識別子、Phase 2Aのactive immutable resultを指すnullable identifier、Phase 2Bでactive formal previewを指すnullable derived file識別子、formal previewを無効化するたびに増加するnon-null世代番号 |
 | `type` | `image` / `video` |
 | `filename` | 元ファイル名 |
 | `original_path` | backend生成のoriginal保存パス |
@@ -157,6 +166,17 @@ iPhone写真ライブラリ上の素材とbackend assetを紐づけるMobile側l
 | `local_delete_status` | `not_deleted`, `delete_requested`, `deleted`, `failed` |
 | `last_delete_error` | 権限拒否、キャンセル、local asset不在などの表示用分類 |
 
+### processed result save store
+
+処理済みvideoをiPhone写真ライブラリへ保存するためのMobile側local state。source originalのmappingとは独立し、Backendへ同期しない。token、URI、storage path、source originalのlocal asset identifierは保存しない。
+
+| Field | 説明 |
+|-------|------|
+| `backend_asset_id`, `backend_result_id`, `result_sha256` | exact result identityを構成するkey |
+| `save_status` | `downloading`, `unknown`, `saved`, `failed` |
+| `saved_local_asset_identifier` | `saved`時だけ保持する処理済みcopyの写真ライブラリ識別子 |
+| `save_attempted_at`, `last_error_code`, `updated_at` | write-ahead recoveryと安全な表示用metadata |
+
 ### upload result unknown
 
 Mobileがupload timeout後にbackend保存結果を確定できないlocal state。token、URI、filenameを保存せず、local asset idがある場合はその値で状態を復元する。local asset idがない場合はglobal pending markerを使い、ユーザーがasset一覧を確認済みと明示するまでuploadを再開しない。
@@ -164,6 +184,10 @@ Mobileがupload timeout後にbackend保存結果を確定できないlocal state
 ### derived_files
 
 assetから生成した`preview`, `thumbnail`, `proxy`, `lut_preview`を記録する。originalとは別ファイルとして管理する。Phase 2Bのformal previewはすべて一対一のpreview provenanceを持つ。provenanceは`requested_preset_id`、`applied_preset_id`、preset version、SHA-256、`color_transform_status`、nullableな`color_transform_error_code`を記録する。Apple LogのRec.709変換と有効なcustom LUTは`transform_kind = lut`、未登録・無効化済みpresetへのfallbackと非Logは`transform_kind = none`とする。Apple Log fallbackでは未変換理由として`color_transform_error_code = lut_preset_unavailable`を必須にする。
+
+### processed_results
+
+deliverableなvideo derived fileのimmutable identity。`id`はopaqueな32桁lowercase UUID hex、`asset_id`と`derived_file_id`はFK、`derived_file_id`は一意とする。`ready` resultだけがactive pointerになれ、pointerの切替では旧resultを`superseded`として保持する。`ready`又は`superseded` resultのderived file、MIME、size、SHA-256、generation、created timeは変更・削除できない。Phase 2Bではdelivery前にresult、`formal_preview_id`、generation、formal provenanceの一致を追加で確認する。
 
 ### jobs
 
@@ -251,6 +275,10 @@ stateDiagram-v2
 | iPhone側削除権限拒否 | 変更なし | 削除未実行として表示する |
 | iPhone側削除キャンセル | 変更なし | 削除未実行として表示する |
 | local asset不在 | 変更なし | 端末内で見つからない素材として表示する |
+| processed resultがinactive | `409 processed_result_superseded` | Asset Detailを再取得し、別resultを自動保存しない |
+| processed resultが未ready又は不整合 | `409 processed_result_not_ready` | 保存を開始せず、詳細を更新する |
+| result header/size/SHA-256不一致 | 変更なし | temporary fileを削除し、写真ライブラリへ保存しない |
+| 写真ライブラリ保存後の状態書込み失敗 | 変更なし | `unknown`を維持し、savedと表示しない |
 
 ## Phase 2設計前提
 
