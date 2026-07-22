@@ -9,7 +9,7 @@
 - 自宅Mac miniのbackendを公開インターネットへ直接公開しない。App Review用に公開運用する場合は、自宅環境・データと分離したHTTPS backendを使う。
 - 外部SSDの保存先ルートは`MEDIA_ROOT`で指定する。
 - originalはimmutableとして扱い、derived fileと分離する。
-- Phase 1は`104857600 bytes`以下の通常uploadによるUX検証とする。Phase 2は2Aの大容量安全転送、2BのApple Log preview、2Cの安全削除候補の順に進める。
+- Phase 1は`104857600 bytes`以下の通常uploadによるUX検証とする。Phase 2は2Aの大容量安全転送とmanaged rendition基盤、2BのApple Log preview、2Cの安全削除候補の順に進める。
 
 ## コンテキスト図
 
@@ -59,6 +59,7 @@ graph LR
 - Tailscale IPまたはMagicDNS名を含むprivate endpoint URLの設定。
 - upload進捗、asset状態、要求・適用presetと色変換状態を含むpreview表示、確認操作。
 - Asset Detailでactive processed resultを明示downloadし、temporary fileのresponse identity、size、native streaming SHA-256を検証してから`expo-media-library`へ保存する。
+- eligibleな通常videoではversioned catalogのpresetだけを選択し、client request IDをPOST前にasset単位で永続化してrendition phaseをpollする。新しいselection後の古いPOST/poll結果はcurrent UIを上書きしない。
 - 処理済みcopyの保存状態は`processedResultSaveStore`で管理し、source originalの`localAssetMappingStore`やBackend review/delete stateを変更しない。
 - 自動削除は実行しない。
 - preview確認後にユーザーが明示操作した場合のみ、iPhone写真ライブラリ上のoriginal削除を端末service経由で実行する。
@@ -71,11 +72,12 @@ graph LR
 - 安全なファイル名と保存パスの生成。
 - original保存、SHA256計算、SQLite記録。
 - preview job登録、asset/job参照、preview配信、処理済みresult配信、確認済み更新。
+- `/api/v1`でcapability、safe preset catalog、冪等なrendition作成・参照を提供する。routeはfilesystem path、raw manifest/LUT、token、FFmpeg stderrを返さない。
 
 ### Job Service
 
 - job状態を`queued`, `running`, `done`, `failed`で管理する。
-- Phase 1はpreviewと安全ゲート中のlut_previewを処理する。Phase 2Aはsessionごとに一意な`upload_finalize` jobをlease/reclaim可能にする。Phase 2Bではoriginal確定後のApple Log自動判定、server presetのsnapshot、formal preview provenance付き生成を追加する。未登録または無効化済みpresetは`compress-only` previewを`done`にし、登録済みLUTの検証・適用失敗だけをterminal failureにする。session由来video preview jobはassetと同じ`preview_generation`を持ち、claim/commit時に一致しないjobはassetを書き換えず`preview_generation_superseded`として終了する。
+- Phase 1はpreviewと安全ゲート中のlut_previewを処理する。Phase 2Aはsessionごとに一意な`upload_finalize` jobをlease/reclaim可能にし、managed requestごとの`rendition` jobを専用processorへ明示dispatchする。Phase 2Bではoriginal確定後のApple Log自動判定、server presetのsnapshot、formal preview provenance付き生成を追加する。未登録または無効化済みpresetは`compress-only` previewを`done`にし、登録済みLUTの検証・適用失敗だけをterminal failureにする。session由来video preview jobはassetと同じ`preview_generation`を持ち、claim/commit時に一致しないjobはassetを書き換えず`preview_generation_superseded`として終了する。
 - Phase 3+でAI解析jobを追加可能にする。
 
 ### Preview Adapter
@@ -87,6 +89,14 @@ graph LR
 - Phase 1でHEIC、JPEG、PNG入力の検証fixtureを用意し、Docker内ffmpeg buildのcodec対応を確認する。
 - stdout/stderrを安全に扱い、機密値をログへ含めない。
 
+### Managed Preset Rendition
+
+- registryはvirtualな`compress-only`、repository内のgenerated identity/test manifest、optionalなrepo外`USER_LUT_ROOT`を統合し、`absent`、`disabled`、`registered_invalid`、`valid`へ分類する。catalogには`compress-only`とenabledかつvalidなsafe metadataだけを出す。
+- manifestはstrict schema v1とRFC 8785 JCS digest、LUTはbounded `.cube` parser、grid、row count、finite value、SHA-256で検証する。valid requestはcanonical manifest bytesとLUT identityをrenditionへimmutable snapshotする。
+- workerはserver-owned rootをsource kindから選び、各path componentをno-follow descriptorで開く。validated descriptorからowner-onlyのjob-private LUTへcopyし、FFmpeg直前にsize/hashを再検証するため、directory entry差替え後のpathを再解決しない。
+- `assets.rendition_selection_generation`がselection順序の正本である。current generationのfinalizerだけがderived file、provenance、ready result、旧result supersede、active pointer、rendition/job完了を一transactionで確定する。stale generationは同じ監査証跡を持つsuperseded resultにするがpointerとpreview/review stateを変更しない。
+- Phase 2A managed resultの`preview_generation`はnull、`formal_preview_id`は未設定とする。Phase 2BだけがApple Log検出、formal preview generation、preview/review state移行を所有する。
+
 ## データ管理
 
 ### SQLite
@@ -95,6 +105,7 @@ graph LR
 - assets、derived_files、jobsをPhase 1で作成する。
 - upload_sessions、upload_chunksはPhase 2で追加する。sessionはclient idempotency key、immutable metadata、expected hash、failure/retry、expiry、lease、asset/job参照を持ち、chunkは`UNIQUE(session_id, chunk_index)`とverified hashを持つ。
 - processed_resultsはPhase 2Aのdeliverable video identityである。assetsのdeferred active pointerはsame-assetの`ready` resultだけを指し、result/derived file/size/SHA-256/pointer/job完了は一つのtransactionで確定する。
+- renditionsはglobal uniqueなclient request ID、job、asset、selection generation、immutable preset snapshot、phase、nullable resultを持つ。rendition_provenanceはrendition/result/derived fileと一対一で、要求・適用presetとmanifest/LUT digest、transform outcomeを不変に保持する。
 - Phase 2BではLUT preset/detector manifestとpreview provenanceを追加する。provenanceは要求・適用preset、version、SHA-256、色変換状態・未適用理由を記録し、Apple Log fallbackを含む`transform_kind = none`も扱う。
 - statusは一つの列へ集約せず、役割ごとに分離する。
 
@@ -105,6 +116,7 @@ graph LR
 - local asset identifierは端末内の素材削除にのみ使い、backendへ保存先pathとして送らない。
 - upload timeout後の`result_unknown`はtoken、URI、filenameを含めず端末に保存する。local asset idがない場合はglobal pending markerを使い、asset一覧確認済みの明示操作までuploadを再開しない。
 - source originalのmappingとは別に、処理済みcopyの保存を`backend_asset_id`、`backend_result_id`、result SHA-256で識別する。写真ライブラリnative call直前に`unknown` markerを永続化し、成功時だけsaved local asset identifierを記録する。
+- managed rendition requestはさらに別のasset-scoped AsyncStorage namespaceへclient request/rendition ID、selection sequence、safe rendition fieldsだけを保存する。token、URL、path、manifest/LUT本文は保存しない。
 - サーバー設定はサーバーID、名称、URLを通常設定へ保存し、tokenは`expo-secure-store`へ分離保存する。
 
 ### External SSD
@@ -122,6 +134,7 @@ ${MEDIA_ROOT}/
 - `previews/`, `thumbnails/`: derived file。
 - `tmp/`: upload中、一時生成中のファイル。
 - `jobs/`: 必要なjob関連ファイル。DB jobレコードと役割を混同しない。
+- `previews/renditions/`: immutable managed rendition MP4。生成中candidateは`tmp/renditions/`、job-private LUT snapshotは`jobs/{rendition_id}/`へ置き、terminal outcome後にcleanupする。
 - custom LUTはDocker imageとGitリポジトリへ入れず、`USER_LUT_ROOT`として設定したMac mini側のrepo外ディレクトリをread-only mountして参照する。
 
 ## ファイル保存フロー
@@ -175,6 +188,7 @@ ${MEDIA_ROOT}/
 - Phase 2Bではtemporary LOG safety triggerを、`type = video AND verification_status = file_verified`のassetで`formal_preview_id`と`log_detection_status`に応じたformal preview provenanceがない場合に`preview_ready`を拒否するSQLite triggerへmigrationで置換する。Apple Logの未登録または無効化済みpresetは`transform_kind = none`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を持つprovenanceで許可する。登録済みLUTのhash不一致・形式不備・FFmpeg適用失敗だけはterminal failureにする。
 - preview jobのterminal failureでは、jobと存在するassetのstatusを同一SQLite transactionで更新し、部分更新を残さない。
 - Phase 2B preview migrationはmaintenance modeでpre-Phase-2B workerを停止・drainしてから実行する。`phase2b-profile-preview:{asset_id}`の新規insertとasset generation/state更新を同一transactionにし、既存dedup keyではassetを変更しない。これにより再実行と旧jobのlate commitがformal preview/review stateを巻き戻さない。
+- rendition作成はread-only replay lookup後にpreflightし、`BEGIN IMMEDIATE`内でreplay、eligibility、active base identityを再確認してからgeneration/job/renditionを作る。finalizerも`BEGIN IMMEDIATE`内でeligibilityとcandidate/provenanceを再検証し、DB失敗時はrollbackしてcandidateをcleanupする。
 
 ## Docker方針
 
@@ -199,9 +213,12 @@ ${MEDIA_ROOT}/
 
 ## 品質確認
 
-- Mobile: `npx expo install --check`, `npm run lint`, `npm test`, `npx expo start`
+- Mobileの品質境界は`npm run lint`、`npm test`、`npm run test:coverage`、`npx expo install --check`、iOS export、Metro起動確認とする。lintはroot `eslint.config.js`のExpo flat configを使い、error/warning 0件を必須にする。
+- canonical coverageは`src/**/*.{js,jsx}`と`modules/*/src/**/*.{js,jsx}`へ自動適用し、test fileと`__tests__`だけを除外する。新しいproduction sourceは未importでもdenominatorへ入り、statements/lines 80%、branches 69.46%、functions 80.08%を下回ると失敗する。
+- 2026-07-22のcanonical finalは36 production files、32 suites / 157 tests、statements 86.07%（1280 / 1487）、branches 77.30%（1056 / 1366）、functions 89.56%（249 / 278）、lines 86.08%（1262 / 1466）である。
+- coverage scope変更は旧新glob・除外・file数・suite/test数・4指標・理由・承認を記録し、silent exclusion又はfloor引下げを行わない。
 - Backend: `uv run pytest`を標準のtest commandとし、lintを導入した場合も`uv run ...`で実行する。
-- 実機: Development Buildでライブラリアクセス、TailscaleまたはLAN経由のHTTP通信、preview再生、iPhone側original手動削除の権限/キャンセルを確認する。
+- 実機: Development Buildでライブラリアクセス、TailscaleまたはLAN経由のHTTP通信、preview再生、iPhone側original手動削除の権限/キャンセルを確認する。physical-device validationはJest coverageの母集団外であり、別の受入確認として扱う。
 
 ## Open Questions
 

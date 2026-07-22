@@ -14,6 +14,7 @@ project-root/
 ├── App.jsx
 ├── index.js
 ├── app.json
+├── eslint.config.js
 ├── package.json
 ├── assets/
 │   └── ...
@@ -29,6 +30,7 @@ project-root/
 │   │   ├── asset-picker/
 │   │   ├── upload-queue/
 │   │   ├── processed-results/
+│   │   ├── managed-renditions/
 │   │   ├── asset-detail/
 │   │   └── preview-review/
 │   └── shared/
@@ -50,7 +52,8 @@ project-root/
 │   │   ├── services/
 │   │   └── workers/
 │   ├── assets/
-│   │   └── lut/
+│   │   └── lut/presets/
+│   ├── scripts/
 │   ├── tests/
 │   ├── pyproject.toml
 │   ├── uv.lock
@@ -64,6 +67,12 @@ project-root/
 ```
 
 ## Mobile構造
+
+### root `eslint.config.js`
+
+- Expo SDK 54のflat configを基礎に、Mobile production/testとmaintained root JavaScriptのlint policyを所有する。
+- Jest globalはtest/setup、Node globalはlint configへ限定し、generated output、Backend、`.agents/`、`.steering/`をglobal ignoreする。
+- Backend Python lintの責務は持たず、Backend品質commandは`backend/pyproject.toml`側で管理する。
 
 ### `src/application/`
 
@@ -110,12 +119,20 @@ project-root/
 - `preview_status = preview_ready`かつ`review_status = preview_confirmed`のassetだけ、iPhone側original手動削除導線を表示する。
 - Backend側original削除APIを呼ばない。
 
+### `src/features/managed-renditions/`
+
+- `services/managedRenditionApi.js`はcapability/catalog/rendition responseをsanitizeし、versioned APIを呼ぶ。
+- `services/managedRenditionStore.js`はasset単位のclient request/rendition identityとselection sequenceを独立AsyncStorage namespaceへ保存する。
+- `hooks/useManagedRendition.js`はwrite-before-POST、same-ID retry、再起動polling、A/B stale response guard、exact active result再取得を調停する。
+- `components/PresetSelector.jsx`はserver-returned preset、明示render command、phase、要求・適用preset、fallback/errorを表示する。Apple Log/Rec.709 labelを推測しない。
+
 ## Backend構造
 
 ### `backend/app/api/`
 
 - FastAPI routeとrequest/response処理。
 - business logic、path生成、ffmpeg呼び出しを直接持たない。
+- managed presetは`capabilities.py`、`presets.py`、`renditions.py`へ分け、すべてrouter-level token認証を要求する。
 
 ### `backend/app/core/`
 
@@ -132,11 +149,13 @@ project-root/
 ### `backend/app/repositories/`
 
 - assets、derived_files、jobs、processed_results、LUT preset/manifestのDB操作。transaction境界はserviceが所有し、repository helperはcommitしない。
+- `renditions.py`と`rendition_provenance.py`はrequest/job/result/provenance relationを扱い、finalizerのtransactionを内側でcommitしない。
 
 ### `backend/app/services/`
 
 - upload保存、SHA256計算、Apple Log判定、preset検証、preview生成、path生成、processed result integrity/backfill/finalize/delivery/range stream。
 - original非改変ルールを守る。
+- managed presetはmanifest/JCS/`.cube`検証、registry分類、no-follow LUT snapshot、rendition作成、専用処理、原子的finalizeをそれぞれ`preset_manifest.py`、`preset_registry.py`、`lut_snapshot.py`、`rendition_creation.py`、`rendition_processing.py`、`rendition_finalizer.py`へ分離する。
 
 ### `modules/streaming-sha256/`
 
@@ -145,15 +164,20 @@ project-root/
 
 ### `backend/app/workers/`
 
-- preview job実行。
+- preview、upload finalization、managed rendition jobを明示dispatchして実行する。
 - SQLite transactionによるatomic claim、lease、期限切れjob回収を担当する。
 - Phase 3+でAI jobを追加する。
 
 ### `backend/assets/lut/`
 
-- Backend workerが管理presetとmanifestを読む場所。自前生成のApple Log to Rec.709 preset、identity/test LUTなど、リポジトリで管理可能な資産だけを置く。
+- Backend workerが管理presetとmanifestを読む場所。`presets/{preset-id}/manifest.json`と同directoryの`.cube`として、identity/test LUTなどリポジトリで管理可能な資産だけを置く。
 - manifestにはpreset id、source/target profile、version、SHA-256、generatorまたはsource URL、利用条件の参照を記録する。identity LUTをRec.709変換用として扱わない。
 - Docker image内では`/app/assets/lut/`として参照する。custom LUTはimageとGitへ含めず、Mac mini側のrepo外`USER_LUT_ROOT`をread-only mountして参照する。任意のLUTをMobileからuploadしない。
+
+### `backend/scripts/`
+
+- `generate_test_luts.py`は17-point identityとred/blue swap test LUT、schema v1 manifestをdeterministicに再生成する。
+- generated LUT/manifestはcommitし、generator再実行後の差分とSHA-256をtestで検証する。実user LUTは生成・commitしない。
 
 ### `backend/pyproject.toml`, `backend/uv.lock`
 
@@ -171,12 +195,14 @@ repository内へ実データを置かない。
 ${MEDIA_ROOT}/
 ├── originals/
 ├── previews/
+│   └── renditions/
 ├── thumbnails/
 ├── jobs/
 └── tmp/
+    └── renditions/
 ```
 
-custom LUTは`${USER_LUT_ROOT}/`配下にmanifestとともに配置し、`MEDIA_ROOT`のimmutable original・derived fileとは分離する。
+custom LUTは`${USER_LUT_ROOT}/{preset-id}/manifest.json`とmanifestが指すrelative `.cube`として配置し、`MEDIA_ROOT`のimmutable original・derived fileとは分離する。API/worker containerへ同じread-only mountを渡す。
 
 ## 命名規則
 
@@ -213,6 +239,7 @@ backend workers -> services -> repositories -> db
 - `docker/`またはrootにDockerfile/Composeを置く。
 - Mac miniのSSD host pathは環境変数でcomposeへ渡す。
 - container内`MEDIA_ROOT`へvolume mountする。
+- optionalなhost `USER_LUT_ROOT`はcontainerへread-only volume mountし、未設定時はcustom LUT capabilityをfalseにする。
 - `node_modules`はcontainer内で作成する。
 - Backend Python依存はcontainer内で`uv sync --frozen`相当の手順で解決する。
 

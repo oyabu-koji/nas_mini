@@ -12,7 +12,7 @@ iPhoneで内容確認するために生成するderived file。Phase 1の動画p
 
 ### derived file
 
-originalから生成した別ファイル。`preview`, `thumbnail`, `proxy`, `lut_preview`を含む。originalとは分離して保存する。
+originalから生成した別ファイル。`preview`, `thumbnail`, `proxy`, `lut_preview`, `rendition`を含む。originalとは分離して保存する。
 
 ### LOG素材
 
@@ -46,7 +46,7 @@ Apple Log previewをRec.709へ変換するためのLook-Up Table。originalに�
 
 ### LUT registry
 
-管理manifestを持つserver presetの集合。`compress-only`、自前生成または承認済みsourceによるApple Log to Rec.709 preset、Mac mini側`USER_LUT_ROOT`に登録したcustom LUTを含む。各LUTはpreset id、source profile、target profile、version、SHA-256、由来、利用条件の参照を持つ。Mobileは有効presetを選択できるが、LUTファイルをuploadしない。
+管理manifestを持つserver presetの集合。virtualな`compress-only`、repository内のgenerated identity/test、将来の自前生成又は承認済みApple Log to Rec.709 preset、Mac mini側`USER_LUT_ROOT`に登録したcustom LUTを統合する。各LUTはpreset id、version、SHA-256、由来、利用条件の参照を持つ。Mobileは有効presetを選択できるが、LUTファイルをuploadしない。
 
 ### compress-only
 
@@ -54,15 +54,15 @@ LUTを適用せずにH.264/AAC等のpreview制約へ軽量化するserver preset
 
 ### color transform status
 
-previewに対する色変換の結果。`not_requested`、`unavailable`、`applied`、`failed`を使う。`unavailable`は要求presetが未登録または無効化済みのため`compress-only`を適用した成功状態であり、job失敗ではない。この場合の`color_transform_error_code`は`lut_preset_unavailable`に固定する。
+preview又はmanaged renditionに対する色変換の結果。`not_requested`、`unavailable`、`applied`、`failed`を使う。`unavailable`は要求presetが未登録または無効化済みのため`compress-only`を適用した成功状態であり、job失敗ではない。この場合の`color_transform_error_code`は`lut_preset_unavailable`に固定する。
 
 ### requested preset
 
-MobileまたはApple Log自動判定がpreview jobへ要求したserver preset。Apple Logを検出した場合の既定値は`generated-apple-log-rec709`である。実際に適用できなかった場合もprovenanceへ残す。
+Mobileがmanaged renditionへ明示要求した、又はApple Log自動判定がformal previewへ要求したserver preset。Apple Logを検出した場合の将来既定値は`generated-apple-log-rec709`である。実際に適用できなかった場合もprovenanceへ残す。
 
 ### applied preset
 
-workerがpreview生成時に実際に使ったserver preset。要求presetが未登録または無効化済みの場合は`compress-only`となる。LUTを適用した場合はversionとSHA-256もprovenanceへ残す。
+workerがpreview又はrendition生成時に実際に使ったserver preset。要求presetが未登録または無効化済みの場合は`compress-only`となる。LUTを適用した場合はversionとSHA-256もprovenanceへ残す。
 
 ### preview provenance
 
@@ -75,6 +75,30 @@ Phase 2Aでchunk結合、hash照合、確定保存が完了し、preview jobが�
 ### preview generation
 
 Phase 2Bでsession由来videoのformal previewを無効化するたびにassetへ記録する単調増加番号。preview jobは同じ番号を持ち、claim/commit時に番号が一致しない旧jobは`preview_generation_superseded`として終了し、asset、formal preview、review stateを変更しない。
+
+### managed preset
+
+Phase 2AでMac miniが所有・検証し、versioned catalogへsafe metadataだけを公開する処理preset。`compress-only`、generated identity/test、repo外customを含む。identity/test/customはApple Log又はRec.709変換済みを意味しない。
+
+### registry classification
+
+要求presetのserver registry上の状態。`absent`、`disabled`、`registered_invalid`、`valid`の4値を使う。`absent`と`disabled`だけが`compress-only`成功fallbackの対象で、登録破損を示す`registered_invalid`はterminal failureにする。
+
+### rendition
+
+eligibleな通常videoのimmutable originalから、ユーザーが選んだmanaged presetで明示生成する新しいvideo derived result。client request ID、selection generation、job、phase、nullable resultを持つ。formal preview、preview確認、original削除条件は変更しない。
+
+### rendition selection generation
+
+assetで新しいmanaged preset renderを明示するたびに増える単調増加番号。current generationだけがactive processed resultを切り替え、遅れて完了した古いgenerationは`superseded` auditになる。Phase 2Bの`preview generation`とは別物。
+
+### immutable LUT snapshot
+
+rendition作成時に保存したcanonical manifest identityと、workerがno-follow descriptorで開いたsourceからjob-private pathへcopyしたexact LUT bytesの組。FFmpeg直前にもsize/SHA-256を照合し、mutable registry pathを処理authorityとして読み直さない。
+
+### rendition provenance
+
+rendition、derived file、processed resultに一対一で紐づくimmutable record。要求・適用preset、registry classification、version、manifest/LUT SHA-256、transform kind/status/error、safe source/terms/target metadataを保持する。
 
 ### Development Build
 
@@ -121,6 +145,14 @@ assetから生成したpreview等のファイルを記録する。
 ### processed_results
 
 `processed result`のBackend永続record。`derived_file_id`は一意で、active pointerは同一assetのready recordだけを指す。ready/superseded recordのidentity fieldsと参照derived fileは変更・削除できない。Phase 2Bではformal preview、generation、provenanceとの一致も配信条件になる。
+
+### renditions
+
+managed rendition requestと永続phaseを表すBackend record。global uniqueなclient request ID、asset、job、selection generation、immutable preset snapshot、nullable resultを保持し、exact replayで同じrecordを返す。
+
+### rendition_provenance
+
+`rendition provenance`を保存するBackend record。rendition、processed result、derived fileとの一対一relationとimmutable identityをDB constraint/triggerで守る。
 
 ### jobs
 
@@ -217,6 +249,18 @@ Mobile側で管理するiPhone側original手動削除の状態。Backend側asset
 | `running` | 実行中 |
 | `done` | 成功 |
 | `failed` | 失敗 |
+
+### rendition state
+
+| 値 | 意味 |
+|----|------|
+| `queued` | rendition job実行待ち |
+| `validating` | immutable preset/LUT snapshot検証中 |
+| `rendering` | FFmpegでcandidate生成中 |
+| `finalizing` | eligibility、provenance、result、active pointerを原子的に確定中 |
+| `ready` | current generationのactive resultとして利用可能 |
+| `failed` | stable error codeを持つterminal failure。新resultは公開しない |
+| `superseded` | 古いgenerationとして監査用result/provenanceを保持し、activeではない |
 
 ## 略語
 

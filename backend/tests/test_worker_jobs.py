@@ -96,7 +96,7 @@ def test_claim_next_job_claims_only_supported_job_types(tmp_path):
 
 
 def test_supported_job_types_include_preview_processors():
-    assert SUPPORTED_JOB_TYPES == {"preview", "lut_preview", "upload_finalize"}
+    assert SUPPORTED_JOB_TYPES == {"preview", "lut_preview", "upload_finalize", "rendition"}
 
 
 def test_worker_leaves_unsupported_job_queued(monkeypatch, tmp_path):
@@ -201,6 +201,36 @@ def test_worker_claims_finalize_job_and_delegates(monkeypatch, tmp_path):
 
     assert processed is True
     assert claimed_jobs[0]["job_type"] == "upload_finalize"
+
+
+def test_worker_claims_rendition_job_only_with_dedicated_processor(monkeypatch, tmp_path):
+    media_root = tmp_path / "media"
+    database_path = tmp_path / "db.sqlite3"
+    claimed_jobs = []
+    monkeypatch.setenv("MEDIA_ROOT", str(media_root))
+    monkeypatch.setenv("API_TOKEN", "secret-token")
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+
+    def record_rendition_job(*, settings, job):
+        claimed_jobs.append(job)
+        return True
+
+    preview_processor = lambda **_kwargs: (_ for _ in ()).throw(
+        AssertionError("rendition reached preview processor")
+    )
+    monkeypatch.setattr("app.workers.worker.process_rendition_job", record_rendition_job)
+    monkeypatch.setattr("app.workers.worker.process_preview_job", preview_processor)
+
+    with connect(database_path, 5000) as conn:
+        run_migrations(conn)
+        conn.execute(
+            "INSERT INTO jobs (job_type, status, payload_json) VALUES ('rendition', 'queued', '{}')"
+        )
+
+    processed = run_once()
+
+    assert processed is True
+    assert claimed_jobs[0]["job_type"] == "rendition"
 
 
 def test_explicit_unsupported_job_failure_helper_marks_claimed_job_failed(tmp_path):

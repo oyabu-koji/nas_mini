@@ -4,7 +4,7 @@ from typing import Any, Iterable
 from uuid import uuid4
 
 
-SUPPORTED_JOB_TYPES: set[str] = {"preview", "lut_preview", "upload_finalize"}
+SUPPORTED_JOB_TYPES: set[str] = {"preview", "lut_preview", "upload_finalize", "rendition"}
 MAX_ERROR_MESSAGE_LENGTH = 200
 
 

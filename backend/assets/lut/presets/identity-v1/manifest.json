@@ -1,0 +1,16 @@
+{
+  "display_name": "Identity test",
+  "enabled": true,
+  "file_format": "cube",
+  "grid_size": 17,
+  "lut_relative_path": "identity-v1.cube",
+  "lut_sha256": "49b26018aa20fd0a788a93ddacf62d7b1a6b211803603bac1990a8c1c31080d8",
+  "manifest_sha256": "8482fa9a653651bdc78087ed826912128c9cbdc97f664464b4c0aeca78e839ad",
+  "preset_id": "identity-v1",
+  "preset_kind": "generated-identity",
+  "schema_version": 1,
+  "source_reference": "MediaVault deterministic test generator",
+  "target_color_space": null,
+  "terms_reference": "Project source",
+  "version": "1"
+}

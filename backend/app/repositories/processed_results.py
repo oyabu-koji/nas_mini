@@ -252,6 +252,39 @@ def insert_ready_processed_result(
     return inserted, True
 
 
+def insert_superseded_processed_result(
+    conn: sqlite3.Connection,
+    *,
+    asset_id: int,
+    derived_file_id: int,
+    mime_type: str,
+    size_bytes: int,
+    sha256: str,
+    result_id: str | None = None,
+) -> dict[str, Any]:
+    assigned_result_id = result_id or generate_result_id()
+    _validate_ready_result_input(
+        result_id=assigned_result_id,
+        mime_type=mime_type,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        preview_generation=None,
+    )
+    conn.execute(
+        """
+        INSERT INTO processed_results (
+            id, asset_id, derived_file_id, status, mime_type, size_bytes, sha256,
+            preview_generation, superseded_at
+        ) VALUES (?, ?, ?, 'superseded', ?, ?, ?, NULL, CURRENT_TIMESTAMP)
+        """,
+        (assigned_result_id, asset_id, derived_file_id, mime_type, size_bytes, sha256),
+    )
+    inserted = get_processed_result(conn, asset_id=asset_id, result_id=assigned_result_id)
+    if inserted is None:
+        raise RuntimeError("superseded processed result could not be loaded")
+    return inserted
+
+
 def set_active_processed_result(
     conn: sqlite3.Connection,
     *,

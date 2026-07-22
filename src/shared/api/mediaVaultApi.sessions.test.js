@@ -1,13 +1,13 @@
-jest.mock('expo-file-system', () => ({
-  File: jest.fn(),
-}));
-
 import {
   SESSION_CHUNK_TIMEOUT_MS,
   SESSION_REQUEST_TIMEOUT_MS,
   createUploadSession,
   uploadUploadSessionChunk,
 } from './mediaVaultApi';
+
+jest.mock('expo-file-system', () => ({
+  File: jest.fn(),
+}));
 
 const { File } = require('expo-file-system');
 

@@ -79,7 +79,7 @@ def inspect_derived_preview(
     settings: Settings,
     derived_file: dict[str, Any],
 ) -> InspectedDerivedPreview:
-    if derived_file.get("kind") != "preview":
+    if derived_file.get("kind") not in {"preview", "rendition"}:
         raise ProcessedResultIntegrityError("processed_result_invalid_derived_file")
     mime_type = derived_file.get("mime_type")
     if mime_type not in PHASE2A_RESULT_MIME_TYPES:
@@ -123,7 +123,7 @@ def _validate_record_identity(
         raise ProcessedResultIntegrityError("processed_result_derived_file_mismatch")
     if result.get("asset_id") != derived_file.get("asset_id"):
         raise ProcessedResultIntegrityError("processed_result_asset_mismatch")
-    if derived_file.get("kind") != "preview":
+    if derived_file.get("kind") not in {"preview", "rendition"}:
         raise ProcessedResultIntegrityError("processed_result_invalid_derived_file")
 
 

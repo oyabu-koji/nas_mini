@@ -5,7 +5,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.assets import router as assets_router
+from app.api.capabilities import router as capabilities_router
 from app.api.health import router as health_router
+from app.api.presets import router as presets_router
+from app.api.renditions import router as renditions_router
 from app.api.upload_sessions import router as upload_sessions_router
 from app.core.settings import load_settings
 from app.db.connection import connect
@@ -39,3 +42,6 @@ async def validation_error_response(_request: Request, _error: RequestValidation
 app.include_router(health_router)
 app.include_router(assets_router)
 app.include_router(upload_sessions_router)
+app.include_router(capabilities_router)
+app.include_router(presets_router)
+app.include_router(renditions_router)

@@ -1,14 +1,14 @@
-jest.mock('expo-media-library', () => ({
-  requestPermissionsAsync: jest.fn(),
-  createAssetAsync: jest.fn(),
-}));
-
 import * as MediaLibrary from 'expo-media-library';
 
 import {
   createProcessedResultLibraryAsset,
   requestProcessedResultLibraryPermission,
 } from './processedResultMediaLibraryService';
+
+jest.mock('expo-media-library', () => ({
+  requestPermissionsAsync: jest.fn(),
+  createAssetAsync: jest.fn(),
+}));
 
 describe('processedResultMediaLibraryService', () => {
   beforeEach(() => {

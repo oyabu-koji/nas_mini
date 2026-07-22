@@ -7,6 +7,7 @@
 - preview確認後のiPhone側original削除は、ユーザー明示操作だけを許可する。Backend側original削除は対象外とする。
 - iPhoneからbackendへのPhase 1接続は、LANまたはTailscale private network上のHTTP endpointと固定APIトークンを使う。
 - 将来必須: Phase 2Aで大容量素材向け安全転送、Phase 2BでApple Log preview、Phase 2Cで削除候補判定を追加する。
+- Phase 2Aでは、通常video向けmanaged preset renditionをPhase 2Bの前段として提供する。これはApple Log自動判定又はformal previewではなく、preview確認・review・削除候補状態を変更しない。
 - Phase 2Bでは、`file_verified` originalだけを入力にApple Logを自動判定する。要求LUTが未登録または無効化済みなら、未変換を明示した`compress-only` previewを成功として返す。
 - Mobileはサーバーが返す有効なプリセットだけを選択する。custom LUTのファイルをMobileからuploadしない。
 
@@ -110,6 +111,10 @@ graph LR
 | `POST` | `/assets/{asset_id}/preview-confirmation` | preview確認済み更新 |
 | `GET` | `/jobs` | job一覧取得 |
 | `GET` | `/jobs/{job_id}` | job詳細取得 |
+| `GET` | `/api/v1/capabilities` | versioned feature capability取得 |
+| `GET` | `/api/v1/presets` | selectable managed preset取得 |
+| `POST` | `/api/v1/assets/{asset_id}/renditions` | managed rendition作成 |
+| `GET` | `/api/v1/assets/{asset_id}/renditions/{rendition_id}` | managed rendition進捗取得 |
 
 ### Phase 2A processed result API契約
 
@@ -118,6 +123,15 @@ graph LR
 - full responseは`200`、single rangeは`206`、malformed又はunsatisfiable rangeは`416 processed_result_range_not_satisfiable`とする。成功responseは`ETag`、`X-Processed-Result-Id`、`X-Processed-Result-SHA256`、`X-Processed-Result-Size`、`Accept-Ranges`、正しい`Content-Length`を返す。
 - Mobileはdetailのmetadataを捕捉し、asset/result IDからcanonical pathを再構築したsame-origin requestだけにAuthorization headerを付与する。`video/mp4`だけをtemporary `.mp4`へdownloadし、header、size、native streaming SHA-256を照合してから写真ライブラリへ保存する。
 - `processedResultSaveStore`はsource originalの`mobile local asset mapping`とは別のAsyncStorage namespaceである。`unknown` write-ahead markerを`createAssetAsync`直前に保存し、成功時だけ`saved_local_asset_identifier`を記録してからtemporary fileをbest-effort cleanupする。
+
+### Phase 2A managed rendition API契約
+
+- 全endpointはBearer tokenを要求する。`GET /api/v1/capabilities`は`managed_preview_presets = true`、`generated_apple_log_conversion = false`を返し、`GET /api/v1/presets`はvirtualな`compress-only`とenabledかつvalidなLUT presetのsafe metadataだけを返す。
+- `POST /api/v1/assets/{asset_id}/renditions`は32桁lowercase UUID hexの`client_rendition_request_id`とserver-owned `preset_id`だけを受け付ける。new requestは`202`、exact replayは`200`、別inputへのID再利用は`409 rendition_request_conflict`とする。
+- 新規requestはsession-derived、`file_verified`、normal video、active result readyかつintegrity valid、legacy LOG safety gateなしのassetだけを受理する。不適格は`409 rendition_asset_not_eligible`、preflight後にactive base identityだけが変わった場合はretryableな`409 rendition_precondition_changed`とし、いずれもrendition/job/generationを作らない。
+- `GET /api/v1/assets/{asset_id}/renditions/{rendition_id}`は`queued`、`validating`、`rendering`、`finalizing`、`ready`、`failed`、`superseded`と、要求・適用preset、色変換状態、safe error codeを返す。unknown/cross-asset IDは`404 rendition_not_found`とする。
+- MobileはPOST前にasset単位のlocal storeへrequest IDを書き、timeout又は`rendition_precondition_changed`では同じIDを再利用する。terminal stateまでpollし、ready後にAsset Detailを再取得してexact resultがactiveの場合だけ既存processed-result保存経路へ渡す。
+- missing/disabled presetは`compress-only`を適用したready resultと`unavailable`を返す。registered-invalid、source-changed、application failureはresultを公開せずfailedにする。
 
 ### Phase 2B API契約
 
@@ -145,6 +159,7 @@ graph LR
 | Field | 説明 |
 |-------|------|
 | `id`, `active_processed_result_id`, `formal_preview_id`, `preview_generation` | asset識別子、Phase 2Aのactive immutable resultを指すnullable identifier、Phase 2Bでactive formal previewを指すnullable derived file識別子、formal previewを無効化するたびに増加するnon-null世代番号 |
+| `rendition_selection_generation` | managed renditionを明示選択するたびに増えるnon-negative generation。Phase 2Bの`preview_generation`とは別に管理する |
 | `type` | `image` / `video` |
 | `filename` | 元ファイル名 |
 | `original_path` | backend生成のoriginal保存パス |
@@ -183,15 +198,19 @@ Mobileがupload timeout後にbackend保存結果を確定できないlocal state
 
 ### derived_files
 
-assetから生成した`preview`, `thumbnail`, `proxy`, `lut_preview`を記録する。originalとは別ファイルとして管理する。Phase 2Bのformal previewはすべて一対一のpreview provenanceを持つ。provenanceは`requested_preset_id`、`applied_preset_id`、preset version、SHA-256、`color_transform_status`、nullableな`color_transform_error_code`を記録する。Apple LogのRec.709変換と有効なcustom LUTは`transform_kind = lut`、未登録・無効化済みpresetへのfallbackと非Logは`transform_kind = none`とする。Apple Log fallbackでは未変換理由として`color_transform_error_code = lut_preset_unavailable`を必須にする。
+assetから生成した`preview`, `thumbnail`, `proxy`, `lut_preview`, `rendition`を記録する。originalとは別ファイルとして管理する。Phase 2A managed renditionは`kind = rendition`とし、formal preview ID又はpreview generationを設定しない。Phase 2Bのformal previewはすべて一対一のpreview provenanceを持つ。provenanceは`requested_preset_id`、`applied_preset_id`、preset version、SHA-256、`color_transform_status`、nullableな`color_transform_error_code`を記録する。Apple LogのRec.709変換と有効なcustom LUTは`transform_kind = lut`、未登録・無効化済みpresetへのfallbackと非Logは`transform_kind = none`とする。Apple Log fallbackでは未変換理由として`color_transform_error_code = lut_preset_unavailable`を必須にする。
 
 ### processed_results
 
 deliverableなvideo derived fileのimmutable identity。`id`はopaqueな32桁lowercase UUID hex、`asset_id`と`derived_file_id`はFK、`derived_file_id`は一意とする。`ready` resultだけがactive pointerになれ、pointerの切替では旧resultを`superseded`として保持する。`ready`又は`superseded` resultのderived file、MIME、size、SHA-256、generation、created timeは変更・削除できない。Phase 2Bではdelivery前にresult、`formal_preview_id`、generation、formal provenanceの一致を追加で確認する。
 
+### renditions / rendition provenance
+
+`renditions`はclient request ID、asset、job、selection generation、要求preset snapshot、phase、nullable resultを一意に保持する。request IDはglobal uniqueで、job/resultはrenditionと一対一にする。`rendition_provenance`はready又はsuperseded result/derived file/renditionに一対一で結び、要求・適用preset、registry classification、version、manifest/LUT SHA-256、transform kind/status/error、safe source/terms/target metadataをimmutableに保存する。
+
 ### jobs
 
-preview生成と将来解析を共通のjob方式で記録する。Phase 1では`preview`, `lut_preview`を利用する。Phase 2Aはsessionごとに一意な`upload_finalize` jobを追加し、Phase 2Bは新規動画にprofile-awareな`preview` jobを使う。preview jobは要求presetをsnapshotし、完了時に実際に適用したpresetと色変換状態をprovenanceへ確定する。non-nullの`jobs.dedup_key`は一意とし、finalize/preview migrationの重複jobを防ぐ。`jobs.preview_generation`はnon-preview jobではnull、session由来video previewでは必須で、workerはassetの`preview_generation`とclaim/commitの両方で一致するjobだけがassetを更新できる。
+preview生成と将来解析を共通のjob方式で記録する。Phase 1では`preview`, `lut_preview`を利用する。Phase 2Aはsessionごとに一意な`upload_finalize`と、managed requestごとに一意な`rendition` jobを追加し、Phase 2Bは新規動画にprofile-awareな`preview` jobを使う。`rendition` jobは`renditions.job_id`をrelationの正本とし、payloadは一致確認にだけ使う。preview jobは要求presetをsnapshotし、完了時に実際に適用したpresetと色変換状態をprovenanceへ確定する。non-nullの`jobs.dedup_key`は一意とし、finalize/preview migrationの重複jobを防ぐ。`jobs.preview_generation`はmanaged renditionを含むnon-preview jobではnull、session由来video previewでは必須で、workerはassetの`preview_generation`とclaim/commitの両方で一致するjobだけがassetを更新できる。
 
 ## 状態遷移
 
@@ -277,6 +296,10 @@ stateDiagram-v2
 | local asset不在 | 変更なし | 端末内で見つからない素材として表示する |
 | processed resultがinactive | `409 processed_result_superseded` | Asset Detailを再取得し、別resultを自動保存しない |
 | processed resultが未ready又は不整合 | `409 processed_result_not_ready` | 保存を開始せず、詳細を更新する |
+| managed renditionのasset不適格 | `409 rendition_asset_not_eligible` | active result/review UIを維持し、renderを開始しない |
+| managed renditionのprecondition変化 | retryableな`409 rendition_precondition_changed` | 同じclient request IDで明示retryする |
+| managed presetがmissing/disabled | `compress-only` resultをreadyにし`lut_preset_unavailable`を記録 | fallbackを明示し、変換済みlabelを合成しない |
+| managed presetがregistered-invalid/source-changed/application failed | rendition/jobをfailedにしresultを作らない | stable errorを表示し、既存active resultを維持する |
 | result header/size/SHA-256不一致 | 変更なし | temporary fileを削除し、写真ライブラリへ保存しない |
 | 写真ライブラリ保存後の状態書込み失敗 | 変更なし | `unknown`を維持し、savedと表示しない |
 
@@ -301,6 +324,7 @@ stateDiagram-v2
 - workerはSQLite transaction内で`queued` jobを1件だけatomic claimし、`running`へ更新する。
 - preview jobのterminal failureでは、jobと存在するassetのstatusを同一SQLite transactionで更新する。
 - Phase 2Aでは`upload_finalize` workerがoriginalの結合、hash照合、確定保存を行い、asset/session/job完了とpreview job登録を同一transactionで確定する。Phase 2B migrationはmaintenance modeでpre-Phase-2B workerを停止・drainしてから、session由来の`file_verified`動画だけを一意なprofile-aware preview jobへ再queueする。job insertが新規の場合だけgeneration、formal preview/review stateを同一transactionで更新する。workerはclaim/commit時のgeneration不一致を`preview_generation_superseded`としてassetを書き換えずに終了する。Phase 1 direct assetは対象外とする。
+- `rendition` workerはDB保存済みpreset snapshotをauthorityとして使い、valid LUTをno-follow descriptorからjob-private fileへcopyしてhashを再検証する。current generationだけがresult/provenance/pointer/rendition/jobを一transactionでreadyにし、旧generationはpointerやpreview/review stateを変えずsuperseded auditとして確定する。
 - jobに`claimed_at`と`lease_expires_at`を記録する。
 - worker異常終了時は、lease期限切れの`running` jobを`queued`へ戻して再実行可能にする。
 - SQLiteはWAL modeと`busy_timeout = 5000ms`を設定する。
@@ -320,6 +344,8 @@ stateDiagram-v2
 - Phase 2B migrationがsession由来の`file_verified`動画だけを`preview_ready -> preview_generating`または`failed -> preview_generating`へ遷移し、新規dedup jobのinsert成功時だけgeneration/formal preview/review stateを更新することを確認する。queued、done、failedのPhase 2B jobが既にあるmigration再実行ではasset stateを変えず、jobを重複作成しないことを確認する。
 - Phase 2B migration後にgeneration `0`のPhase 2A preview/lut_preview jobをclaimまたはlease recoveryしても、`preview_generation_superseded`としてasset、formal preview、review state、derived file、provenanceを変更しないことを確認する。migration開始前にpre-Phase-2B workerを停止・drainしないdeploymentを拒否することも確認する。
 - mappingが取得できないassetは、将来のiPhone側original削除導線を表示しない。
+- manifestのduplicate key/unknown field/BOM/JCS hash、`.cube` size/grid/data/hash、symlink/path escapeを拒否し、generated fixtureを再生成してdigestが一致することを確認する。
+- rendition request replay/precondition、A/B逆順完了、LUT source差替え、finalizer failure injection、managed result provenance配信、Mobileのwrite-before-POST/restart polling/stale response guardを確認する。
 - preview確認が`review_status`だけを更新する。
 - iPhone側original削除操作がpreview確認後にだけ表示される。
 - 削除権限拒否、ユーザーキャンセル、local asset不在でBackend側statusが変わらない。

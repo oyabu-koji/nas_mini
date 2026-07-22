@@ -21,6 +21,7 @@ def test_load_settings_defaults(monkeypatch, tmp_path):
     monkeypatch.delenv("SQLITE_BUSY_TIMEOUT_MS", raising=False)
     monkeypatch.delenv("JOB_LEASE_SECONDS", raising=False)
     monkeypatch.delenv("PROCESSED_RESULT_RECOVERY_GRACE_SECONDS", raising=False)
+    monkeypatch.delenv("USER_LUT_ROOT", raising=False)
 
     settings = load_settings()
 
@@ -33,6 +34,10 @@ def test_load_settings_defaults(monkeypatch, tmp_path):
     assert settings.upload_session_expiry_seconds == 604_800
     assert settings.upload_session_retry_after_seconds == 30
     assert str(settings.lut_path) == "/app/assets/lut/rec709.cube"
+    assert settings.user_lut_root is None
+    assert settings.built_in_preset_root.name == "presets"
+    assert settings.preset_manifest_max_bytes == 65_536
+    assert settings.preset_lut_max_bytes == 16 * 1024 * 1024
 
 
 def test_load_settings_allows_lut_path_override(monkeypatch, tmp_path):
@@ -46,6 +51,17 @@ def test_load_settings_allows_lut_path_override(monkeypatch, tmp_path):
     assert settings.lut_path == tmp_path / "custom.cube"
 
 
+def test_load_settings_allows_optional_user_lut_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path / "media"))
+    monkeypatch.setenv("API_TOKEN", "secret-token")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "db.sqlite3"))
+    monkeypatch.setenv("USER_LUT_ROOT", str(tmp_path / "managed-luts"))
+
+    settings = load_settings()
+
+    assert settings.user_lut_root == tmp_path / "managed-luts"
+
+
 def test_load_settings_rejects_invalid_numeric_value(monkeypatch, tmp_path):
     monkeypatch.setenv("MEDIA_ROOT", str(tmp_path / "media"))
     monkeypatch.setenv("API_TOKEN", "secret-token")
@@ -53,6 +69,25 @@ def test_load_settings_rejects_invalid_numeric_value(monkeypatch, tmp_path):
     monkeypatch.setenv("SQLITE_BUSY_TIMEOUT_MS", "0")
 
     with pytest.raises(SettingsError):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("PRESET_MANIFEST_MAX_BYTES", str(65_536 + 1)),
+        ("PRESET_LUT_MAX_BYTES", str(16 * 1024 * 1024 + 1)),
+    ],
+)
+def test_load_settings_rejects_preset_limits_above_contract(
+    monkeypatch, tmp_path, name, value
+):
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path / "media"))
+    monkeypatch.setenv("API_TOKEN", "secret-token")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "db.sqlite3"))
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(SettingsError, match="must be at most"):
         load_settings()
 
 

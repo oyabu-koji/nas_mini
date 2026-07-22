@@ -51,6 +51,9 @@
 - `expo-media-library`など端末APIはserviceに閉じ込める。
 - 処理済みvideo保存はAsset Detailの明示操作だけで開始し、`processedResultSaveStore`をsource originalのmapping storeから分離する。保存成功は`review_status`、削除候補、source original mappingを変更しない。
 - processed result downloadはasset/result IDから再構築したcanonical same-origin pathだけを使う。responseのabsolute URL、query、fragment、path不一致にはAuthorization headerを送らない。
+- managed presetはserver catalogだけを表示し、local fallback option、Apple Log/Rec.709 label、LUT pathを合成しない。catalogにvalidな`compress-only`がなければ画面をerrorにする。
+- rendition client request IDはsecure platform UUIDだけから32桁lowercase hexを作り、POST前にasset-scoped storeへ保存する。network timeoutと`rendition_precondition_changed`は同じIDでretryし、新しい明示selectionだけが新IDを作る。
+- rendition pollはrequest ID、rendition ID、selection sequenceを照合し、新しいselection後の古いresponseをUI又は保存対象へ反映しない。ready時もAsset Detailのexact active resultを再確認する。
 - `video/mp4`だけを検証済みresult ID由来のcache `.mp4`へdownloadし、response header、size、native streaming SHA-256が一致してから写真ライブラリへ保存する。token、URI、storage pathをAsyncStorageへ保存しない。
 - 写真ライブラリpermissionは保存操作時だけ要求する。`createAssetAsync`直前に`unknown` write-ahead recordを永続化し、saved recordを書いてからtemporary fileをbest-effort cleanupする。保存結果が不明なら自動再保存しない。
 - 固定APIトークンをログ出力しない。
@@ -84,9 +87,13 @@
 - result delivery endpointはasset/resultを同時に検索し、shared deliverability serviceでfile integrityとPhase 2A/2B gateを検証する。inactive resultを新active resultのbytesに置換して返さない。
 - Apple Log判定とLUT適用はoriginal確定後のworkerだけが行う。要求presetが未登録または無効化済みなら、`compress-only` previewを成功として生成し、`color_transform_status = unavailable`と`color_transform_error_code = lut_preset_unavailable`をprovenanceへ保存する。登録済みLUTのmanifest/hash/形式/FFmpeg適用失敗だけはpreviewをfailedにする。
 - LUTは管理manifestを持つserver presetだけを使い、Mobileまたはasset単位の任意file uploadを受け付けない。custom LUTはrepo外の`USER_LUT_ROOT`で管理し、workerは要求・適用preset、version、SHA-256、色変換状態をprovenanceへ保存する。Apple Log fallbackと非Logは`transform_kind = none`、適用済みLUTは`transform_kind = lut`とする。
+- schema v1 manifestはUTF-8/BOMなし/64 KiB以下、duplicate/unknown fieldなし、厳密な型としてparseし、top-level `manifest_sha256`だけを除いたRFC 8785 JCS bytesをhashする。`.cube`は16 MiB以下、3D grid 17/33/65、finite RGB、exact row count/hashだけを受理する。
+- LUT sourceはrequest pathから選ばず、renditionへ保存した`source_root_kind`とrelative componentsを使う。各componentを`O_NOFOLLOW`相当でdescriptor openし、regular file/size/hashを検証しながらowner-only job-private snapshotへcopyする。FFmpegには`MEDIA_ROOT`内のbackend-generated pathだけを渡す。
+- missing/disabled presetだけを`compress-only`へfallbackする。registered-invalid、snapshot source変更、FFmpeg LUT適用失敗をfallbackで隠さず、stable terminal errorにする。
+- routine log/API errorへtoken、host path、raw manifest、LUT content、complete media metadata、FFmpeg stderrを出さない。外部errorは固定codeとretryable flagへ変換する。
 - `file_verified`動画の`preview_ready`、stream、confirmationは`formal_preview_id`とそのprovenanceを検証する。Phase 1 direct image/videoはこのPhase 2B triggerの対象外とする。
 - 外部SSD未接続、容量不足、I/O失敗を明示的に扱う。
-- `/assets/upload`, `/upload-sessions`, `/upload-sessions/{session_id}`, `/upload-sessions/{session_id}/chunks/{chunk_index}`, `/upload-sessions/{session_id}/finalize`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/results/{result_id}`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`は固定APIトークンを要求する。
+- `/assets/upload`, `/upload-sessions`, `/upload-sessions/{session_id}`, `/upload-sessions/{session_id}/chunks/{chunk_index}`, `/upload-sessions/{session_id}/finalize`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/results/{result_id}`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`、`/api/v1/capabilities`、`/api/v1/presets`、`/api/v1/assets/{asset_id}/renditions`配下は固定APIトークンを要求する。
 - API要求は`Authorization: Bearer <token>`形式とする。
 - Tailscaleは通信経路であり、backend認証の代替にはしない。
 
@@ -109,7 +116,9 @@
 - workerは処理可能なjob typeだけをclaimし、processor未実装のjobを通常処理でfailedへ落とさない。
 - `claimed_at`と`lease_expires_at`で異常終了後のjobを回収する。
 - Docker worker serviceは`restart: unless-stopped`で再起動する。
-- job種別は`preview`, `lut_preview`から始め、Phase 2Aで`upload_finalize`を追加し、将来AI jobを追加する。
+- job種別は`preview`, `lut_preview`から始め、Phase 2Aで`upload_finalize`と`rendition`を追加し、将来AI jobを追加する。
+- workerは既知job typeを専用processorへ明示dispatchする。`rendition`は`renditions.job_id`をrelation authorityとし、payload IDは一致確認だけに使い、generic preview processorへfallbackしない。
+- managed rendition finalizerはcurrent selection generationだけをactiveにし、stale completionをsuperseded auditとして確定する。いずれもformal preview、preview/review/delete-candidate stateを変更しない。
 - Phase 2Aではoriginal確定後にpreview jobを登録し、Phase 2BではApple Log判定とLUT変換をそのjob境界の後に置く。Phase 2Bの新規動画はprofile-awareな`preview` jobを使い、historical `lut_preview`はaudit-onlyとする。
 - Phase 2B migrationはmaintenance modeでpre-Phase-2B workerを停止・drainしてから実行する。session由来video preview jobはassetと同じ`preview_generation`をpayload/columnに持ち、workerはclaim/commit時に両者が一致する場合だけasset、formal preview、review stateを更新する。世代不一致jobは`preview_generation_superseded`としてassetを書き換えず終了する。
 - job失敗時は`error_message`へ運用に必要な情報を保存する。
@@ -127,6 +136,7 @@
 - component test: Settings、Asset Picker、Upload Queue、Preview Review。
 - unit/component test: iPhone側original削除導線がpreview確認後だけ表示されること。
 - unit/component test: canonical processed-result URL以外へtokenを送らないこと、header/size/digest mismatchで写真ライブラリへ保存しないこと、unknown write-ahead/save cleanup順序、source-original mappingとの非参照を確認する。
+- unit/component test: malformed/unknown catalog、secure request ID、write-before-POST、same-ID retry、restart polling、A/B response guard、全rendition phase、fallback/terminal error、ineligible/legacy LOG非表示を確認する。
 - 実機確認: Development Buildでprocessed resultのdownload、permission denial、network interruption、無進捗timeout、cancel、supersession、unknown outcome、restart cleanupを確認する。
 - 実機確認: Development Buildで権限許可/拒否、iCloud-only素材、metadata欠落、ライブラリアクセス、TailscaleまたはLAN経由の通信、preview再生、削除キャンセルを確認する。
 
@@ -140,20 +150,33 @@
 - API/worker test: session create/chunk/finalizeのidempotency、concurrent finalize、lease reclaim、promote後DB失敗、commit後timeout、expiry/cancel、`upload_finalize`の復旧を確認する。
 - API/worker test: Apple Logと非Logのformal provenance、`preview_ready`を拒否するSQLite trigger、stream/confirmationのprovenance gateを確認する。
 - migration/API test: processed resultのFK、active pointer trigger、transaction rollback/backfill、inactive/cross-asset result、`200`/`206`/`416` Range delivery、descriptor open前後のpointer切替を確認する。
+- unit/API/worker test: manifest JCSとstrict schema、`.cube`検証、catalog auth/sanitization、request replay/precondition、no-follow source snapshot、relation recovery、A/B両完了順、finalizer write failure、managed provenance deliveryを確認する。
 - migration test: Phase 2B profile-aware jobのdedup insert成功時だけasset generation/stateを更新し、queued/done/failed jobが既存の再実行ではstateを戻さないこと、generation `0`の旧Phase 2A jobがlate commitしてもformal preview/review stateを変更しないことを確認する。
 - 実機 test: Apple Log、通常動画、判定不能動画でのpreview表示と、Phase 2Aのchunk完了後だけpreview jobが登録されることを確認する。
 - integration test: tmp保存、original確定保存、ffmpeg成功/失敗、SSD未接続、容量不足。
 
 ## 品質ゲート
 
-Mobile scriptが定義済みの場合:
+Mobileの正規品質command:
 
 ```bash
 npm run lint
 npm test
+npm run test:coverage
 npx expo install --check
+npx expo export --platform ios
 npx expo start
 ```
+
+- `npm run lint`は`eslint App.jsx index.js jest.setup.js eslint.config.js src modules --max-warnings=0`を実行し、Mobile JavaScript/JSXとroot設定を非破壊で検査する。errorとwarningはいずれも0件を必須とする。
+- ESLintはroot `eslint.config.js`のExpo flat configを正本とする。rule suppressionは最小範囲に限定し、false-positive又はtest mock上必要な理由を直前へ記載する。correctness ruleをrepository-wideに無効化しない。
+- `npm run test:coverage`は`jest --runInBand --coverage`を実行する。`npm test`と同じbehavioral suitesを使い、coverage有無でtest結果を変えない。
+- canonical coverage scopeは`src/**/*.{js,jsx}`と`modules/*/src/**/*.{js,jsx}`で、除外は`**/*.test.{js,jsx}`と`**/__tests__/**`だけとする。未importのproduction moduleも0 coverageとして母集団へ含める。
+- reportはignoredな`coverage/`へ`text`、`lcov`、`json-summary`形式で出力する。global floorはstatements 80%、lines 80%、branches 69.46%、functions 80.08%とし、下げて通さない。
+- 2026-07-22のcanonical initial値は36 production files、21 suites / 96 tests、statements 68.91%（1022 / 1483）、branches 62.48%（851 / 1362）、functions 69.67%（193 / 277）、lines 69.22%（1012 / 1462）で、4 floor不足によりexit 1だった。
+- 2026-07-22のfinal値は同じ36 production files、32 suites / 157 tests、statements 86.07%（1280 / 1487）、branches 77.30%（1056 / 1366）、functions 89.56%（249 / 278）、lines 86.08%（1262 / 1466）でexit 0だった。
+- coverage scopeを変更する場合はfeature specをreviewし、旧新glob、除外、matched production-file数、suite/test数、4指標とhit/total、理由、承認を記録する。既存numeratorの流用、silent exclusion、floor引下げは禁止する。
+- Jest coverageはphysical-device validationを代替しない。端末固有の権限、Tailscale/LAN、media再生・保存・削除は上記の実機確認を別途行う。
 
 Backendのlint/test commandは実装時に確定する。
 

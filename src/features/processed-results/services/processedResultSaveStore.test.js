@@ -78,4 +78,39 @@ describe('processedResultSaveStore', () => {
       markProcessedResultFailed({ ...identity, lastErrorCode: 'unsafe path / secret' }),
     ).rejects.toMatchObject({ code: 'processed_result_save_state_unavailable' });
   });
+
+  it('allows an explicit retry from failed to downloading and rejects an unsafe saved-to-failed transition', async () => {
+    const key = processedResultSaveKey(identity);
+    const record = (saveStatus) => JSON.stringify({
+      [key]: {
+        ...identity,
+        saveStatus,
+        savedLocalAssetIdentifier: saveStatus === 'saved' ? 'library-id' : null,
+        saveAttemptedAt: null,
+        lastErrorCode: saveStatus === 'failed' ? 'processed_result_download_failed' : null,
+        updatedAt: '2026-07-18T00:00:00.000Z',
+      },
+    });
+    AsyncStorage.getItem.mockResolvedValueOnce(record('failed'));
+
+    await expect(writeProcessedResultDownload(identity)).resolves.toMatchObject({
+      saveStatus: 'downloading',
+      lastErrorCode: null,
+    });
+
+    AsyncStorage.getItem.mockResolvedValueOnce(record('saved'));
+    await expect(
+      markProcessedResultFailed({ ...identity, lastErrorCode: 'processed_result_download_failed' }),
+    ).rejects.toMatchObject({ code: 'processed_result_save_state_unavailable' });
+  });
+
+  it('propagates persistence failure so the caller cannot report a saved transition', async () => {
+    AsyncStorage.getItem.mockResolvedValue(null);
+    AsyncStorage.setItem.mockRejectedValue(new Error('storage unavailable'));
+
+    await expect(writeUnknownProcessedResultSave({
+      ...identity,
+      saveAttemptedAt: '2026-07-18T00:00:00.000Z',
+    })).rejects.toThrow('storage unavailable');
+  });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { createAppError, messageForErrorCode, toDisplayError } from '../../../shared/utils/errors';
 import {
@@ -45,13 +45,19 @@ export function useProcessedResultSave({ settings, assetId, result, onSuperseded
   const [inFlightIdentityKey, setInFlightIdentityKey] = useState(null);
   const abortControllerRef = useRef(null);
 
-  const identity = result
-    ? {
+  const hasResult = Boolean(result);
+  const resultId = result?.result_id ?? null;
+  const resultSha256 = result?.sha256 ?? null;
+  const identity = useMemo(
+    () => (hasResult
+      ? {
         backendAssetId: assetId,
-        backendResultId: result.result_id,
-        resultSha256: result.sha256,
+        backendResultId: resultId,
+        resultSha256,
       }
-    : null;
+      : null),
+    [assetId, hasResult, resultId, resultSha256],
+  );
   const identityKey = identity
     ? `${identity.backendAssetId}:${identity.backendResultId}:${identity.resultSha256}`
     : null;
@@ -111,7 +117,7 @@ export function useProcessedResultSave({ settings, assetId, result, onSuperseded
     return () => {
       active = false;
     };
-  }, [identityKey]);
+  }, [identity, identityKey]);
 
   const save = useCallback(async () => {
     const operationIdentityKey = identityKey;
@@ -239,7 +245,7 @@ export function useProcessedResultSave({ settings, assetId, result, onSuperseded
         abortControllerRef.current = null;
       }
     }
-  }, [assetId, identityKey, onSuperseded, result, settings]);
+  }, [assetId, identity, identityKey, onSuperseded, result, settings]);
 
   const cancel = useCallback(() => {
     abortControllerRef.current?.abort();

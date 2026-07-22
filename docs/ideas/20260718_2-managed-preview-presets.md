@@ -4,7 +4,7 @@
 
 - Date: 2026-07-18
 - Feature name: Managed video preview presets and test LUT pipeline
-- Status: draft
+- Status: implemented and formally validated on 2026-07-21
 - Related files:
   - `docs/product-requirements.md`
   - `docs/functional-design.md`

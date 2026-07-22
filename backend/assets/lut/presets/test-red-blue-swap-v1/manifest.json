@@ -1,0 +1,16 @@
+{
+  "display_name": "Red/blue swap test",
+  "enabled": true,
+  "file_format": "cube",
+  "grid_size": 17,
+  "lut_relative_path": "test-red-blue-swap-v1.cube",
+  "lut_sha256": "e1d6ec8c3c83e67f59753dd4f4c43827a1f90a3eb32d53a0b4ca9a3d947dba14",
+  "manifest_sha256": "b54d5098387bbe0ab3986156232b935cd44b1e608ef65399dad22bf1d8c34a9f",
+  "preset_id": "test-red-blue-swap-v1",
+  "preset_kind": "generated-test",
+  "schema_version": 1,
+  "source_reference": "MediaVault deterministic test generator",
+  "target_color_space": null,
+  "terms_reference": "Project source",
+  "version": "1"
+}

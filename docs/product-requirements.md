@@ -85,6 +85,11 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - `file_verified`の通常動画previewは、不変の`processed_result`としてsizeとSHA-256を記録し、assetごとに一つのactive resultだけを配信対象にする。再render時は既存resultを更新せず、新resultへ切り替えて旧resultを履歴として保持する。
 - Asset Detailはactive resultのopaque `result_id`、MIME type、size、SHA-256、作成時刻、認証付きdownload URLだけを返す。`GET /assets/{asset_id}/results/{result_id}`はそのexact resultだけを返し、inactive resultを新しいresultへ置換して返さない。
 - iPhoneはユーザーの明示操作で処理済みvideoをdownload、header/size/SHA-256を検証してから写真ライブラリへ保存できる。保存状態はsource originalのmappingと別に管理し、保存成功はpreview確認やoriginal削除条件を変更しない。
+- Phase 2Bに先行して、eligibleな通常videoだけを対象に、server-managed preset catalogから`compress-only`、生成identity、生成test、repo外custom LUTを明示選択して新しいimmutable renditionを作れるようにする。identity/test/customをApple Log又はRec.709変換済みとは表示しない。
+- catalogとrendition APIは`/api/v1`へ追加し、Bearer tokenを必須にする。Mobileはサーバーが返したsafe metadataだけを表示し、LUT file、path、URL、manifestを送信しない。
+- renditionは要求ごとのselection generationとclient request IDを持つ。最新generationだけをactive resultにし、遅れて完了した旧generationはimmutableな`superseded` result/provenanceとして保持する。
+- 未登録又は無効presetだけは`compress-only`へfallbackして成功させる。登録済みmanifest/LUTの不正、source変更、FFmpeg適用失敗はfallbackせずrenditionをfailedにする。
+- managed renditionは既存のformal preview、preview確認、review state、安全削除候補を変更しない。Phase 2BだけがApple Log自動判定とformal previewへの移行を所有する。
 - この段階では`safe_to_delete_candidate`を有効化しない。
 
 ### Phase 2B: Apple Log preview
@@ -96,6 +101,7 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - Apple LogのRec.709変換、未変換fallback、custom LUTのいずれも、要求プリセット、適用プリセット、version、SHA-256、`color_transform_status`、必要時のerror codeをpreview provenanceとして記録する。未変換Apple Logは`transform_kind = none`とし、`color_transform_error_code = lut_preset_unavailable`を使う。
 - Phase 2B rolloutでは、Phase 2A session由来で`file_verified`の動画だけを一意なprofile-aware preview jobへ移行する。新jobのdedup insertに成功したときだけasset preview generationとformal preview/review stateを更新し、旧generation jobはassetを書き換えない。Phase 1 direct assetは対象外とする。
 - Mac mini管理者はrepo外のLUT rootにmanifest付きcustom LUTを登録できる。Mobileはサーバーが返す有効なプリセットだけを選択でき、LUTファイルをuploadしない。custom LUTはApple Log to Rec.709とは表示しない。
+- Phase 2BはPhase 2Aのmanifest検証、immutable LUT snapshot、rendition provenance、原子的result確定を再利用するが、既存managed renditionをformal preview又はApple Log変換済みへ読み替えない。
 
 ### Phase 2C: 安全削除候補
 
@@ -105,7 +111,7 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 
 - Wi-Fi/充電中のみ同期
 - originalダウンロード
-- LUT presetの管理UI/API、有効化、廃止管理
+- LUT presetの管理者向け作成・更新・有効化・廃止UI/API
 - 顔検出、笑顔判定、ピント/ブレ判定、ベストショット抽出
 - 動画シーン解析、AIタグ付け
 - FCPXML出力
@@ -205,7 +211,7 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 
 ### セキュリティ
 
-- `/assets/upload`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/results/{result_id}`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`は固定APIトークンを要求する。
+- `/assets/upload`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/results/{result_id}`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`に加え、`/api/v1/capabilities`、`/api/v1/presets`、`/api/v1/assets/{asset_id}/renditions`配下は固定APIトークンを要求する。
 - トークンや機密値をログへ出力しない。
 - 保存パスはbackend側で生成し、クライアント由来のパスを信用しない。
 - Phase 1のHTTP通信はLANまたはTailscale private network内に限定する。

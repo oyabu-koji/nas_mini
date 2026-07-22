@@ -12,6 +12,10 @@ from app.repositories.processed_results import (
     insert_ready_processed_result,
     set_active_processed_result,
 )
+from app.core.settings import Settings
+from app.services.rendition_finalizer import finalize_rendition_output
+from tests.test_rendition_finalizer import EVIDENCE, create_finalizing
+from tests.test_rendition_api import seed_eligible_asset
 
 
 def _set_required_env(monkeypatch, tmp_path):
@@ -259,6 +263,58 @@ def test_processed_result_download_returns_not_ready_for_missing_bytes(monkeypat
     assert str(media_root) not in response.text
     assert 'secret-token' not in response.text
     assert 'previews/' not in response.text
+
+
+def test_managed_result_download_requires_provenance_and_supports_range(monkeypatch, tmp_path):
+    media_root, database_path = _set_required_env(monkeypatch, tmp_path)
+    settings = Settings(
+        media_root=media_root,
+        api_token="secret-token",
+        database_path=database_path,
+    )
+    with TestClient(app) as client:
+        with connect(database_path, 5000) as conn:
+            asset = seed_eligible_asset(conn, media_root)
+            conn.commit()
+        rendition_id, job_id, candidate = create_finalizing(
+            settings, asset["id"], client_id="c" * 32
+        )
+        content = b"managed-result-bytes"
+        candidate.write_bytes(content)
+        finalize_rendition_output(
+            settings=settings,
+            job_id=job_id,
+            rendition_id=rendition_id,
+            candidate_path=candidate,
+            evidence=EVIDENCE,
+        )
+        with connect(database_path, 5000) as conn:
+            result_id = conn.execute(
+                "SELECT result_id FROM renditions WHERE id = ?", (rendition_id,)
+            ).fetchone()[0]
+
+        full = client.get(
+            f"/assets/{asset['id']}/results/{result_id}", headers=_auth_headers()
+        )
+        partial = client.get(
+            f"/assets/{asset['id']}/results/{result_id}",
+            headers={**_auth_headers(), "Range": "bytes=2-6"},
+        )
+
+        with connect(database_path, 5000) as conn:
+            conn.execute("DROP TRIGGER prevent_rendition_provenance_delete")
+            conn.execute("DELETE FROM rendition_provenance WHERE rendition_id = ?", (rendition_id,))
+            conn.commit()
+        invalid = client.get(
+            f"/assets/{asset['id']}/results/{result_id}", headers=_auth_headers()
+        )
+
+    assert full.status_code == 200
+    assert full.content == content
+    assert partial.status_code == 206
+    assert partial.content == content[2:7]
+    assert invalid.status_code == 409
+    assert invalid.json() == {"code": "processed_result_not_ready", "retryable": False}
 
 
 def test_processed_result_descriptor_keeps_requested_bytes_after_pointer_switch(monkeypatch, tmp_path):

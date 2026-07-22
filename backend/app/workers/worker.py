@@ -7,11 +7,13 @@ from app.db.migrations import run_migrations
 from app.repositories.jobs import (
     SUPPORTED_JOB_TYPES,
     claim_next_job,
+    fail_unsupported_job,
     recover_expired_jobs,
 )
 from app.services.processed_result_backfill import backfill_eligible_processed_results
 from app.services.processed_result_recovery import recover_unreferenced_generated_previews
 from app.services.preview import process_preview_job
+from app.services.rendition_processing import process_rendition_job
 from app.services.upload_finalize import process_upload_finalize_job
 from app.services.storage import initialize_storage
 
@@ -35,7 +37,13 @@ def run_once() -> bool:
             return False
     if job["job_type"] == "upload_finalize":
         return process_upload_finalize_job(settings=settings, job=job)
-    return process_preview_job(settings=settings, job=job)
+    if job["job_type"] in {"preview", "lut_preview"}:
+        return process_preview_job(settings=settings, job=job)
+    if job["job_type"] == "rendition":
+        return process_rendition_job(settings=settings, job=job)
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        fail_unsupported_job(conn, job)
+    return True
 
 
 def run_forever() -> None:

@@ -1,3 +1,12 @@
+import * as FileSystem from 'expo-file-system/legacy';
+
+import { hashWholeFile } from '../../asset-picker/services/streamingSha256Service';
+import {
+  cleanupProcessedResultTempFiles,
+  downloadProcessedResult,
+  processedResultTempUri,
+} from './processedResultDownloadService';
+
 jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/',
   FileSystemSessionType: { FOREGROUND: 'FOREGROUND' },
@@ -10,15 +19,6 @@ jest.mock('expo-file-system/legacy', () => ({
 jest.mock('../../asset-picker/services/streamingSha256Service', () => ({
   hashWholeFile: jest.fn(),
 }));
-
-import * as FileSystem from 'expo-file-system/legacy';
-
-import { hashWholeFile } from '../../asset-picker/services/streamingSha256Service';
-import {
-  cleanupProcessedResultTempFiles,
-  downloadProcessedResult,
-  processedResultTempUri,
-} from './processedResultDownloadService';
 
 const settings = { backendUrl: 'http://backend.test', apiToken: 'secret-token' };
 const result = {
@@ -53,6 +53,8 @@ function prepareDownload({ status = 200, headers, onDownload } = {}) {
 describe('processedResultDownloadService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // The Jest module mock intentionally exposes mutable cache availability.
+    // eslint-disable-next-line import/namespace
     FileSystem.cacheDirectory = 'file:///cache/';
     FileSystem.deleteAsync.mockResolvedValue();
     FileSystem.getInfoAsync.mockResolvedValue({ exists: true, size: 10 });
@@ -100,6 +102,8 @@ describe('processedResultDownloadService', () => {
   });
 
   it('fails before download when the app cache is unavailable', async () => {
+    // The Jest module mock intentionally exposes mutable cache availability.
+    // eslint-disable-next-line import/namespace
     FileSystem.cacheDirectory = null;
 
     await expect(downloadProcessedResult({ settings, assetId: 42, result })).rejects.toMatchObject({

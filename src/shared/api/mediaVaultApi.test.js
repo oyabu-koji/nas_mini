@@ -18,6 +18,7 @@ describe('mediaVaultApi timeouts', () => {
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
@@ -52,6 +53,80 @@ describe('mediaVaultApi timeouts', () => {
     });
 
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), UPLOAD_REQUEST_TIMEOUT_MS);
+  });
+
+  it('maps transport and timeout failures without exposing adapter details', async () => {
+    const networkFetch = jest.fn().mockRejectedValue(new Error('private network detail'));
+    await expect(
+      requestJson({
+        baseUrl: 'http://backend.test',
+        path: '/assets',
+        requiresAuth: false,
+        fetchImpl: networkFetch,
+      }),
+    ).rejects.toMatchObject({ code: 'network_unreachable', retryable: true });
+
+    jest.useFakeTimers();
+    const timeoutFetch = jest.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        const error = new Error('private timeout detail');
+        error.name = 'AbortError';
+        reject(error);
+      });
+    }));
+    const pendingTimeout = expect(
+      requestJson({
+        baseUrl: 'http://backend.test',
+        path: '/assets',
+        requiresAuth: false,
+        timeoutMs: 10,
+        fetchImpl: timeoutFetch,
+      }),
+    ).rejects.toMatchObject({ code: 'timeout', retryable: true });
+    await jest.advanceTimersByTimeAsync(10);
+    await pendingTimeout;
+  });
+
+  it('preserves a stable server error code and retryability on HTTP failure', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      text: jest.fn().mockResolvedValue(JSON.stringify({
+        code: 'rendition_precondition_changed',
+        retryable: true,
+      })),
+    });
+
+    await expect(
+      requestJson({
+        baseUrl: 'http://backend.test',
+        apiToken: 'token',
+        path: '/renditions',
+        fetchImpl,
+      }),
+    ).rejects.toMatchObject({
+      code: 'rendition_precondition_changed',
+      status: 409,
+      retryable: true,
+      message: 'The active processed video changed. Retry the same request.',
+    });
+  });
+
+  it('returns null for a successful response with malformed JSON', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: jest.fn().mockResolvedValue('{not-json'),
+    });
+
+    await expect(
+      requestJson({
+        baseUrl: 'http://backend.test',
+        path: '/health',
+        requiresAuth: false,
+        fetchImpl,
+      }),
+    ).resolves.toBeNull();
   });
 
   it('retains only a canonical processed-result identity on asset detail', () => {

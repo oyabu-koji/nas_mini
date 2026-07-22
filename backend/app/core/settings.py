@@ -3,6 +3,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+DEFAULT_BUILT_IN_PRESET_ROOT = Path(__file__).parents[2] / "assets/lut/presets"
+
+
 class SettingsError(RuntimeError):
     pass
 
@@ -13,6 +16,10 @@ class Settings:
     api_token: str
     database_path: Path
     lut_path: Path = Path("/app/assets/lut/rec709.cube")
+    user_lut_root: Path | None = None
+    built_in_preset_root: Path = DEFAULT_BUILT_IN_PRESET_ROOT
+    preset_manifest_max_bytes: int = 65_536
+    preset_lut_max_bytes: int = 16 * 1024 * 1024
     sqlite_busy_timeout_ms: int = 5000
     job_lease_seconds: int = 300
     processed_result_recovery_grace_seconds: int = 300
@@ -33,6 +40,16 @@ def load_settings() -> Settings:
         api_token=api_token,
         database_path=database_path,
         lut_path=Path(os.environ.get("LUT_PATH", "/app/assets/lut/rec709.cube")),
+        user_lut_root=_optional_path("USER_LUT_ROOT"),
+        built_in_preset_root=Path(
+            os.environ.get("BUILT_IN_PRESET_ROOT", str(DEFAULT_BUILT_IN_PRESET_ROOT))
+        ),
+        preset_manifest_max_bytes=_bounded_positive_int(
+            "PRESET_MANIFEST_MAX_BYTES", 65_536, maximum=65_536
+        ),
+        preset_lut_max_bytes=_bounded_positive_int(
+            "PRESET_LUT_MAX_BYTES", 16 * 1024 * 1024, maximum=16 * 1024 * 1024
+        ),
         sqlite_busy_timeout_ms=_positive_int("SQLITE_BUSY_TIMEOUT_MS", 5000),
         job_lease_seconds=_positive_int("JOB_LEASE_SECONDS", 300),
         processed_result_recovery_grace_seconds=_positive_int(
@@ -58,6 +75,11 @@ def _required_path(name: str) -> Path:
     return Path(_required_value(name))
 
 
+def _optional_path(name: str) -> Path | None:
+    value = os.environ.get(name, "").strip()
+    return Path(value) if value else None
+
+
 def _positive_int(name: str, default: int) -> int:
     raw_value = os.environ.get(name)
     if raw_value is None or raw_value == "":
@@ -68,4 +90,11 @@ def _positive_int(name: str, default: int) -> int:
         raise SettingsError(f"{name} must be a positive integer") from exc
     if value <= 0:
         raise SettingsError(f"{name} must be a positive integer")
+    return value
+
+
+def _bounded_positive_int(name: str, default: int, *, maximum: int) -> int:
+    value = _positive_int(name, default)
+    if value > maximum:
+        raise SettingsError(f"{name} must be at most {maximum}")
     return value
