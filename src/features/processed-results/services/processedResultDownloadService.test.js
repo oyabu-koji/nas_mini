@@ -77,7 +77,12 @@ describe('processedResultDownloadService', () => {
     expect(FileSystem.createDownloadResumable).toHaveBeenCalledWith(
       `http://backend.test/assets/42/results/${result.result_id}`,
       `file:///cache/mediavault-processed-${result.result_id}.mp4`,
-      expect.objectContaining({ headers: { Authorization: 'Bearer secret-token' } }),
+      expect.objectContaining({
+        headers: {
+          Authorization: 'Bearer secret-token',
+          'X-MediaVault-Client-Version': '0.2.0',
+        },
+      }),
       expect.any(Function),
     );
     expect(hashWholeFile).toHaveBeenCalledWith(`file:///cache/mediavault-processed-${result.result_id}.mp4`);

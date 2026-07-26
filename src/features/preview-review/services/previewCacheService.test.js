@@ -10,7 +10,10 @@ jest.mock('expo-file-system/legacy', () => ({
 }));
 jest.mock('../../../shared/api/mediaVaultApi', () => ({
   buildPreviewUrl: jest.fn((baseUrl, assetId) => `${baseUrl}/assets/${assetId}/preview`),
-  createAuthHeaders: jest.fn((apiToken) => ({ Authorization: `Bearer ${apiToken}` })),
+  createVersionedAuthHeaders: jest.fn((apiToken) => ({
+    Authorization: `Bearer ${apiToken}`,
+    'X-MediaVault-Client-Version': '0.2.0',
+  })),
 }));
 
 const settings = { backendUrl: 'http://backend.test', apiToken: 'secret-token' };
@@ -33,7 +36,10 @@ describe('previewCacheService', () => {
       'http://backend.test/assets/42/preview',
       'file:///cache/mediavault-preview-42.mp4',
       {
-        headers: { Authorization: 'Bearer secret-token' },
+        headers: {
+          Authorization: 'Bearer secret-token',
+          'X-MediaVault-Client-Version': '0.2.0',
+        },
         cache: true,
         sessionType: 'FOREGROUND',
       },

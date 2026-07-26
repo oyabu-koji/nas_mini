@@ -20,7 +20,11 @@ from app.schemas.assets import (
     exif_json_from_text,
 )
 from app.services.storage import StorageError, resolve_media_path
-from app.services.processed_result_delivery import resolve_deliverable_result
+from app.services.processed_result_delivery import (
+    resolve_deliverable_result,
+    resolve_formal_preview_result,
+)
+from app.services.formal_preview_read import build_formal_preview_response
 
 
 class AssetNotFoundError(RuntimeError):
@@ -28,6 +32,10 @@ class AssetNotFoundError(RuntimeError):
 
 
 class PreviewNotReadyError(RuntimeError):
+    pass
+
+
+class PreviewProvenanceInvalidError(RuntimeError):
     pass
 
 
@@ -61,10 +69,16 @@ def get_asset_read(settings: Settings, *, asset_id: int) -> AssetDetailResponse:
             conn=conn,
             asset=asset,
         )
+        formal_preview = build_formal_preview_response(
+            settings=settings,
+            conn=conn,
+            asset=asset,
+        )
     return build_asset_detail_response(
         asset=asset,
         preview=preview,
         active_processed_result=deliverable_result,
+        formal_preview=formal_preview,
     )
 
 
@@ -73,11 +87,27 @@ def confirm_preview(settings: Settings, *, asset_id: int) -> AssetDetailResponse
         asset = get_asset(conn, asset_id)
         if asset is None:
             raise AssetNotFoundError("asset not found")
-        if bool(asset["is_log"]) or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY:
-            raise PreviewNotReadyError("preview is not ready")
-
         preview = get_preview_for_asset(conn, asset_id)
-        _validate_confirmable_preview(settings, preview)
+        if "formal_preview_id" in asset:
+            if (
+                resolve_formal_preview_result(
+                    settings=settings, conn=conn, asset=asset
+                )
+                is None
+            ):
+                if (
+                    asset.get("preview_status") == PREVIEW_STATUS_PREVIEW_READY
+                    and asset.get("formal_preview_id") is not None
+                ):
+                    raise PreviewProvenanceInvalidError()
+                raise PreviewNotReadyError("preview is not ready")
+        else:
+            if (
+                bool(asset["is_log"])
+                or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY
+            ):
+                raise PreviewNotReadyError("preview is not ready")
+            _validate_confirmable_preview(settings, preview)
 
         updated_asset = update_review_status(
             conn,
@@ -92,11 +122,17 @@ def confirm_preview(settings: Settings, *, asset_id: int) -> AssetDetailResponse
             conn=conn,
             asset=updated_asset,
         )
+        formal_preview = build_formal_preview_response(
+            settings=settings,
+            conn=conn,
+            asset=updated_asset,
+        )
 
     return build_asset_detail_response(
         asset=updated_asset,
         preview=updated_preview,
         active_processed_result=deliverable_result,
+        formal_preview=formal_preview,
     )
 
 
@@ -106,7 +142,11 @@ def build_asset_list_item_response(
     preview: dict[str, Any] | None,
 ) -> AssetListItemResponse:
     asset_id = int(asset["id"])
-    preview_response = None if bool(asset["is_log"]) else _build_preview_metadata(asset_id, preview)
+    preview_response = (
+        None
+        if "formal_preview_id" not in asset and bool(asset["is_log"])
+        else _build_preview_metadata(asset_id, preview)
+    )
 
     return AssetListItemResponse(
         id=asset_id,
@@ -135,6 +175,7 @@ def build_asset_detail_response(
     asset: dict[str, Any],
     preview: dict[str, Any] | None,
     active_processed_result,
+    formal_preview=None,
 ) -> AssetDetailResponse:
     list_item = build_asset_list_item_response(asset=asset, preview=preview)
     result_metadata = None
@@ -151,6 +192,7 @@ def build_asset_detail_response(
     return AssetDetailResponse(
         **list_item.model_dump(),
         active_processed_result=result_metadata,
+        formal_preview=formal_preview,
     )
 
 
@@ -164,6 +206,7 @@ def build_asset_read_response(
         asset=asset,
         preview=preview,
         active_processed_result=None,
+        formal_preview=None,
     )
 
 

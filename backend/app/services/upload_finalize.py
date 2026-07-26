@@ -16,6 +16,7 @@ from app.services.storage import (
     generate_session_chunk_path,
     resolve_media_path,
 )
+from app.db.phase2b import has_valid_phase2b_schema
 
 
 COPY_BLOCK_SIZE_BYTES = 1_048_576
@@ -223,7 +224,40 @@ def _commit_finalization(
                 if asset["server_sha256"] != final_sha256:
                     raise UploadFinalizeError("final_original_hash_mismatch", retryable=False)
 
-            preview_job_type = "lut_preview" if current["is_log"] else "preview"
+            phase2b_enabled = has_valid_phase2b_schema(conn)
+            preview_job_type = (
+                "preview"
+                if phase2b_enabled
+                else ("lut_preview" if current["is_log"] else "preview")
+            )
+            preview_generation = 1 if phase2b_enabled else None
+            if phase2b_enabled:
+                conn.execute(
+                    """
+                    UPDATE assets
+                    SET preview_generation = 1,
+                        formal_preview_id = NULL,
+                        log_detection_status = 'not_evaluated',
+                        source_profile = NULL,
+                        detector_rule_version = NULL,
+                        detector_manifest_sha256 = NULL,
+                        detector_evidence_sha256 = NULL,
+                        preview_status = 'preview_generating',
+                        review_status = 'not_reviewed',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (asset["id"],),
+                )
+                conn.execute(
+                    """
+                    UPDATE upload_sessions
+                    SET status = 'completed', asset_id = ?, retryable = 0,
+                        failure_code = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (asset["id"], current["id"]),
+                )
             preview_job, _created = insert_or_return_job(
                 conn,
                 job_type=preview_job_type,
@@ -234,20 +268,30 @@ def _commit_finalization(
                         "original_path": current["original_relative_path"],
                         "type": "video",
                         "is_log": bool(current["is_log"]),
+                        **(
+                            {
+                                "preview_generation": 1,
+                                "detection_required": True,
+                            }
+                            if phase2b_enabled
+                            else {}
+                        ),
                     },
                     separators=(",", ":"),
                 ),
                 dedup_key=f"initial-preview:{asset['id']}",
+                preview_generation=preview_generation,
             )
-            conn.execute(
-                """
-                UPDATE upload_sessions
-                SET status = 'completed', asset_id = ?, retryable = 0,
-                    failure_code = NULL, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (asset["id"], current["id"]),
-            )
+            if not phase2b_enabled:
+                conn.execute(
+                    """
+                    UPDATE upload_sessions
+                    SET status = 'completed', asset_id = ?, retryable = 0,
+                        failure_code = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (asset["id"], current["id"]),
+                )
             conn.execute(
                 """
                 UPDATE jobs

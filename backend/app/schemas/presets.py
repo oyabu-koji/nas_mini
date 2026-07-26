@@ -7,11 +7,14 @@ class FeatureFlagsResponse(BaseModel):
     custom_lut: bool
     generated_apple_log_conversion: bool = False
     numeric_rendition_progress: bool = False
+    detector_certified: bool = False
+    formal_apple_log_preview: bool = False
 
 
 class CapabilitiesResponse(BaseModel):
     api_version: str = "v1"
     minimum_client_version: str | None = None
+    formal_preview_schema_version: int = 1
     features: FeatureFlagsResponse
 
 

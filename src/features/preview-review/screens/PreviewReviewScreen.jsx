@@ -26,7 +26,13 @@ export function PreviewReviewScreen({ settings, canUseApi, assetId, onBack }) {
             <StatusPill status={review.asset.review_status} />
           </View>
 
-          {!review.canReview ? <Text style={styles.meta}>Preview is not ready.</Text> : null}
+          {review.profileLabel ? <Text style={styles.profile}>{review.profileLabel}</Text> : null}
+          {review.transformLabel ? <Text style={styles.meta}>{review.transformLabel}</Text> : null}
+          {!review.canReview ? (
+            <Text style={review.formalPreview?.state === 'failed' ? styles.error : styles.meta}>
+              {review.stateMessage ?? 'Preview is not ready.'}
+            </Text>
+          ) : null}
           {review.canReview && review.asset.type === ASSET_TYPE.VIDEO ? (
             <VideoPreview source={review.videoSource} />
           ) : null}
@@ -116,6 +122,11 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontSize: 13,
     lineHeight: 19,
+  },
+  profile: {
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: '700',
   },
   error: {
     color: '#b91c1c',

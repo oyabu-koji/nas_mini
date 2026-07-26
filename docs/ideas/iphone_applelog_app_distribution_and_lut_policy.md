@@ -113,7 +113,7 @@ Mac miniで動作確認済みのバックエンドを、審査用環境へ展開
 
 Apple Logまたはユーザーが選択したLUTプリセットが未登録、無効化済み、または利用不可の場合は、ジョブ全体を`failed`にしない。
 
-1. originalが`file_verified`になった後にBackendがApple Logを自動判定する。Apple Logを検出した場合は`generated-apple-log-rec709`を既定の要求プリセットとする。ユーザーが有効なcustom LUTを明示選択した場合は、その選択を優先する。
+1. originalが`file_verified`になった後にBackendがApple Logを自動判定する。初期formal previewは自動preset解決だけを使い、Apple Logを検出した場合は`generated-apple-log-rec709`を要求する。ユーザーのidentity/test/custom選択は別のmanaged renditionとして維持し、formal preview、確認、削除条件へ昇格しない。
 2. 要求プリセットが未登録または無効化済みの場合は、LUTを適用しない軽量化previewを生成し、iPhoneへ返却する。ジョブは`done`とする。
 3. レスポンスと画面に、`requested_preset_id`、`applied_preset_id = compress-only`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を明示する。
 4. Apple Logの場合は、このpreviewを「Apple Logのままの未変換preview」と表示し、Rec.709変換済みとは表示しない。

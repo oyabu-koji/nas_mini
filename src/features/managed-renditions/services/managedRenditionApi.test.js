@@ -14,12 +14,15 @@ function capabilities(overrides = {}) {
   return {
     api_version: 'v1',
     minimum_client_version: null,
+    formal_preview_schema_version: 1,
     features: {
       processed_result_delivery: true,
       managed_preview_presets: true,
       custom_lut: false,
       generated_apple_log_conversion: false,
       numeric_rendition_progress: false,
+      detector_certified: false,
+      formal_apple_log_preview: false,
     },
     unknown_server_field: 'ignored',
     ...overrides,
@@ -81,11 +84,27 @@ describe('managedRenditionApi', () => {
       customLut: false,
       generatedAppleLogConversion: false,
       numericRenditionProgress: false,
+      detectorCertified: false,
+      formalAppleLogPreview: false,
     });
     expect(() => sanitizeCapabilities(capabilities({ api_version: 'v2' }))).toThrow('capabilities');
     expect(() => sanitizeCapabilities(capabilities({
       features: { ...capabilities().features, managed_preview_presets: false },
     }))).toThrow('compatible');
+    expect(() => sanitizeCapabilities(capabilities({
+      minimum_client_version: '0.2',
+    }))).toThrow('capabilities');
+    expect(() => sanitizeCapabilities(capabilities({
+      minimum_client_version: '0.3.0',
+    }))).toThrow('compatible');
+    expect(sanitizeCapabilities(capabilities({
+      minimum_client_version: '0.2.0',
+      features: {
+        ...capabilities().features,
+        detector_certified: true,
+        formal_apple_log_preview: true,
+      },
+    })).features.formalAppleLogPreview).toBe(true);
   });
 
   it('requires server returned compress-only and filters unknown preset kinds', () => {

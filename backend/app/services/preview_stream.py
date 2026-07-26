@@ -12,6 +12,7 @@ from app.services.media_range import (
     iter_file as _iter_file,
     parse_range_header,
 )
+from app.services.processed_result_delivery import resolve_formal_preview_result
 from app.services.storage import StorageError, resolve_media_path
 
 
@@ -27,6 +28,10 @@ class PreviewStorageError(RuntimeError):
     pass
 
 
+class FormalPreviewProvenanceInvalidError(RuntimeError):
+    pass
+
+
 def open_preview_stream(
     *,
     settings: Settings,
@@ -37,13 +42,33 @@ def open_preview_stream(
         asset = get_asset(conn, asset_id)
         if asset is None:
             raise PreviewNotFoundError("asset not found")
-        if bool(asset["is_log"]) or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY:
-            raise PreviewNotReadyError("preview is not ready")
-        preview = get_preview_for_asset(conn, asset_id)
-        if preview is None:
-            raise PreviewNotFoundError("preview not found")
+        if "formal_preview_id" in asset:
+            formal = resolve_formal_preview_result(
+                settings=settings, conn=conn, asset=asset
+            )
+            if formal is None:
+                if (
+                    asset.get("preview_status") == PREVIEW_STATUS_PREVIEW_READY
+                    and asset.get("formal_preview_id") is not None
+                ):
+                    raise FormalPreviewProvenanceInvalidError()
+                raise PreviewNotReadyError("preview is not ready")
+            preview_path = formal.verified_file.path
+            mime_type = formal.verified_file.mime_type
+            total_size = formal.verified_file.size_bytes
+        else:
+            if (
+                bool(asset["is_log"])
+                or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY
+            ):
+                raise PreviewNotReadyError("preview is not ready")
+            preview = get_preview_for_asset(conn, asset_id)
+            if preview is None:
+                raise PreviewNotFoundError("preview not found")
+            preview_path, mime_type, total_size = _validate_preview_file(
+                settings, preview
+            )
 
-    preview_path, mime_type, total_size = _validate_preview_file(settings, preview)
     byte_range = parse_range_header(range_header, total_size)
 
     if byte_range is None:

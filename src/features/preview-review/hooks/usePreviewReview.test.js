@@ -77,6 +77,80 @@ describe('usePreviewReview', () => {
     expect(global.latestPreviewReview.canReview).toBe(false);
   });
 
+  it('uses formal authority for Apple Log fallback and terminal failures', async () => {
+    const view = await render(<HookHarness />);
+    mockAsset({
+      ...readyVideo,
+      is_log: true,
+      formal_preview: {
+        state: 'ready',
+        detection_status: 'apple_log',
+        color_transform_status: 'unavailable',
+      },
+    });
+    await view.rerender(<HookHarness />);
+
+    expect(global.latestPreviewReview.canReview).toBe(true);
+    expect(global.latestPreviewReview.profileLabel).toBe('Apple Log (unconverted)');
+    expect(global.latestPreviewReview.transformLabel).toBe('Color transform unavailable');
+    expect(global.latestPreviewReview.videoSource).not.toBeNull();
+
+    mockAsset({
+      ...readyVideo,
+      formal_preview: {
+        state: 'failed',
+        failure_code: 'formal_preview_render_failed',
+      },
+    });
+    await view.rerender(<HookHarness />);
+    expect(global.latestPreviewReview.canReview).toBe(false);
+    expect(global.latestPreviewReview.stateMessage).toBe(
+      'The formal preview could not be rendered.',
+    );
+  });
+
+  it('uses fixed ordinary, unknown, and future applied labels', async () => {
+    const view = await render(<HookHarness />);
+    mockAsset({
+      ...readyVideo,
+      formal_preview: {
+        state: 'ready',
+        detection_status: 'not_log',
+        color_transform_status: 'not_requested',
+      },
+    });
+    await view.rerender(<HookHarness />);
+    expect(global.latestPreviewReview.profileLabel).toBe('Ordinary video');
+
+    mockAsset({
+      ...readyVideo,
+      formal_preview: {
+        state: 'ready',
+        detection_status: 'unknown',
+        color_transform_status: 'not_requested',
+      },
+    });
+    await view.rerender(<HookHarness />);
+    expect(global.latestPreviewReview.profileLabel).toBe(
+      'Video profile unknown (unconverted)',
+    );
+
+    mockAsset({
+      ...readyVideo,
+      formal_preview: {
+        state: 'ready',
+        detection_status: 'apple_log',
+        color_transform_status: 'applied',
+        applied_preset_display_name: 'Approved Rec.709 transform',
+      },
+    });
+    await view.rerender(<HookHarness />);
+    expect(global.latestPreviewReview.profileLabel).toBe(
+      'Approved Rec.709 transform',
+    );
+    expect(global.latestPreviewReview.transformLabel).toBe('Color transform applied');
+  });
+
   it('builds remote video and image sources and switches to cached source', async () => {
     const view = await render(<HookHarness />);
     expect(global.latestPreviewReview.videoSource).toEqual({

@@ -25,11 +25,13 @@ from app.schemas.assets import (
 from app.services.asset_read import (
     AssetNotFoundError,
     PreviewNotReadyError,
+    PreviewProvenanceInvalidError,
     confirm_preview,
     get_asset_read,
     list_asset_reads,
 )
 from app.services.preview_stream import (
+    FormalPreviewProvenanceInvalidError,
     InvalidRangeError,
     PreviewNotFoundError,
     PreviewNotReadyError as StreamPreviewNotReadyError,
@@ -39,9 +41,14 @@ from app.services.preview_stream import (
 from app.services.processed_result_stream import (
     ProcessedResultNotFoundError,
     ProcessedResultNotReadyError,
+    ProcessedResultProvenanceInvalidError,
     ProcessedResultRangeNotSatisfiableError,
     ProcessedResultSupersededError,
     open_processed_result_stream,
+)
+from app.services.client_compatibility import (
+    IncompatibleClientError,
+    require_compatible_client_for_asset,
 )
 from app.services.upload import UploadTooLargeError, create_upload_asset
 
@@ -120,10 +127,22 @@ def stream_processed_result(
     asset_id: int,
     result_id: str,
     range_header: Annotated[str | None, Header(alias="Range")] = None,
+    client_version: Annotated[
+        str | None, Header(alias="X-MediaVault-Client-Version")
+    ] = None,
 ):
+    settings = load_settings()
+    try:
+        phase2b_asset = require_compatible_client_for_asset(
+            settings=settings,
+            asset_id=asset_id,
+            client_version=client_version,
+        )
+    except IncompatibleClientError:
+        return _conflict("incompatible_client")
     try:
         return open_processed_result_stream(
-            settings=load_settings(),
+            settings=settings,
             asset_id=asset_id,
             result_id=result_id,
             range_header=range_header,
@@ -143,6 +162,8 @@ def stream_processed_result(
             status_code=status.HTTP_409_CONFLICT,
             content={"code": "processed_result_not_ready", "retryable": False},
         )
+    except ProcessedResultProvenanceInvalidError:
+        return _conflict("formal_preview_provenance_invalid")
     except ProcessedResultRangeNotSatisfiableError as exc:
         return JSONResponse(
             status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
@@ -166,10 +187,22 @@ def get_asset_detail(asset_id: int) -> AssetDetailResponse:
 def stream_asset_preview(
     asset_id: int,
     range_header: Annotated[str | None, Header(alias="Range")] = None,
+    client_version: Annotated[
+        str | None, Header(alias="X-MediaVault-Client-Version")
+    ] = None,
 ):
+    settings = load_settings()
+    try:
+        phase2b_asset = require_compatible_client_for_asset(
+            settings=settings,
+            asset_id=asset_id,
+            client_version=client_version,
+        )
+    except IncompatibleClientError:
+        return _conflict("incompatible_client")
     try:
         return open_preview_stream(
-            settings=load_settings(),
+            settings=settings,
             asset_id=asset_id,
             range_header=range_header,
         )
@@ -180,10 +213,14 @@ def stream_asset_preview(
             detail=detail,
         ) from exc
     except StreamPreviewNotReadyError as exc:
+        if phase2b_asset:
+            return _conflict("formal_preview_not_ready")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Preview is not ready",
         ) from exc
+    except FormalPreviewProvenanceInvalidError:
+        return _conflict("formal_preview_provenance_invalid")
     except InvalidRangeError as exc:
         return Response(
             content="Invalid range",
@@ -199,16 +236,41 @@ def stream_asset_preview(
 
 
 @router.post("/{asset_id}/preview-confirmation", response_model=AssetDetailResponse)
-def confirm_asset_preview(asset_id: int) -> AssetDetailResponse:
+def confirm_asset_preview(
+    asset_id: int,
+    client_version: Annotated[
+        str | None, Header(alias="X-MediaVault-Client-Version")
+    ] = None,
+):
+    settings = load_settings()
     try:
-        return confirm_preview(settings=load_settings(), asset_id=asset_id)
+        phase2b_asset = require_compatible_client_for_asset(
+            settings=settings,
+            asset_id=asset_id,
+            client_version=client_version,
+        )
+    except IncompatibleClientError:
+        return _conflict("incompatible_client")
+    try:
+        return confirm_preview(settings=settings, asset_id=asset_id)
     except AssetNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Asset not found",
         ) from exc
     except PreviewNotReadyError as exc:
+        if phase2b_asset:
+            return _conflict("formal_preview_not_ready")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Preview is not ready",
         ) from exc
+    except PreviewProvenanceInvalidError:
+        return _conflict("formal_preview_provenance_invalid")
+
+
+def _conflict(code: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={"code": code, "retryable": False},
+    )

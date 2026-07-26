@@ -2,7 +2,7 @@ import React from 'react';
 import { act, render, waitFor } from '@testing-library/react-native';
 
 import { createAppError } from '../../../shared/utils/errors';
-import { useManagedRendition } from './useManagedRendition';
+import { isManagedRenditionEligible, useManagedRendition } from './useManagedRendition';
 
 jest.mock('../services/managedRenditionApi', () => ({
   createManagedRendition: jest.fn(),
@@ -106,7 +106,12 @@ function Harness({ currentAsset = asset, loadAsset = defaultLoadAsset }) {
 describe('useManagedRendition', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    api.getManagedCapabilities.mockResolvedValue({ features: { managedPreviewPresets: true } });
+    api.getManagedCapabilities.mockResolvedValue({
+      features: {
+        managedPreviewPresets: true,
+        formalAppleLogPreview: true,
+      },
+    });
     api.listManagedPresets.mockResolvedValue(presets);
     store.readManagedRenditionRecord.mockResolvedValue(null);
     store.generateClientRenditionRequestId.mockReturnValue('a'.repeat(32));
@@ -132,6 +137,12 @@ describe('useManagedRendition', () => {
     await render(<Harness />);
 
     await waitFor(() => expect(global.latestManagedRendition.catalogStatus).toBe('ready'));
+    expect(global.latestManagedRendition.capabilities).toEqual({
+      features: {
+        managedPreviewPresets: true,
+        formalAppleLogPreview: true,
+      },
+    });
     expect(global.latestManagedRendition.presets).toEqual(presets);
     expect(global.latestManagedRendition.selectedPresetId).toBeNull();
   });
@@ -326,5 +337,24 @@ describe('useManagedRendition', () => {
     expect(api.listManagedPresets).not.toHaveBeenCalled();
     expect(api.createManagedRendition).not.toHaveBeenCalled();
     view.unmount();
+  });
+});
+
+describe('isManagedRenditionEligible formal authority', () => {
+  it('accepts a ready formal Apple Log asset and rejects a failed formal preview', () => {
+    const asset = {
+      id: 42,
+      type: 'video',
+      verification_status: 'file_verified',
+      preview_status: 'preview_ready',
+      is_log: true,
+      active_processed_result: { result_id: 'a'.repeat(32) },
+      formal_preview: { state: 'ready' },
+    };
+    expect(isManagedRenditionEligible(asset)).toBe(true);
+    expect(isManagedRenditionEligible({
+      ...asset,
+      formal_preview: { state: 'failed' },
+    })).toBe(false);
   });
 });

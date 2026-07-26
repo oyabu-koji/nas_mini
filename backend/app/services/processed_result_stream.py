@@ -5,9 +5,9 @@ from fastapi.responses import StreamingResponse
 from app.core.settings import Settings
 from app.db.connection import connect
 from app.repositories.assets import get_asset
-from app.repositories.processed_results import get_active_processed_result, get_processed_result
+from app.repositories.processed_results import get_processed_result
 from app.services.media_range import InvalidRangeError, iter_open_file, parse_range_header
-from app.services.processed_result_delivery import resolve_deliverable_result
+from app.services.processed_result_delivery import resolve_deliverable_result_by_id
 
 
 class ProcessedResultNotFoundError(RuntimeError):
@@ -19,6 +19,10 @@ class ProcessedResultSupersededError(RuntimeError):
 
 
 class ProcessedResultNotReadyError(RuntimeError):
+    pass
+
+
+class ProcessedResultProvenanceInvalidError(RuntimeError):
     pass
 
 
@@ -48,12 +52,19 @@ def open_processed_result_stream(
         if requested_result is None:
             raise ProcessedResultNotFoundError()
 
-        active_result = get_active_processed_result(conn, asset_id=asset_id)
-        if active_result is None or active_result["id"] != result_id:
+        deliverable = resolve_deliverable_result_by_id(
+            settings=settings,
+            conn=conn,
+            asset=asset,
+            result_id=result_id,
+        )
+        if deliverable is None:
+            if (
+                asset.get("formal_preview_id") == result_id
+                and asset.get("preview_status") == "preview_ready"
+            ):
+                raise ProcessedResultProvenanceInvalidError()
             _raise_for_inactive_result(requested_result)
-
-        deliverable = resolve_deliverable_result(settings=settings, conn=conn, asset=asset)
-        if deliverable is None or deliverable.result["id"] != result_id:
             raise ProcessedResultNotReadyError()
 
         total_size = deliverable.verified_file.size_bytes
@@ -70,15 +81,30 @@ def open_processed_result_stream(
                 asset_id=asset_id,
                 result_id=result_id,
             )
-            current_active = get_active_processed_result(conn, asset_id=asset_id)
             if current_asset is None or current_result is None:
                 raise ProcessedResultNotFoundError()
-            if current_active is None or current_active["id"] != result_id:
+            current_deliverable = resolve_deliverable_result_by_id(
+                settings=settings,
+                conn=conn,
+                asset=current_asset,
+                result_id=result_id,
+            )
+            if current_deliverable is None:
+                if (
+                    current_asset.get("formal_preview_id") == result_id
+                    and current_asset.get("preview_status") == "preview_ready"
+                ):
+                    raise ProcessedResultProvenanceInvalidError()
                 _raise_for_inactive_result(current_result)
 
             descriptor = deliverable.verified_file.path.open("rb")
             conn.commit()
-        except (ProcessedResultNotFoundError, ProcessedResultSupersededError, ProcessedResultNotReadyError):
+        except (
+            ProcessedResultNotFoundError,
+            ProcessedResultSupersededError,
+            ProcessedResultNotReadyError,
+            ProcessedResultProvenanceInvalidError,
+        ):
             if descriptor is not None:
                 descriptor.close()
             if conn.in_transaction:

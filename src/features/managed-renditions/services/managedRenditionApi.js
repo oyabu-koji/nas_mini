@@ -1,5 +1,10 @@
 import { requestJson } from '../../../shared/api/mediaVaultApi';
 import { createAppError, messageForErrorCode } from '../../../shared/utils/errors';
+import {
+  CLIENT_VERSION,
+  compareSemanticVersions,
+  parseSemanticVersion,
+} from '../../../shared/constants/clientVersion';
 
 const ID_PATTERN = /^[0-9a-f]{32}$/;
 const PRESET_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -56,11 +61,23 @@ export function sanitizeCapabilities(value) {
     || typeof features.custom_lut !== 'boolean'
     || typeof features.generated_apple_log_conversion !== 'boolean'
     || typeof features.numeric_rendition_progress !== 'boolean'
-    || (value.minimum_client_version != null && typeof value.minimum_client_version !== 'string')
+    || typeof features.detector_certified !== 'boolean'
+    || typeof features.formal_apple_log_preview !== 'boolean'
+    || value.formal_preview_schema_version !== 1
+    || (
+      value.minimum_client_version != null
+      && !parseSemanticVersion(value.minimum_client_version)
+    )
   ) {
     throw domainError('managed_capabilities_invalid');
   }
   if (!features.managed_preview_presets) {
+    throw domainError('incompatible_client');
+  }
+  if (
+    value.minimum_client_version != null
+    && compareSemanticVersions(CLIENT_VERSION, value.minimum_client_version) < 0
+  ) {
     throw domainError('incompatible_client');
   }
   return {
@@ -72,7 +89,10 @@ export function sanitizeCapabilities(value) {
       customLut: features.custom_lut,
       generatedAppleLogConversion: features.generated_apple_log_conversion,
       numericRenditionProgress: features.numeric_rendition_progress,
+      detectorCertified: features.detector_certified,
+      formalAppleLogPreview: features.formal_apple_log_preview,
     },
+    formalPreviewSchemaVersion: 1,
   };
 }
 

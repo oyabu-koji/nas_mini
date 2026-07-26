@@ -49,7 +49,7 @@
 - `${MEDIA_ROOT}/originals/` にoriginalを保存する。
 - Mac mini側でSHA256を計算し、`server_hash_recorded` として記録する。
 - ffmpeg preview生成jobを登録・実行する。
-- LOG指定素材は、Apple Log対応featureで正式なRec.709 LUTを適用する。安全ゲート中は変換済みpreviewを生成・配信せず、preview失敗として扱う。
+- LOG指定はlegacy hintとして保持し、Apple Log対応featureの自動判定には使わない。Phase 2B有効化前は既存Phase 2A preview状態を維持し、Phase 2B有効化後は高信頼判定と正式provenanceに従って変換済み又は未変換表示付きpreviewを扱う。
 - 写真previewはJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映で生成する。
 - iPhoneアプリでpreviewを再生し、`review_status = preview_confirmed` に更新する。
 - preview確認後、ユーザー明示操作によるiPhone側original削除導線を提供する。
@@ -87,7 +87,8 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - iPhoneはユーザーの明示操作で処理済みvideoをdownload、header/size/SHA-256を検証してから写真ライブラリへ保存できる。保存状態はsource originalのmappingと別に管理し、保存成功はpreview確認やoriginal削除条件を変更しない。
 - Phase 2Bに先行して、eligibleな通常videoだけを対象に、server-managed preset catalogから`compress-only`、生成identity、生成test、repo外custom LUTを明示選択して新しいimmutable renditionを作れるようにする。identity/test/customをApple Log又はRec.709変換済みとは表示しない。
 - catalogとrendition APIは`/api/v1`へ追加し、Bearer tokenを必須にする。Mobileはサーバーが返したsafe metadataだけを表示し、LUT file、path、URL、manifestを送信しない。
-- renditionは要求ごとのselection generationとclient request IDを持つ。最新generationだけをactive resultにし、遅れて完了した旧generationはimmutableな`superseded` result/provenanceとして保持する。
+- renditionは要求ごとのselection generationとclient request IDを持つ。最新generationの成功時だけactive resultを切り替え、失敗時は直前の成功済みactive resultを維持する。遅れて完了した旧generationはimmutableな`superseded` result/provenanceとして保持する。
+- managed renditionのprocessed resultはPhase 2B後も`preview_generation = null`を維持し、`rendition_selection_generation`だけを順序の正本にする。non-nullのpreview generationはformal preview result専用とする。
 - 未登録又は無効presetだけは`compress-only`へfallbackして成功させる。登録済みmanifest/LUTの不正、source変更、FFmpeg適用失敗はfallbackせずrenditionをfailedにする。
 - managed renditionは既存のformal preview、preview確認、review state、安全削除候補を変更しない。Phase 2BだけがApple Log自動判定とformal previewへの移行を所有する。
 - この段階では`safe_to_delete_candidate`を有効化しない。
@@ -98,9 +99,11 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - Apple Logを検出した素材は、利用可能なら`generated-apple-log-rec709`を既定プリセットとして要求する。自前生成変換または利用条件を確認済みの公式LUTだけを、このプリセットに登録する。
 - 要求プリセットが未登録または無効化済みの場合は、`compress-only`で軽量化した未変換previewを`done`かつ`preview_ready`として返す。画面はApple Log未変換であることを表示し、Rec.709変換済みとは表示しない。
 - 登録済みLUTのmanifest検証、SHA-256、形式、FFmpeg適用が失敗した場合だけ、jobと`preview_status`を`failed`にする。判定不能または未対応profileも、色変換を要求せず`compress-only`で内容確認可能なpreviewを生成する。
-- Apple LogのRec.709変換、未変換fallback、custom LUTのいずれも、要求プリセット、適用プリセット、version、SHA-256、`color_transform_status`、必要時のerror codeをpreview provenanceとして記録する。未変換Apple Logは`transform_kind = none`とし、`color_transform_error_code = lut_preset_unavailable`を使う。
-- Phase 2B rolloutでは、Phase 2A session由来で`file_verified`の動画だけを一意なprofile-aware preview jobへ移行する。新jobのdedup insertに成功したときだけasset preview generationとformal preview/review stateを更新し、旧generation jobはassetを書き換えない。Phase 1 direct assetは対象外とする。
-- Mac mini管理者はrepo外のLUT rootにmanifest付きcustom LUTを登録できる。Mobileはサーバーが返す有効なプリセットだけを選択でき、LUTファイルをuploadしない。custom LUTはApple Log to Rec.709とは表示しない。
+- 初期Phase 2Bのformal previewは自動preset解決だけを使う。Apple Logの将来Rec.709変換または未変換fallbackは、要求プリセット、適用プリセット、version、SHA-256、`color_transform_status`、必要時のerror codeをpreview provenanceとして記録する。未変換Apple Logは`transform_kind = none`とし、`color_transform_error_code = lut_preset_unavailable`を使う。identity/test/customの明示選択はmanaged renditionのまま維持し、formal previewへ昇格しない。
+- Phase 2B rolloutでは、Phase 2A session由来で`file_verified`の動画だけを一意なprofile-aware preview jobへ移行する。新jobのdedup insertに成功したときだけasset preview generationとformal preview/review stateを更新する。既存active resultがcurrent managed renditionならpointer/result/provenanceを保持し、legacy Phase 2A previewだけをsupersedeする。旧generation jobはattemptを`superseded`、jobを`failed` + `preview_generation_superseded`へlease clear付きで収束させ、assetを書き換えない。Phase 1 direct assetは対象外とする。
+- managed pointerの更新では、migration/delivery用steady-state判定とは別のtransition判定を使う。current selectionの一意なready managed resultへだけ切替を許可し、旧managed resultだけをsupersedeしてcurrent formal resultを維持する。
+- Apple Log detector ruleはfixture比較とは独立にrepository ownerが根拠/source reference付きで人手承認する。認証scriptはその不変ruleをrepo外fixtureで検証するだけとし、rule input、manifest、runtime ffprobe、移行markerが揃うまでPhase 2B capabilityを無効にする。
+- Mac mini管理者はrepo外のLUT rootにmanifest付きcustom LUTを登録できる。Mobileはmanaged renditionとしてサーバーが返す有効なプリセットだけを選択でき、LUTファイルをuploadしない。custom LUTはApple Log to Rec.709又はformal previewとは表示しない。
 - Phase 2BはPhase 2Aのmanifest検証、immutable LUT snapshot、rendition provenance、原子的result確定を再利用するが、既存managed renditionをformal preview又はApple Log変換済みへ読み替えない。
 
 ### Phase 2C: 安全削除候補

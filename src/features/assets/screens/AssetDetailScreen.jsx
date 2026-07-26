@@ -8,14 +8,28 @@ import { formatBytes } from '../../../shared/utils/fileSize';
 import { useProcessedResultSave } from '../../processed-results/hooks/useProcessedResultSave';
 import { PresetSelector } from '../../managed-renditions/components/PresetSelector';
 import { useManagedRendition } from '../../managed-renditions/hooks/useManagedRendition';
+import { useOriginalDeletion } from '../../original-deletion/hooks/useOriginalDeletion';
 import { useAssetDetail } from '../hooks/useAssets';
 
 export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavailable = false, onBack, onPreview }) {
   const { asset, status, error, loadAsset } = useAssetDetail(settings, canUseApi, assetId, { autoPoll: true });
+  const formalReady = asset?.formal_preview?.state === 'ready';
+  const hasFormalPreview = Boolean(
+    asset && Object.prototype.hasOwnProperty.call(asset, 'formal_preview'),
+  );
+  const formalResult = formalReady ? asset.formal_preview.result : null;
+  const saveResult = hasFormalPreview
+    ? formalResult
+    : !asset?.is_log
+      ? asset?.active_processed_result ?? null
+      : null;
+  const canOpenPreview = hasFormalPreview
+    ? formalReady
+    : !asset?.is_log && asset?.preview_status === PREVIEW_STATUS.READY;
   const processedResultSave = useProcessedResultSave({
     settings,
     assetId,
-    result: asset?.active_processed_result ?? null,
+    result: saveResult,
     onSuperseded: loadAsset,
   });
   const managedRendition = useManagedRendition({
@@ -23,6 +37,10 @@ export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavail
     canUseApi,
     asset,
     loadAsset,
+  });
+  const originalDeletion = useOriginalDeletion({
+    asset,
+    capabilities: managedRendition.capabilities,
   });
 
   return (
@@ -42,7 +60,11 @@ export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavail
           <Text style={styles.meta}>{asset.type} / {formatBytes(asset.size_bytes)}</Text>
           <Text style={styles.meta}>SHA256: {asset.server_sha256}</Text>
           <Text style={styles.meta}>Taken at: {asset.taken_at || 'unknown'}</Text>
-          <Text style={styles.meta}>LOG: {asset.is_log ? 'yes' : 'no'}</Text>
+          <Text style={styles.meta}>
+            {hasFormalPreview
+              ? formalProfileLabel(asset.formal_preview)
+              : `Legacy LOG hint (audit only): ${asset.is_log ? 'yes' : 'no'}`}
+          </Text>
           <View style={styles.statusGrid}>
             <StatusBlock label="Transfer" status={asset.transfer_status} />
             <StatusBlock label="Verification" status={asset.verification_status} />
@@ -58,17 +80,30 @@ export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavail
           ) : null}
           {mappingUnavailable ? <Text style={styles.meta}>Local asset mapping is unavailable for this upload.</Text> : null}
           <ActionButton
-            disabled={asset.is_log || asset.preview_status !== PREVIEW_STATUS.READY}
+            disabled={!canOpenPreview}
             label="Open preview"
             onPress={() => onPreview(asset.id)}
           />
           <PresetSelector managed={managedRendition} />
+          {originalDeletion.canDelete ? (
+            <ActionButton
+              label="Delete iPhone original"
+              onPress={originalDeletion.requestDeletion}
+              variant="secondary"
+            />
+          ) : null}
+          {originalDeletion.status === 'deleted' ? (
+            <Text style={styles.saved}>iPhone original deleted.</Text>
+          ) : null}
+          {originalDeletion.error ? (
+            <Text style={styles.error}>{originalDeletion.error.message}</Text>
+          ) : null}
 
-          {!asset.is_log && asset.active_processed_result ? (
+          {saveResult ? (
             <View style={styles.processedResult}>
               <Text style={styles.sectionLabel}>Processed video</Text>
-              <Text style={styles.meta}>{asset.active_processed_result.mime_type} / {formatBytes(asset.active_processed_result.size_bytes)}</Text>
-              <Text style={styles.meta}>SHA256: {asset.active_processed_result.sha256}</Text>
+              <Text style={styles.meta}>{saveResult.mime_type} / {formatBytes(saveResult.size_bytes)}</Text>
+              <Text style={styles.meta}>SHA256: {saveResult.sha256}</Text>
               {processedResultSave.status !== 'idle' && processedResultSave.status !== 'saved' ? (
                 <Text style={styles.meta}>{saveStatusLabel(processedResultSave.status)}</Text>
               ) : null}
@@ -92,6 +127,26 @@ export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavail
       ) : null}
     </View>
   );
+}
+
+function formalProfileLabel(formalPreview) {
+  if (!formalPreview) {
+    return 'Formal preview unavailable';
+  }
+  if (formalPreview.state === 'generating') {
+    return 'Preview is generating';
+  }
+  if (formalPreview.state === 'failed') {
+    return 'Formal preview failed';
+  }
+  if (formalPreview.detection_status === 'apple_log') {
+    return formalPreview.color_transform_status === 'applied'
+      ? formalPreview.applied_preset_display_name
+      : 'Apple Log (unconverted)';
+  }
+  return formalPreview.detection_status === 'not_log'
+    ? 'Ordinary video'
+    : 'Video profile unknown (unconverted)';
 }
 
 function saveStatusLabel(status) {

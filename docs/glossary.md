@@ -64,9 +64,21 @@ Mobileがmanaged renditionへ明示要求した、又はApple Log自動判定が
 
 workerがpreview又はrendition生成時に実際に使ったserver preset。要求presetが未登録または無効化済みの場合は`compress-only`となる。LUTを適用した場合はversionとSHA-256もprovenanceへ残す。
 
+### detector manifest
+
+人手承認済みdetector rule inputをrepo外のユーザー所有Apple Log/通常動画とpinned Docker ffprobeで検証して作るstrict JSON。rule-input digest、exact ffprobe version/entries、Apple Log/非Logの完全一致predicate、fixture SHA-256と期待分類、timeout/output/evidence上限、canonical digestを持つ。fixture差分からpredicateを生成しない。manifestとPhase 2B migration markerが有効になるまでApple Log formal preview capabilityを公開しない。
+
+### detector rule input
+
+repository ownerが判定実装前に人手で作成・承認するcanonical JSON。allowlisted metadata path、完全一致又はpresence operator、期待値、根拠、非fixtureのsource reference、approval情報を持つ。certification scriptはこのruleを検証するだけで、fixture比較から追加・変更しない。
+
+### formal preview attempt
+
+session由来videoの`preview_generation`ごとに一意な処理record。detector manifest/rule/evidenceと自動要求presetのimmutable snapshot、job、phase、nullable resultを持つ。identity/test/customのmanaged rendition recordとは別であり、lease recoveryでもsnapshotを再解決しない。
+
 ### preview provenance
 
-derived previewに一対一で紐づくformal record。`transform_kind`、source profile、target profile、detector rule version、evidence digest、生成日時、要求・適用preset、version、SHA-256、`color_transform_status`、nullableな未適用/失敗理由を保存する。Apple LogのRec.709変換とcustom LUTは`lut` record、非LogとApple Logの`compress-only` fallbackは`none` recordを持つ。正式provenanceがあるpreviewだけを`preview_ready`にできる。
+derived previewに一対一で紐づくformal record。`transform_kind`、source profile、target profile、detector rule version、evidence digest、生成日時、要求・適用preset、version、SHA-256、`color_transform_status`、nullableな未適用/失敗理由を保存する。初期Phase 2Bでは自動presetだけを扱い、将来の承認済みApple Log変換は`lut` record、非Log/判定不能とApple Logの`compress-only` fallbackは`none` recordを持つ。identity/test/customは別のrendition provenanceを持ち、formal recordへ昇格しない。正式provenanceがあるpreviewだけを`preview_ready`にできる。
 
 ### original finalization
 
@@ -74,7 +86,7 @@ Phase 2Aでchunk結合、hash照合、確定保存が完了し、preview jobが�
 
 ### preview generation
 
-Phase 2Bでsession由来videoのformal previewを無効化するたびにassetへ記録する単調増加番号。preview jobは同じ番号を持ち、claim/commit時に番号が一致しない旧jobは`preview_generation_superseded`として終了し、asset、formal preview、review stateを変更しない。
+Phase 2Bでsession由来videoのformal previewを無効化するたびにassetへ記録する単調増加番号。formal result、formal attempt、formal provenance、preview jobは同じ番号を持つ。managed rendition resultでは常にnullとし、別の`rendition selection generation`を使う。番号が一致しない旧preview jobは、attemptがあれば`superseded`、jobは`failed` + `preview_generation_superseded`となってleaseをclearし、asset、formal/managed preview、review stateを変更しない。
 
 ### managed preset
 
@@ -90,7 +102,7 @@ eligibleな通常videoのimmutable originalから、ユーザーが選んだmana
 
 ### rendition selection generation
 
-assetで新しいmanaged preset renderを明示するたびに増える単調増加番号。current generationだけがactive processed resultを切り替え、遅れて完了した古いgenerationは`superseded` auditになる。Phase 2Bの`preview generation`とは別物。
+assetで新しいmanaged preset renderを明示するたびに増える単調増加番号。current generationの成功時だけactive processed resultを切り替え、失敗時は直前の成功済みactive resultを維持する。遅れて完了した古いgenerationは`superseded` auditになる。Phase 2Bの`preview generation`とは別物。
 
 ### immutable LUT snapshot
 
@@ -144,7 +156,7 @@ assetから生成したpreview等のファイルを記録する。
 
 ### processed_results
 
-`processed result`のBackend永続record。`derived_file_id`は一意で、active pointerは同一assetのready recordだけを指す。ready/superseded recordのidentity fieldsと参照derived fileは変更・削除できない。Phase 2Bではformal preview、generation、provenanceとの一致も配信条件になる。
+`processed result`のBackend永続record。`derived_file_id`は一意で、current authorityは同一assetのready recordだけを指す。Phase 2Bではformal resultを`formal_preview_id`配下と一致するnon-null `preview_generation`、managed resultを`active_processed_result_id`が指す最新成功ready renditionと`preview_generation = null`で別々に識別する。より新しいfailed/superseded selectionはmanaged authorityを無効化しない。ready/superseded recordのidentity fieldsと参照derived fileは変更・削除できず、kindごとのgeneration/provenance一致を配信条件にする。
 
 ### renditions
 
@@ -258,7 +270,7 @@ Mobile側で管理するiPhone側original手動削除の状態。Backend側asset
 | `validating` | immutable preset/LUT snapshot検証中 |
 | `rendering` | FFmpegでcandidate生成中 |
 | `finalizing` | eligibility、provenance、result、active pointerを原子的に確定中 |
-| `ready` | current generationのactive resultとして利用可能 |
+| `ready` | そのgenerationが成功し、active pointerに選ばれている間はcurrent managed resultとして利用可能 |
 | `failed` | stable error codeを持つterminal failure。新resultは公開しない |
 | `superseded` | 古いgenerationとして監査用result/provenanceを保持し、activeではない |
 

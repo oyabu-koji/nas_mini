@@ -2,9 +2,9 @@ import json
 import re
 from datetime import datetime
 from pathlib import PurePosixPath
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 AssetType = Literal["image", "video"]
@@ -105,12 +105,175 @@ class ProcessedResultMetadataResponse(BaseModel):
     url: str
 
 
+FormalPreviewFailureCode = Literal[
+    "log_detector_manifest_invalid",
+    "log_detector_version_mismatch",
+    "log_probe_timeout",
+    "log_probe_failed",
+    "log_probe_output_invalid",
+    "lut_preset_registered_invalid",
+    "lut_preset_source_changed",
+    "lut_application_failed",
+    "formal_preview_source_invalid",
+    "formal_preview_render_failed",
+    "formal_preview_storage_failed",
+    "formal_preview_database_failed",
+    "formal_preview_relation_invalid",
+]
+DetectionStatus = Literal["apple_log", "not_log", "unknown"]
+TransformKind = Literal["none", "lut"]
+ColorTransformStatus = Literal["not_requested", "unavailable", "applied", "failed"]
+PRESET_ID_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
+
+
+class FormalPreviewBaseResponse(BaseModel):
+    schema_version: Literal[1] = 1
+    state: str
+    generation: int = Field(ge=1)
+
+
+class FormalPreviewGeneratingResponse(FormalPreviewBaseResponse):
+    state: Literal["generating"]
+    detection_status: DetectionStatus | None = None
+    source_profile: str | None = Field(default=None, min_length=1, max_length=128)
+    detector_rule_version: str | None = Field(default=None, min_length=1, max_length=64)
+    detector_manifest_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    detector_evidence_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    requested_preset_id: str | None = Field(default=None, pattern=PRESET_ID_PATTERN)
+    applied_preset_id: str | None = Field(default=None, pattern=PRESET_ID_PATTERN)
+    applied_preset_display_name: str | None = None
+    preset_version: str | None = None
+    manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    lut_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    transform_kind: TransformKind | None = None
+    color_transform_status: ColorTransformStatus | None = None
+    color_transform_error_code: str | None = None
+    preview_id: None = None
+    result: None = None
+    failure_code: None = None
+
+    @model_validator(mode="after")
+    def validate_partial_groups(self):
+        _validate_detector_group(self)
+        return self
+
+
+class FormalPreviewReadyResponse(FormalPreviewBaseResponse):
+    state: Literal["ready"]
+    detection_status: DetectionStatus
+    source_profile: str | None = Field(default=None, min_length=1, max_length=128)
+    detector_rule_version: str = Field(min_length=1, max_length=64)
+    detector_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    detector_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    requested_preset_id: str = Field(pattern=PRESET_ID_PATTERN)
+    applied_preset_id: str = Field(pattern=PRESET_ID_PATTERN)
+    applied_preset_display_name: str | None = Field(
+        default=None, min_length=1, max_length=128
+    )
+    preset_version: str | None = Field(default=None, min_length=1, max_length=64)
+    manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    lut_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    transform_kind: TransformKind
+    color_transform_status: Literal["not_requested", "unavailable", "applied"]
+    color_transform_error_code: str | None = None
+    preview_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    result: ProcessedResultMetadataResponse
+    failure_code: None = None
+
+    @model_validator(mode="after")
+    def validate_transform_claim(self):
+        fallback = (
+            self.detection_status == "apple_log"
+            and self.requested_preset_id == "generated-apple-log-rec709"
+            and self.applied_preset_id == "compress-only"
+            and self.transform_kind == "none"
+            and self.color_transform_status == "unavailable"
+            and self.color_transform_error_code == "lut_preset_unavailable"
+            and self.applied_preset_display_name is None
+            and self.preset_version is None
+            and self.manifest_sha256 is None
+            and self.lut_sha256 is None
+        )
+        ordinary = (
+            self.detection_status in {"not_log", "unknown"}
+            and self.requested_preset_id == "compress-only"
+            and self.applied_preset_id == "compress-only"
+            and self.transform_kind == "none"
+            and self.color_transform_status == "not_requested"
+            and self.color_transform_error_code is None
+            and self.applied_preset_display_name is None
+            and self.preset_version is None
+            and self.manifest_sha256 is None
+            and self.lut_sha256 is None
+        )
+        future_applied = (
+            self.detection_status == "apple_log"
+            and self.requested_preset_id == "generated-apple-log-rec709"
+            and self.applied_preset_id == "generated-apple-log-rec709"
+            and self.transform_kind == "lut"
+            and self.color_transform_status == "applied"
+            and self.color_transform_error_code is None
+            and self.applied_preset_display_name is not None
+            and self.preset_version is not None
+            and self.manifest_sha256 is not None
+            and self.lut_sha256 is not None
+        )
+        if not (fallback or ordinary or future_applied):
+            raise ValueError("formal preview transform claim is invalid")
+        return self
+
+
+class FormalPreviewFailedResponse(FormalPreviewBaseResponse):
+    state: Literal["failed"]
+    detection_status: DetectionStatus | None = None
+    source_profile: str | None = Field(default=None, min_length=1, max_length=128)
+    detector_rule_version: str | None = Field(default=None, min_length=1, max_length=64)
+    detector_manifest_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    detector_evidence_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    requested_preset_id: str | None = Field(default=None, pattern=PRESET_ID_PATTERN)
+    applied_preset_id: None = None
+    applied_preset_display_name: None = None
+    preset_version: None = None
+    manifest_sha256: None = None
+    lut_sha256: None = None
+    transform_kind: TransformKind | None = None
+    color_transform_status: Literal["failed"] | None = None
+    color_transform_error_code: str | None = None
+    preview_id: None = None
+    result: None = None
+    failure_code: FormalPreviewFailureCode
+
+    @model_validator(mode="after")
+    def validate_partial_groups(self):
+        _validate_detector_group(self)
+        if (self.transform_kind is None) != (self.color_transform_status is None):
+            raise ValueError("failed transform group must be all present or all null")
+        return self
+
+
+FormalPreviewResponse = Annotated[
+    FormalPreviewGeneratingResponse
+    | FormalPreviewReadyResponse
+    | FormalPreviewFailedResponse,
+    Field(discriminator="state"),
+]
+
+
 class AssetListItemResponse(AssetReadBaseResponse):
     pass
 
 
 class AssetDetailResponse(AssetReadBaseResponse):
     active_processed_result: ProcessedResultMetadataResponse | None
+    formal_preview: FormalPreviewResponse | None = None
 
 
 # Kept as an import-compatible name for existing callers while list and detail
@@ -143,6 +306,19 @@ class UploadAssetResponse(BaseModel):
     preview_status: str
     review_status: str
     delete_candidate_status: str
+
+
+def _validate_detector_group(value) -> None:
+    identity = (
+        value.detector_rule_version,
+        value.detector_manifest_sha256,
+        value.detector_evidence_sha256,
+    )
+    if value.detection_status is None:
+        if value.source_profile is not None or any(item is not None for item in identity):
+            raise ValueError("detector group must be all present or all null")
+    elif any(item is None for item in identity):
+        raise ValueError("detector group must be all present or all null")
 
 
 def parse_upload_metadata(

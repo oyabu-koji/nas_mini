@@ -1,5 +1,9 @@
 import asyncio
+import json
+import sqlite3
 from hashlib import sha256
+
+import pytest
 
 from app.core.settings import Settings
 from app.db.connection import connect
@@ -13,6 +17,7 @@ from app.services.upload_sessions import (
     finalize_upload_session,
     upload_session_chunk,
 )
+from app.services.phase2b_migration import apply_phase2b_migration
 
 
 def _settings(tmp_path):
@@ -172,3 +177,64 @@ def test_only_retryable_finalization_failure_can_be_requeued(tmp_path):
         assert error.code == "session_terminal_failure"
     else:
         raise AssertionError("terminal finalization failure must not be requeued")
+
+
+@pytest.mark.parametrize("is_log", [False, True])
+def test_phase2b_finalization_always_creates_generation_one_preview_job(
+    tmp_path, is_log
+):
+    settings = _settings(tmp_path)
+    apply_phase2b_migration(
+        settings=settings,
+        offline_maintenance_confirmed=True,
+        certification_check=lambda _settings: None,
+    )
+    _content, session, job = _prepare_finalization(settings, is_log=is_log)
+
+    process_upload_finalize_job(settings=settings, job=job)
+
+    with connect(settings.database_path, 5000) as conn:
+        asset = conn.execute("SELECT * FROM assets").fetchone()
+        preview_jobs = conn.execute(
+            "SELECT * FROM jobs WHERE job_type IN ('preview', 'lut_preview')"
+        ).fetchall()
+    assert asset["preview_generation"] == 1
+    assert len(preview_jobs) == 1
+    assert preview_jobs[0]["job_type"] == "preview"
+    assert preview_jobs[0]["preview_generation"] == 1
+    payload = json.loads(preview_jobs[0]["payload_json"])
+    assert payload["detection_required"] is True
+    assert payload["preview_generation"] == 1
+
+
+def test_phase2b_preview_job_insert_failure_rolls_back_asset_and_session_relation(
+    tmp_path, monkeypatch
+):
+    settings = _settings(tmp_path)
+    apply_phase2b_migration(
+        settings=settings,
+        offline_maintenance_confirmed=True,
+        certification_check=lambda _settings: None,
+    )
+    _content, session, job = _prepare_finalization(settings)
+    monkeypatch.setattr(
+        "app.services.upload_finalize.insert_or_return_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            sqlite3.IntegrityError("injected")
+        ),
+    )
+
+    process_upload_finalize_job(settings=settings, job=job)
+
+    with connect(settings.database_path, 5000) as conn:
+        session_row = conn.execute(
+            "SELECT * FROM upload_sessions WHERE id = ?", (session["id"],)
+        ).fetchone()
+        asset_count = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+        generated_jobs = conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE preview_generation = 1"
+        ).fetchone()[0]
+    assert session_row["status"] == "failed"
+    assert session_row["asset_id"] is None
+    assert asset_count == 0
+    assert generated_jobs == 0

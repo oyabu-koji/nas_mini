@@ -46,27 +46,32 @@ file, or silently substitute a newly active result while the user is saving anot
 - Introduce an immutable Backend `processed_result` record for every deliverable video
   result. It has an opaque `result_id`, `asset_id`, `derived_file_id`, MIME type,
   `size_bytes`, `sha256`, nullable `preview_generation`, creation time, and ready/failed
-  state. Phase 2A results have no generation; the Phase 2B migration assigns generation
-  `0` before profile-aware results use a required generation. A result always refers to
-  one immutable derived file and never to an original path.
+  state. Phase 2A and managed-rendition results keep `preview_generation = null`; only a
+  Phase 2B formal-preview result has a non-null generation matching its asset, attempt, and
+  formal provenance. A result always refers to one immutable derived file and never to an
+  original path.
 - Store these records in `processed_results`. Its `asset_id` and `derived_file_id` are
   foreign keys, and one derived file has at most one processed result. SQLite constraints
   and same-asset triggers prevent a result from referring to a derived file owned by a
   different asset or an inactive/failed result from becoming active.
-- Add nullable `assets.active_processed_result_id`. A result becomes active only after
-  the final derived file exists, its size and SHA-256 are committed, and all applicable
-  readiness checks pass. Creating the result, recording its digest, and changing the
-  active pointer occur in one transaction.
+- Add nullable `assets.active_processed_result_id`. A result becomes current under its
+  applicable authority only after the final derived file exists, its size and SHA-256 are
+  committed, and all applicable readiness checks pass. In Phase 2A, creating the result,
+  recording its digest, and changing the active pointer occur in one transaction. Phase 2B
+  adds the independent formal relation without weakening these checks.
 - On rollout, backfill an active result only for an existing eligible Phase 2A normal
   video preview after validating its file and computing its result SHA-256. Missing,
   failed, or legacy LOG safety-gated previews do not receive a result record.
 - Return result metadata from asset detail as an `active_processed_result` object with
   immutable `result_id`, MIME type, size, SHA-256, creation time, and an authenticated
-  URL that includes that exact result ID. It exposes no filesystem path.
+  URL that includes that exact result ID. It exposes no filesystem path. In Phase 2B this
+  object follows `active_processed_result_id` and can differ from the current formal result
+  returned under `formal_preview.result`.
 - Add an authenticated download endpoint for a named result:
-  `GET /assets/{asset_id}/results/{result_id}`. It serves only the exact active result
-  specified by both IDs; it never resolves an unspecified request to whichever result is
-  active at response time.
+  `GET /assets/{asset_id}/results/{result_id}`. Phase 2A serves only the exact active result.
+  Phase 2B first resolves result kind and serves the exact requested result only when it is
+  the current formal authority or current managed authority; it never substitutes another
+  result at response time.
 - Add a deliberate Mobile action to download that exact result to an app-managed
   temporary file, verify its response identity, size, and SHA-256, then save it to the
   iPhone photo library with `expo-media-library`.
@@ -131,35 +136,44 @@ file, or silently substitute a newly active result while the user is saving anot
   `UNIQUE(derived_file_id)`. An insert or update is rejected unless
   `processed_results.asset_id = derived_files.asset_id` and the referenced derived file
   is a ready video file.
-- `assets.active_processed_result_id` identifies at most one deliverable result. It is
+- `assets.active_processed_result_id` identifies at most one selected result. In Phase 2A it
+  is the sole deliverable authority. In Phase 2B it identifies the current managed result
+  when one exists, or otherwise the formal result; the independent current formal authority
+  is `assets.formal_preview_id -> preview_provenance.result_id`. The active pointer is
   updated only in the same transaction that commits the ready result's digest and active
   derived-file relation. A deferred foreign key plus SQLite trigger rejects an active
   pointer unless it names a ready result of that same asset. Historical results are audit
   records, not active downloads.
 - Asset detail returns the active result's immutable metadata and a URL for that result.
   Mobile captures all four identity values (`result_id`, `sha256`, `size_bytes`, URL)
-  before beginning a download; it does not call an active-result resolver later.
+  before beginning a download; it does not call an active-result resolver later. Phase 2B
+  additionally returns the current formal result under `formal_preview.result`; formal
+  preview save and managed-rendition save keep those identities separate.
 - One shared Backend eligibility service is used by asset detail and download endpoints.
   It applies the following rules:
 
-| Runtime phase | Deliverable result requirements |
+| Runtime phase and kind | Deliverable result requirements |
 | --- | --- |
 | Phase 2A | `verification_status = file_verified`; `preview_status = preview_ready`; `active_processed_result_id` refers to a ready video derived file with matching stored size/SHA-256; the asset is not in the legacy LOG safety-gated state; and storage validation succeeds. |
-| Phase 2B and later | All Phase 2A checks, plus `processed_result.derived_file_id = assets.formal_preview_id`, `processed_result.preview_generation = assets.preview_generation`, and a matching formal provenance record that passes the Apple Log feature's stream/confirmation validation. |
+| Phase 2B formal | The requested result equals `assets.formal_preview_id -> preview_provenance.result_id`; its non-null `preview_generation` equals the asset, attempt, and provenance generation; the result/derived file is ready and storage-valid; and the complete formal relation passes the Apple Log feature's validator. It need not equal `active_processed_result_id`. |
+| Phase 2B managed | The requested result equals `active_processed_result_id`; it has `preview_generation = null`, exactly one ready rendition and complete rendition provenance; it is the latest successfully finalized managed authority; and original/storage integrity checks pass. Newer failed or superseded selections do not invalidate it. |
 
-- An absent active result, failed result, missing storage file, digest/size mismatch,
-  stale generation, `formal_preview_id` mismatch, or missing/invalid provenance returns
-  `409 processed_result_not_ready`. It never falls back to an old derived file or the
-  original.
+- A Phase 2A absent/failed active result or integrity failure returns
+  `409 processed_result_not_ready`. In Phase 2B, invalid/stale formal relations use
+  `formal_preview_not_ready` or `formal_preview_provenance_invalid`; a requested result
+  current under neither formal nor managed authority returns
+  `409 processed_result_superseded`. No branch falls back to an old derived file, another
+  current result, or the original.
 
 ### HTTP Download Contract
 
 - `GET /assets/{asset_id}/results/{result_id}` requires the same bearer token as existing
   asset and preview endpoints. It queries by both `asset_id` and `result_id`; an unknown
   asset, unknown result, or result owned by another asset returns `404`.
-- The endpoint verifies that `result_id` is still the asset's active result before it
-  opens the file. If the result exists but the active pointer changed, it returns
-  `409 processed_result_superseded`; it never substitutes the newer active result.
+- Before opening the file, the endpoint verifies that `result_id` is the Phase 2A active
+  result or, after Phase 2B, the current formal or current managed authority. If the result
+  exists but is current under neither applicable authority, it returns
+  `409 processed_result_superseded`; it never substitutes another result.
 - A full successful response is `200` and includes `Content-Length` for the full file,
   `Accept-Ranges: bytes`, `Content-Type`, a sanitized `Content-Disposition: attachment`
   filename, `ETag`, `X-Processed-Result-Id`, `X-Processed-Result-SHA256`, and
@@ -203,8 +217,9 @@ file, or silently substitute a newly active result while the user is saving anot
   `safe_to_delete_candidate`. It does not by itself permit deletion of the iPhone
   original.
 - The Backend permits result playback/download only through the shared eligibility
-  service. Phase 2B result delivery therefore has the same formal-provenance gate as
-  preview streaming and confirmation.
+  service. Phase 2B preview streaming and confirmation use the formal validator, while
+  exact-result delivery resolves result kind and applies the separate current-formal or
+  current-managed validator.
 - No endpoint in this feature reads, serves, or deletes an original for delivery.
 
 ## Non-Functional / Technical Notes
@@ -217,30 +232,33 @@ file, or silently substitute a newly active result while the user is saving anot
 - Initial Mobile download retry starts from byte zero. The range contract is required for
   media interoperability and a later resumable-download feature, not for silently
   resuming an incomplete initial save.
-- Tests cover a normal ready result; active-result change before download; active-result
-  change during retry; result-header mismatch; missing file; server/result digest
-  mismatch; `200`, `206`, and `416` responses; permission denial; save cancellation;
-  unknown save outcome; startup cleanup; and proof that the result-save store cannot be
-  used by source-original deletion.
+- Tests cover a normal ready result; formal and managed Phase 2B authorities; active-result
+  change before download; active-result change during retry; result-header mismatch;
+  missing file; server/result digest mismatch; `200`, `206`, and `416` responses;
+  permission denial; save cancellation; unknown save outcome; startup cleanup; and proof
+  that the result-save store cannot be used by source-original deletion.
 
 ## Acceptance Criteria
 
 - A `file_verified` Phase 2A video with an eligible ready derived video has exactly one
   active immutable result containing its derived-file ID, MIME type, size, and SHA-256.
-  Phase 2B results also contain the matching required generation. Asset detail returns
-  the same identity in its download metadata.
+  A Phase 2B formal result contains the matching non-null generation; managed results keep
+  `preview_generation = null`. Asset detail returns the formal and selected managed
+  identities without conflating them.
 - Database tests prove that a result cannot reference another asset's derived file, one
   derived file cannot have two result records, and an asset cannot point at another
   asset's, failed, or inactive result. Endpoint tests prove that an asset/result ID
   mismatch returns `404` without streaming bytes.
-- The result download endpoint returns only the requested active `result_id`; after an
-  active-pointer change, the old URL returns `409 processed_result_superseded` and never
-  returns the new result's bytes.
+- The result download endpoint returns only the requested current-authority `result_id`.
+  Phase 2B can deliver both a current formal result and a different current managed result.
+  A result current under neither authority returns `409 processed_result_superseded` and
+  never returns another result's bytes.
 - `200`, valid `206`, and `416` responses follow the specified identity and range
   headers. Mobile rejects an identity, size, or digest mismatch before photo-library
   save.
-- An asset without an eligible active result, including a Phase 2B provenance mismatch,
-  returns `processed_result_not_ready` and shows no Mobile save command.
+- An asset without an eligible Phase 2A active result returns
+  `processed_result_not_ready`. Phase 2B invalid formal provenance uses the formal stable
+  error, and an invalid managed relation is not exposed as a saveable result.
 - `processedResultSaveStore` records a successful local library asset only under the
   exact result ID and digest, and source-original deletion code cannot read that record.
 - Permission denial, download interruption, digest mismatch, supersession, and

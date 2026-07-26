@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 DEFAULT_BUILT_IN_PRESET_ROOT = Path(__file__).parents[2] / "assets/lut/presets"
+DEFAULT_DETECTOR_ROOT = Path(__file__).parents[2] / "assets/detectors/apple-log-v1"
 
 
 class SettingsError(RuntimeError):
@@ -18,6 +19,12 @@ class Settings:
     lut_path: Path = Path("/app/assets/lut/rec709.cube")
     user_lut_root: Path | None = None
     built_in_preset_root: Path = DEFAULT_BUILT_IN_PRESET_ROOT
+    detector_root: Path = DEFAULT_DETECTOR_ROOT
+    ffprobe_binary: str = "ffprobe"
+    detector_probe_timeout_ms: int = 15_000
+    detector_probe_max_stdout_bytes: int = 1_048_576
+    detector_probe_max_stderr_bytes: int = 1_048_576
+    detector_evidence_max_bytes: int = 4_096
     preset_manifest_max_bytes: int = 65_536
     preset_lut_max_bytes: int = 16 * 1024 * 1024
     sqlite_busy_timeout_ms: int = 5000
@@ -43,6 +50,22 @@ def load_settings() -> Settings:
         user_lut_root=_optional_path("USER_LUT_ROOT"),
         built_in_preset_root=Path(
             os.environ.get("BUILT_IN_PRESET_ROOT", str(DEFAULT_BUILT_IN_PRESET_ROOT))
+        ),
+        detector_root=Path(
+            os.environ.get("APPLE_LOG_DETECTOR_ROOT", str(DEFAULT_DETECTOR_ROOT))
+        ),
+        ffprobe_binary=os.environ.get("FFPROBE_BINARY", "ffprobe"),
+        detector_probe_timeout_ms=_bounded_positive_int(
+            "DETECTOR_PROBE_TIMEOUT_MS", 15_000, maximum=15_000
+        ),
+        detector_probe_max_stdout_bytes=_bounded_positive_int(
+            "DETECTOR_PROBE_MAX_STDOUT_BYTES", 1_048_576, maximum=1_048_576
+        ),
+        detector_probe_max_stderr_bytes=_bounded_positive_int(
+            "DETECTOR_PROBE_MAX_STDERR_BYTES", 1_048_576, maximum=1_048_576
+        ),
+        detector_evidence_max_bytes=_bounded_positive_int(
+            "DETECTOR_EVIDENCE_MAX_BYTES", 4_096, maximum=4_096
         ),
         preset_manifest_max_bytes=_bounded_positive_int(
             "PRESET_MANIFEST_MAX_BYTES", 65_536, maximum=65_536

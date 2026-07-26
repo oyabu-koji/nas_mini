@@ -15,11 +15,15 @@ from app.db.connection import connect
 from app.db.migrations import run_migrations
 from app.services.processed_result_backfill import backfill_eligible_processed_results
 from app.services.storage import initialize_storage
+from app.services.initial_release_guard import (
+    assert_generated_apple_log_conversion_disabled,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = load_settings()
+    assert_generated_apple_log_conversion_disabled(settings)
     initialize_storage(settings.media_root)
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         run_migrations(conn)

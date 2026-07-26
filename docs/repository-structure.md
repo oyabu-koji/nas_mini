@@ -52,6 +52,7 @@ project-root/
 │   │   ├── services/
 │   │   └── workers/
 │   ├── assets/
+│   │   ├── detectors/apple-log-v1/
 │   │   └── lut/presets/
 │   ├── scripts/
 │   ├── tests/
@@ -141,6 +142,11 @@ project-root/
 ### `backend/app/db/`
 
 - SQLite接続、schema初期化、migration関連処理。
+- Phase 2B migration SQLはformal/managed provenanceを使うactive-result classifierと
+  kind-aware pointer triggerを所有する。steady-state classifierとmanaged pointer transition validatorを
+  分離し、legacy preview又は置換された旧managed resultだけをsupersedeする。
+- Phase 2B migration CLIはoffline one-shot serviceだけで動作し、`BEGIN IMMEDIATE`取得後に
+  schema/markerとdrain条件を再検証してからDDL、backfill、ledgerを同一transactionへ適用する。
 
 ### `backend/app/models/`, `schemas/`
 
@@ -149,11 +155,26 @@ project-root/
 ### `backend/app/repositories/`
 
 - assets、derived_files、jobs、processed_results、LUT preset/manifestのDB操作。transaction境界はserviceが所有し、repository helperはcommitしない。
+
+### `backend/scripts/` と process helper
+
+- detector certification host scriptはCompose certifierを`Popen`とbounded stdout/stderr readerで管理し、
+  timeout/output超過時のprocess group停止と一意なcontainer名による強制cleanupを所有する。
+- `backend/scripts/run_phase2b_formal_preview_migration.py` host wrapperはComposeの旧
+  `api`/`worker`非稼働を確認し、`phase2b-migration` profileのone-shot migratorだけを起動する。
+- container内`backend/scripts/migrate_phase2b_formal_preview.py`はDB preflight、
+  `BEGIN IMMEDIATE`内の再検証、schema/backfill/ledger transactionだけを所有する。
 - `renditions.py`と`rendition_provenance.py`はrequest/job/result/provenance relationを扱い、finalizerのtransactionを内側でcommitしない。
+- formal preview repositoryとrendition repositoryはresult kindを共有flagから推測せず、
+  各provenance relationでcurrent authorityを解決する。
 
 ### `backend/app/services/`
 
 - upload保存、SHA256計算、Apple Log判定、preset検証、preview生成、path生成、processed result integrity/backfill/finalize/delivery/range stream。
+- `processed_result_authority.py`はformal/managed/legacy resultをpersist済みprovenanceで分類し、
+  migration、formal finalizer、exact-result deliveryへ同じkind判定を提供する。managed authorityは
+  active pointerが指す最新成功ready renditionとし、より新しいfailed/superseded selectionを許容する。
+  managed finalizerのpointer切替は別のtransition validatorを使い、current selectionの一意なready targetだけを許可する。
 - original非改変ルールを守る。
 - managed presetはmanifest/JCS/`.cube`検証、registry分類、no-follow LUT snapshot、rendition作成、専用処理、原子的finalizeをそれぞれ`preset_manifest.py`、`preset_registry.py`、`lut_snapshot.py`、`rendition_creation.py`、`rendition_processing.py`、`rendition_finalizer.py`へ分離する。
 
@@ -174,10 +195,16 @@ project-root/
 - manifestにはpreset id、source/target profile、version、SHA-256、generatorまたはsource URL、利用条件の参照を記録する。identity LUTをRec.709変換用として扱わない。
 - Docker image内では`/app/assets/lut/`として参照する。custom LUTはimageとGitへ含めず、Mac mini側のrepo外`USER_LUT_ROOT`をread-only mountして参照する。任意のLUTをMobileからuploadしない。
 
+### `backend/assets/detectors/`
+
+- `apple-log-v1/detector-rule-input-v1.json`へrepository ownerが人手で作成・承認した判定predicate、根拠、source reference、approval情報を置き、隣接する`.sha256` sidecarへJCS SHA-256を置く。fixture差分又はscriptから判定ruleを生成しない。
+- `apple-log-v1/manifest.json`と`certificate-summary.json`へ、rule-input digest、exact ffprobe version/entries、resource limit、fixture SHA-256/期待分類、canonical digestを持つ認証結果を置く。動画本体、local path、raw ffprobe outputは置かない。
+
 ### `backend/scripts/`
 
 - `generate_test_luts.py`は17-point identityとred/blue swap test LUT、schema v1 manifestをdeterministicに再生成する。
 - generated LUT/manifestはcommitし、generator再実行後の差分とSHA-256をtestで検証する。実user LUTは生成・commitしない。
+- `certify_apple_log_detector.py`は人手承認済みrule inputを変更せず、repo外fixtureをpinned Docker ffprobeで検査し、sanitized candidate manifestとpath-free certificate summaryを決定的に生成・再検証する。fixture差分からpredicateを推論せず、認証前のmanifestを有効化せず、media/pathを出力又はcommitしない。
 
 ### `backend/pyproject.toml`, `backend/uv.lock`
 

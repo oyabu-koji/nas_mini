@@ -91,7 +91,9 @@ def create_rendition(
                 conn.commit()
                 return result
             current_asset = get_asset(conn, asset_id)
-            if current_asset is None or not _database_eligible(conn, current_asset):
+            if current_asset is None or not _database_eligible(
+                settings, conn, current_asset
+            ):
                 raise RenditionCreationError(
                     "rendition_asset_not_eligible", retryable=False, http_status=409
                 )
@@ -204,7 +206,13 @@ def _preflight_identity(*, settings: Settings, conn, asset: dict[str, Any]) -> P
     )
 
 
-def _database_eligible(conn, asset: dict[str, Any]) -> bool:
+def _database_eligible(
+    settings: Settings, conn, asset: dict[str, Any]
+) -> bool:
+    if "formal_preview_id" in asset:
+        return resolve_deliverable_result(
+            settings=settings, conn=conn, asset=asset
+        ) is not None
     if not is_phase2a_deliverable_asset(conn=conn, asset=asset):
         return False
     active = get_active_processed_result(conn, asset_id=int(asset["id"]))

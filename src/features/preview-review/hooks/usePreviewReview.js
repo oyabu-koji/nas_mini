@@ -2,13 +2,13 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { buildPreviewSource, buildPreviewVideoSource, confirmPreview } from '../../../shared/api/mediaVaultApi';
 import { ASSET_TYPE, PREVIEW_STATUS } from '../../../shared/constants/assetStatuses';
-import { toDisplayError } from '../../../shared/utils/errors';
+import { messageForErrorCode, toDisplayError } from '../../../shared/utils/errors';
 import { useAssetDetail } from '../../assets/hooks/useAssets';
 import { downloadPreviewToCache } from '../services/previewCacheService';
 
 export function usePreviewReview(settings, canUseApi, assetId) {
   const { asset, status: assetStatus, error: assetError, loadAsset } = useAssetDetail(settings, canUseApi, assetId, {
-    autoPoll: false,
+    autoPoll: true,
   });
   const [confirmStatus, setConfirmStatus] = useState('idle');
   const [confirmError, setConfirmError] = useState(null);
@@ -16,7 +16,14 @@ export function usePreviewReview(settings, canUseApi, assetId) {
   const [cacheStatus, setCacheStatus] = useState('idle');
   const [cacheError, setCacheError] = useState(null);
 
-  const canReview = !asset?.is_log && asset?.preview_status === PREVIEW_STATUS.READY;
+  const hasFormalPreview = Boolean(
+    asset && Object.prototype.hasOwnProperty.call(asset, 'formal_preview'),
+  );
+  const formalPreview = asset?.formal_preview ?? null;
+  const canReview = hasFormalPreview
+    ? formalPreview?.state === 'ready'
+    : !asset?.is_log && asset?.preview_status === PREVIEW_STATUS.READY;
+  const presentation = formalPreviewPresentation(formalPreview);
 
   const videoSource = useMemo(() => {
     if (!canReview || asset?.type !== ASSET_TYPE.VIDEO) {
@@ -91,8 +98,64 @@ export function usePreviewReview(settings, canUseApi, assetId) {
     cacheStatus,
     cacheError,
     cachedPreviewUri,
+    formalPreview,
+    profileLabel: presentation.profileLabel,
+    transformLabel: presentation.transformLabel,
+    stateMessage: presentation.stateMessage,
     confirm,
     loadAsset,
     cachePreview,
+  };
+}
+
+export function formalPreviewPresentation(formalPreview) {
+  if (!formalPreview) {
+    return { profileLabel: null, transformLabel: null, stateMessage: null };
+  }
+  if (formalPreview.state === 'generating') {
+    return {
+      profileLabel: null,
+      transformLabel: null,
+      stateMessage: 'Preview is generating',
+    };
+  }
+  if (formalPreview.state === 'failed') {
+    return {
+      profileLabel: null,
+      transformLabel: null,
+      stateMessage: messageForErrorCode(formalPreview.failure_code),
+    };
+  }
+  if (
+    formalPreview.detection_status === 'apple_log'
+    && formalPreview.color_transform_status === 'unavailable'
+  ) {
+    return {
+      profileLabel: 'Apple Log (unconverted)',
+      transformLabel: 'Color transform unavailable',
+      stateMessage: null,
+    };
+  }
+  if (
+    formalPreview.detection_status === 'apple_log'
+    && formalPreview.color_transform_status === 'applied'
+  ) {
+    return {
+      profileLabel: formalPreview.applied_preset_display_name,
+      transformLabel: 'Color transform applied',
+      stateMessage: null,
+    };
+  }
+  if (formalPreview.detection_status === 'not_log') {
+    return {
+      profileLabel: 'Ordinary video',
+      transformLabel: null,
+      stateMessage: null,
+    };
+  }
+  return {
+    profileLabel: 'Video profile unknown (unconverted)',
+    transformLabel: null,
+    stateMessage: null,
   };
 }

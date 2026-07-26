@@ -5,6 +5,7 @@ import {
   buildProcessedResultSource,
   requestJson,
   sanitizeAsset,
+  sanitizeFormalPreview,
   sanitizeProcessedResult,
   uploadAsset,
 } from './mediaVaultApi';
@@ -205,7 +206,123 @@ describe('mediaVaultApi timeouts', () => {
       }),
     ).toEqual({
       uri: `http://backend.test/assets/42/results/${resultId}`,
-      headers: { Authorization: 'Bearer secret-token' },
+      headers: {
+        Authorization: 'Bearer secret-token',
+        'X-MediaVault-Client-Version': '0.2.0',
+      },
     });
+  });
+
+  it('sanitizes formal Apple Log fallback and ordinary preview claims', () => {
+    const resultId = 'a'.repeat(32);
+    const previewId = 'b'.repeat(32);
+    const detector = {
+      detection_status: 'apple_log',
+      source_profile: null,
+      detector_rule_version: 'rule-v1',
+      detector_manifest_sha256: 'c'.repeat(64),
+      detector_evidence_sha256: 'd'.repeat(64),
+    };
+    const result = {
+      result_id: resultId,
+      mime_type: 'video/mp4',
+      size_bytes: 12,
+      sha256: 'e'.repeat(64),
+      created_at: '2026-07-24T00:00:00Z',
+      url: `/assets/42/results/${resultId}`,
+    };
+    const fallback = sanitizeFormalPreview({
+      schema_version: 1,
+      state: 'ready',
+      generation: 1,
+      ...detector,
+      requested_preset_id: 'generated-apple-log-rec709',
+      applied_preset_id: 'compress-only',
+      applied_preset_display_name: null,
+      preset_version: null,
+      manifest_sha256: null,
+      lut_sha256: null,
+      transform_kind: 'none',
+      color_transform_status: 'unavailable',
+      color_transform_error_code: 'lut_preset_unavailable',
+      preview_id: previewId,
+      result,
+      failure_code: null,
+    }, 42);
+    expect(fallback).toMatchObject({
+      state: 'ready',
+      detection_status: 'apple_log',
+      requested_preset_id: 'generated-apple-log-rec709',
+      applied_preset_id: 'compress-only',
+      color_transform_status: 'unavailable',
+      result,
+    });
+
+    expect(sanitizeFormalPreview({
+      ...fallback,
+      detection_status: 'unknown',
+      requested_preset_id: 'compress-only',
+      applied_preset_id: 'compress-only',
+      color_transform_status: 'not_requested',
+      color_transform_error_code: null,
+    }, 42)).toMatchObject({
+      detection_status: 'unknown',
+      color_transform_status: 'not_requested',
+    });
+  });
+
+  it('requires complete future LUT identity and fixed formal failure codes', () => {
+    const resultId = 'a'.repeat(32);
+    const applied = {
+      schema_version: 1,
+      state: 'ready',
+      generation: 1,
+      detection_status: 'apple_log',
+      source_profile: null,
+      detector_rule_version: 'rule-v1',
+      detector_manifest_sha256: 'b'.repeat(64),
+      detector_evidence_sha256: 'c'.repeat(64),
+      requested_preset_id: 'generated-apple-log-rec709',
+      applied_preset_id: 'generated-apple-log-rec709',
+      applied_preset_display_name: 'Apple Log to Rec.709',
+      preset_version: '1',
+      manifest_sha256: 'd'.repeat(64),
+      lut_sha256: 'e'.repeat(64),
+      transform_kind: 'lut',
+      color_transform_status: 'applied',
+      color_transform_error_code: null,
+      preview_id: 'f'.repeat(32),
+      result: {
+        result_id: resultId,
+        mime_type: 'video/mp4',
+        size_bytes: 12,
+        sha256: '1'.repeat(64),
+        created_at: '2026-07-24T00:00:00Z',
+        url: `/assets/42/results/${resultId}`,
+      },
+      failure_code: null,
+    };
+    expect(sanitizeFormalPreview(applied, 42).color_transform_status).toBe('applied');
+    expect(() => sanitizeFormalPreview({ ...applied, lut_sha256: null }, 42)).toThrow(
+      'formal preview response',
+    );
+    expect(() => sanitizeFormalPreview({
+      schema_version: 1,
+      state: 'failed',
+      generation: 1,
+      detection_status: null,
+      source_profile: null,
+      detector_rule_version: null,
+      detector_manifest_sha256: null,
+      detector_evidence_sha256: null,
+      requested_preset_id: null,
+      applied_preset_id: null,
+      transform_kind: null,
+      color_transform_status: null,
+      color_transform_error_code: null,
+      preview_id: null,
+      result: null,
+      failure_code: 'raw-error',
+    }, 42)).toThrow('formal preview response');
   });
 });

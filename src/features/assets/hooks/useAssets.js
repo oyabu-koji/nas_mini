@@ -57,6 +57,10 @@ export function useAssetDetail(settings, canUseApi, assetId, { autoPoll = true }
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
   const intervalRef = useRef(null);
+  const hasFormalPreview = Object.prototype.hasOwnProperty.call(
+    asset ?? {},
+    'formal_preview',
+  );
 
   const loadAsset = useCallback(async () => {
     if (!canUseApi || !assetId) {
@@ -82,7 +86,12 @@ export function useAssetDetail(settings, canUseApi, assetId, { autoPoll = true }
   }, [loadAsset]);
 
   useEffect(() => {
-    if (!autoPoll || asset?.preview_status !== PREVIEW_STATUS.GENERATING) {
+    const formalGenerating = asset?.formal_preview?.state === 'generating';
+    const legacyGenerating = (
+      !hasFormalPreview
+      && asset?.preview_status === PREVIEW_STATUS.GENERATING
+    );
+    if (!autoPoll || (!formalGenerating && !legacyGenerating)) {
       return undefined;
     }
 
@@ -96,7 +105,13 @@ export function useAssetDetail(settings, canUseApi, assetId, { autoPoll = true }
         intervalRef.current = null;
       }
     };
-  }, [asset?.preview_status, autoPoll, loadAsset]);
+  }, [
+    asset?.formal_preview?.state,
+    asset?.preview_status,
+    autoPoll,
+    hasFormalPreview,
+    loadAsset,
+  ]);
 
   return {
     asset,

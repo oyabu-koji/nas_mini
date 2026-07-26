@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import { buildPreviewUrl, createAuthHeaders } from '../../../shared/api/mediaVaultApi';
+import { buildPreviewUrl, createVersionedAuthHeaders } from '../../../shared/api/mediaVaultApi';
 import { createAppError, messageForErrorCode } from '../../../shared/utils/errors';
 
 export async function downloadPreviewToCache({ settings, assetId, extension = 'mp4' }) {
@@ -13,7 +13,7 @@ export async function downloadPreviewToCache({ settings, assetId, extension = 'm
 
   try {
     const result = await FileSystem.downloadAsync(buildPreviewUrl(settings.backendUrl, assetId), fileUri, {
-      headers: createAuthHeaders(settings.apiToken),
+      headers: createVersionedAuthHeaders(settings.apiToken),
       cache: true,
       sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
     });

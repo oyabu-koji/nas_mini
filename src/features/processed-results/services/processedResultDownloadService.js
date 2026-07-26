@@ -228,6 +228,12 @@ async function responseError({ fileSystem, response, tempUri }) {
   const code =
     serverCode === 'processed_result_superseded'
       ? serverCode
+      : serverCode === 'incompatible_client'
+        ? serverCode
+        : serverCode === 'formal_preview_not_ready'
+          ? serverCode
+          : serverCode === 'formal_preview_provenance_invalid'
+            ? serverCode
       : serverCode === 'processed_result_not_ready'
         ? serverCode
         : serverCode === 'processed_result_range_not_satisfiable'
@@ -237,7 +243,9 @@ async function responseError({ fileSystem, response, tempUri }) {
             : response?.status === 416
               ? 'processed_result_range_not_satisfiable'
               : 'processed_result_download_failed';
-  return createAppError(code, messageForErrorCode(code), { retryable: code === 'processed_result_download_failed' });
+  return createAppError(code, messageForErrorCode(code), {
+    retryable: code === 'processed_result_download_failed',
+  });
 }
 
 async function readResponseCode({ fileSystem, tempUri }) {

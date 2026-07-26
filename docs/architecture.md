@@ -77,7 +77,7 @@ graph LR
 ### Job Service
 
 - job状態を`queued`, `running`, `done`, `failed`で管理する。
-- Phase 1はpreviewと安全ゲート中のlut_previewを処理する。Phase 2Aはsessionごとに一意な`upload_finalize` jobをlease/reclaim可能にし、managed requestごとの`rendition` jobを専用processorへ明示dispatchする。Phase 2Bではoriginal確定後のApple Log自動判定、server presetのsnapshot、formal preview provenance付き生成を追加する。未登録または無効化済みpresetは`compress-only` previewを`done`にし、登録済みLUTの検証・適用失敗だけをterminal failureにする。session由来video preview jobはassetと同じ`preview_generation`を持ち、claim/commit時に一致しないjobはassetを書き換えず`preview_generation_superseded`として終了する。
+- Phase 1はpreviewと安全ゲート中のlut_previewを処理する。Phase 2Aはsessionごとに一意な`upload_finalize` jobをlease/reclaim可能にし、managed requestごとの`rendition` jobを専用processorへ明示dispatchする。Phase 2Bではoriginal確定後のApple Log自動判定、server presetのsnapshot、formal preview provenance付き生成を追加する。未登録または無効化済みpresetは`compress-only` previewを`done`にし、登録済みLUTの検証・適用失敗だけをterminal failureにする。session由来video preview jobはassetと同じ`preview_generation`を持ち、claim/commit時に一致しない場合はattemptを`superseded`、jobを`failed` + `preview_generation_superseded`へlease clear付きで収束させ、assetを書き換えない。
 - Phase 3+でAI解析jobを追加可能にする。
 
 ### Preview Adapter
@@ -85,6 +85,8 @@ graph LR
 - originalを改変しない。
 - H.264 MP4、AAC音声、1080p上限でpreviewを生成する。
 - Apple Log対応feature導入後、利用可能な`generated-apple-log-rec709` presetを適用する。要求presetが未登録または無効化済みなら、未変換表示用のprovenanceを持つ`compress-only` previewを生成する。登録済みLUTの検証・適用失敗はpreviewを生成・配信しない。
+- Phase 2Bのdetector ruleはrepository ownerが根拠/source reference付きcanonical inputとして人手承認する。認証scriptはruleを生成せず、repo外のユーザー所有Apple Log/通常動画をno-follow descriptorからowner-only temporary snapshotへbounded copyしてwhole-file SHA-256を固定し、そのsnapshotだけをversion/resource limit固定のDocker ffprobeで検証してdetector manifestを作る。manifestのfixture digestと分類対象bytesは同じsnapshotを正本とし、検証後にexternal pathを再openしない。Docker processは`Popen`とshellなしの固定argvで起動し、stdout/stderrを別々にbounded captureする。timeout又は各1 MiB超過ではprocess groupを停止し、一意な検証済みcontainer名で残存containerを強制回収してから失敗を返す。rule input、manifest、ffprobe version、Phase 2B migration markerの全てが有効になるまでcapabilityをfalseにし、migrationとprofile-aware jobを開始しない。
+- 初期formal previewは自動presetだけを解決する。Apple Logは`generated-apple-log-rec709`を要求し、非Log/判定不能は`compress-only`を要求する。identity/test/customの選択はmanaged renditionに閉じ、formal previewへ昇格しない。
 - 写真はJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映でpreviewを生成する。
 - Phase 1でHEIC、JPEG、PNG入力の検証fixtureを用意し、Docker内ffmpeg buildのcodec対応を確認する。
 - stdout/stderrを安全に扱い、機密値をログへ含めない。
@@ -94,8 +96,8 @@ graph LR
 - registryはvirtualな`compress-only`、repository内のgenerated identity/test manifest、optionalなrepo外`USER_LUT_ROOT`を統合し、`absent`、`disabled`、`registered_invalid`、`valid`へ分類する。catalogには`compress-only`とenabledかつvalidなsafe metadataだけを出す。
 - manifestはstrict schema v1とRFC 8785 JCS digest、LUTはbounded `.cube` parser、grid、row count、finite value、SHA-256で検証する。valid requestはcanonical manifest bytesとLUT identityをrenditionへimmutable snapshotする。
 - workerはserver-owned rootをsource kindから選び、各path componentをno-follow descriptorで開く。validated descriptorからowner-onlyのjob-private LUTへcopyし、FFmpeg直前にsize/hashを再検証するため、directory entry差替え後のpathを再解決しない。
-- `assets.rendition_selection_generation`がselection順序の正本である。current generationのfinalizerだけがderived file、provenance、ready result、旧result supersede、active pointer、rendition/job完了を一transactionで確定する。stale generationは同じ監査証跡を持つsuperseded resultにするがpointerとpreview/review stateを変更しない。
-- Phase 2A managed resultの`preview_generation`はnull、`formal_preview_id`は未設定とする。Phase 2BだけがApple Log検出、formal preview generation、preview/review state移行を所有する。
+- `assets.rendition_selection_generation`がselection順序の正本である。current generationのfinalizerだけがderived fileとready result、provenance、rendition `ready`、active pointer、job `done`の順で一transactionに確定する。pointer切替ではmigration/delivery用steady-state classifierとは別のtransition validatorを使い、OLDが完全なformal又はmanaged relation、NEWがcurrent selectionの一意なready managed relationの場合だけ許可する。kind-aware triggerは直前のcurrent managed resultだけをsupersedeし、current formal resultを維持する。失敗時は直前の成功済みactive resultを維持する。stale generationは同じ監査証跡を持つsuperseded resultにするがpointerとpreview/review stateを変更しない。
+- managed resultの`preview_generation`はPhase 2A、Phase 2Bともnull、`formal_preview_id`は未設定とし、`rendition_selection_generation`をordering authorityにする。Phase 2BだけがApple Log検出とnon-null formal preview generation、preview/review state移行を所有する。
 
 ## データ管理
 
@@ -106,7 +108,7 @@ graph LR
 - upload_sessions、upload_chunksはPhase 2で追加する。sessionはclient idempotency key、immutable metadata、expected hash、failure/retry、expiry、lease、asset/job参照を持ち、chunkは`UNIQUE(session_id, chunk_index)`とverified hashを持つ。
 - processed_resultsはPhase 2Aのdeliverable video identityである。assetsのdeferred active pointerはsame-assetの`ready` resultだけを指し、result/derived file/size/SHA-256/pointer/job完了は一つのtransactionで確定する。
 - renditionsはglobal uniqueなclient request ID、job、asset、selection generation、immutable preset snapshot、phase、nullable resultを持つ。rendition_provenanceはrendition/result/derived fileと一対一で、要求・適用presetとmanifest/LUT digest、transform outcomeを不変に保持する。
-- Phase 2BではLUT preset/detector manifestとpreview provenanceを追加する。provenanceは要求・適用preset、version、SHA-256、色変換状態・未適用理由を記録し、Apple Log fallbackを含む`transform_kind = none`も扱う。
+- Phase 2Bではcertified detector manifest、generation単位の`formal_preview_attempts`、完成したderived/resultと一対一のpreview provenanceを追加する。attemptはdetector/preset snapshot、provenanceは要求・適用preset、version、SHA-256、色変換状態・未適用理由を記録し、Apple Log fallbackを含む`transform_kind = none`も扱う。rendition provenanceとは相互変換しない。
 - statusは一つの列へ集約せず、役割ごとに分離する。
 
 ### Mobile Local State
@@ -154,7 +156,7 @@ ${MEDIA_ROOT}/
 3. Mobileは`preview_ready`かつ`preview_confirmed`のassetだけ削除操作を表示する。
 4. ユーザーが対象情報を確認し、削除を明示実行する。
 5. Mobileは`expo-media-library` service経由でiPhone写真ライブラリ上のlocal original削除を要求する。
-6. 成功または失敗はMobile local stateへ反映する。Backend側originalは保持する。
+6. native削除成功は不可逆なterminal状態として直ちにMobile memoryへ反映し、その後のlocal state永続化失敗で削除actionを再表示しない。Backend側originalは保持する。
 
 ## セキュリティ
 
@@ -180,14 +182,14 @@ ${MEDIA_ROOT}/
 - Phase 2ではiPhone側`expected_file_sha256`とMac mini側`server_sha256`が一致した場合のみ`file_verified`とする。
 - Phase 2Aでは結合、hash照合、original確定保存の完了後にだけpreview jobを登録する。
 - Phase 2Aではworker lease回収時にdeterministic tmp/final pathを検査し、hash一致のpromoted fileから同一sessionを完了するか、verified chunkから再構築する。DB commit後のclient timeoutはsession statusでcompleted assetを返す。
-- processed resultのfile integrity確認とRange解釈をdelivery transaction前に行う。その後`BEGIN IMMEDIATE`でactive pointerを最終再読込し、同じtransaction内でrequested file descriptorをopenしてcommitする。descriptor open後はそのresultのbytesだけをstreamし、pointer切替後の別resultへ差し替えない。
-- Phase 2Aのresultはnormal `file_verified` video previewだけを配信対象にする。Phase 2B導入後はformal preview ID、generation、provenance validatorを同じdeliverability境界へ追加する。
+- processed resultのfile integrity確認とRange解釈をdelivery transaction前に行う。その後`BEGIN IMMEDIATE`でrequested resultのkind別authorityを最終再読込し、同じtransaction内でfile descriptorをopenしてcommitする。Phase 2Bのformal resultは`formal_preview_id`と一致するnon-null `preview_generation`、managed resultは`active_processed_result_id`が指す最新成功済みのready renditionと`preview_generation = null`をauthorityとする。より新しいselection generationが`failed`又は`superseded`でも直前の成功済みmanaged authorityを維持する。descriptor open後はそのresultのbytesだけをstreamし、pointer切替後の別resultへ差し替えない。
+- Phase 2Aのresultはnormal `file_verified` video previewだけを配信対象にする。Phase 2B導入後はformal preview ID、generation、provenance validatorをformal preview/confirmationへ追加し、exact-result deliveryはcurrent formalとcurrent managedをkind別に検証する。
 - iPhone側original削除の失敗、権限拒否、ユーザーキャンセルはBackend側保存済みassetの状態を壊さない。
 - upload timeoutでMobileがrequestを中断した場合、backend保存結果は不明として扱う。Mobileは同一素材を自動再送せず、asset一覧で結果を確認する。
 - identity LUTで生成済みのLOG previewはRec.709変換済みとして扱わず、要求・適用presetと色変換状態を持つformal provenanceがなければpreview配信と確認を拒否する。derived fileは自動削除しない。
 - Phase 2Bではtemporary LOG safety triggerを、`type = video AND verification_status = file_verified`のassetで`formal_preview_id`と`log_detection_status`に応じたformal preview provenanceがない場合に`preview_ready`を拒否するSQLite triggerへmigrationで置換する。Apple Logの未登録または無効化済みpresetは`transform_kind = none`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を持つprovenanceで許可する。登録済みLUTのhash不一致・形式不備・FFmpeg適用失敗だけはterminal failureにする。
 - preview jobのterminal failureでは、jobと存在するassetのstatusを同一SQLite transactionで更新し、部分更新を残さない。
-- Phase 2B preview migrationはmaintenance modeでpre-Phase-2B workerを停止・drainしてから実行する。`phase2b-profile-preview:{asset_id}`の新規insertとasset generation/state更新を同一transactionにし、既存dedup keyではassetを変更しない。これにより再実行と旧jobのlate commitがformal preview/review stateを巻き戻さない。
+- Phase 2B preview migrationは旧`api`を先に停止して新規writeを遮断し、旧workerが`preview`/`lut_preview`/`rendition`とnonterminal renditionを全てdrainした後に旧`worker`も停止する。host wrapperが両serviceの非稼働を確認し、DB volumeを持つoffline one-shot migratorだけを起動する。preflight成功後も`BEGIN IMMEDIATE`内でschema/marker、queued/running job、nonterminal rendition、`preview_generating`を再検証し、競合変更又は残件があればschema/data/markerを無変更rollbackする。`phase2b-profile-preview:{asset_id}`の新規insertとasset generation/state更新を同一transactionにし、active resultをpersist済みprovenanceのsteady-state classifierで分類する。current managed resultは保持し、legacy Phase 2A previewだけをsupersedeし、ambiguous relationは全transactionをrollbackする。migration成功又はrollback完了までAPI/workerを再起動しないため、旧jobのlate commitがformal/managed preview又はreview stateを巻き戻さない。
 - rendition作成はread-only replay lookup後にpreflightし、`BEGIN IMMEDIATE`内でreplay、eligibility、active base identityを再確認してからgeneration/job/renditionを作る。finalizerも`BEGIN IMMEDIATE`内でeligibilityとcandidate/provenanceを再検証し、DB失敗時はrollbackしてcandidateをcleanupする。
 
 ## Docker方針

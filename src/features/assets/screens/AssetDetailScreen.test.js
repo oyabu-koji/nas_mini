@@ -21,6 +21,9 @@ describe('AssetDetailScreen LOG safety gate', () => {
     useManagedRendition.mockReturnValue({
       eligible: false,
       catalogStatus: 'idle',
+      capabilities: {
+        features: { formalAppleLogPreview: true },
+      },
       presets: [],
       selectedPresetId: null,
       submitStatus: 'idle',
@@ -82,6 +85,7 @@ describe('AssetDetailScreen LOG safety gate', () => {
     await fireEvent.press(view.getByText('Open preview'));
 
     expect(onPreview).not.toHaveBeenCalled();
+    expect(view.getByText('Legacy LOG hint (audit only): yes')).toBeTruthy();
     expect(view.queryByText('Save processed video')).toBeNull();
     expect(view.queryByText('Render rendition')).toBeNull();
   });
@@ -214,11 +218,79 @@ describe('AssetDetailScreen LOG safety gate', () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  it('uses a ready formal result for Apple Log preview and save actions', async () => {
+    const formalResult = {
+      result_id: 'c'.repeat(32),
+      mime_type: 'video/mp4',
+      size_bytes: 11,
+      sha256: 'd'.repeat(64),
+      url: `/assets/42/results/${'c'.repeat(32)}`,
+    };
+    useAssetDetail.mockReturnValue({
+      asset: {
+        id: 42,
+        type: 'video',
+        filename: 'apple-log.mov',
+        size_bytes: 10,
+        server_sha256: 'hash',
+        taken_at: null,
+        is_log: true,
+        transfer_status: 'uploaded',
+        verification_status: 'file_verified',
+        preview_status: 'preview_ready',
+        review_status: 'not_reviewed',
+        active_processed_result: {
+          ...formalResult,
+          result_id: 'e'.repeat(32),
+        },
+        formal_preview: {
+          state: 'ready',
+          detection_status: 'apple_log',
+          color_transform_status: 'unavailable',
+          result: formalResult,
+        },
+      },
+      status: 'ready',
+      error: null,
+      loadAsset: jest.fn(),
+    });
+    useProcessedResultSave.mockReturnValue({
+      canSave: true,
+      status: 'idle',
+      error: null,
+      save: jest.fn(),
+      cancel: jest.fn(),
+      canCancel: false,
+    });
+    const onPreview = jest.fn();
+
+    const view = await render(
+      <AssetDetailScreen
+        assetId={42}
+        canUseApi
+        onBack={jest.fn()}
+        onPreview={onPreview}
+        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+      />,
+    );
+
+    await fireEvent.press(view.getByText('Open preview'));
+    expect(onPreview).toHaveBeenCalledWith(42);
+    expect(view.getByText('Apple Log (unconverted)')).toBeTruthy();
+    expect(view.getByText('Save processed video')).toBeTruthy();
+    expect(useProcessedResultSave).toHaveBeenLastCalledWith(
+      expect.objectContaining({ result: formalResult }),
+    );
+  });
+
   it('renders the server managed preset control for an eligible video', async () => {
     const submit = jest.fn();
     useManagedRendition.mockReturnValue({
       eligible: true,
       catalogStatus: 'ready',
+      capabilities: {
+        features: { formalAppleLogPreview: true },
+      },
       presets: [{
         presetId: 'identity-v1',
         displayName: 'Identity test',

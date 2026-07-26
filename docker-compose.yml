@@ -36,5 +36,49 @@ services:
       - ${USER_LUT_ROOT_HOST_PATH:-/private/tmp/mediavault-user-luts}:/user_luts:ro
       - backend-db:/data
 
+  detector-certifier:
+    profiles:
+      - detector-certification
+    build:
+      context: ./backend
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+
+  phase2b-migrator:
+    profiles:
+      - phase2b-migration
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - scripts/migrate_phase2b_formal_preview.py
+      - --apply
+      - --offline-maintenance-confirmed
+    environment:
+      API_TOKEN: migration-not-exposed
+      DATABASE_PATH: /data/mediavault.sqlite3
+      MEDIA_ROOT: /unmounted-media
+      USER_LUT_ROOT: ""
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - backend-db:/data
+
 volumes:
   backend-db:

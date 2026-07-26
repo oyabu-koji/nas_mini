@@ -23,6 +23,7 @@ def insert_job(
     asset_id: int | None,
     payload_json: str,
     dedup_key: str | None = None,
+    preview_generation: int | None = None,
 ) -> dict[str, Any]:
     if not _has_dedup_key_column(conn):
         cursor = conn.execute(
@@ -42,6 +43,7 @@ def insert_job(
         asset_id=asset_id,
         payload_json=payload_json,
         dedup_key=dedup_key or f"adhoc:{uuid4().hex}",
+        preview_generation=preview_generation,
     )
     return job
 
@@ -53,23 +55,44 @@ def insert_or_return_job(
     asset_id: int | None,
     payload_json: str,
     dedup_key: str,
+    preview_generation: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
     if not dedup_key:
         raise ValueError("dedup key is required")
 
     existing = get_job_by_dedup_key(conn, dedup_key)
     if existing is not None:
-        if existing["job_type"] != job_type or existing["asset_id"] != asset_id:
+        if (
+            existing["job_type"] != job_type
+            or existing["asset_id"] != asset_id
+            or (
+                preview_generation is not None
+                and existing.get("preview_generation") != preview_generation
+            )
+        ):
             raise ValueError("dedup key conflicts with a different job")
         return existing, False
 
-    cursor = conn.execute(
-        """
-        INSERT INTO jobs (job_type, status, asset_id, payload_json, dedup_key)
-        VALUES (?, 'queued', ?, ?, ?)
-        """,
-        (job_type, asset_id, payload_json, dedup_key),
-    )
+    if _has_preview_generation_column(conn):
+        cursor = conn.execute(
+            """
+            INSERT INTO jobs (
+                job_type, status, asset_id, payload_json, dedup_key,
+                preview_generation
+            ) VALUES (?, 'queued', ?, ?, ?, ?)
+            """,
+            (job_type, asset_id, payload_json, dedup_key, preview_generation),
+        )
+    else:
+        if preview_generation is not None:
+            raise ValueError("preview generation schema is unavailable")
+        cursor = conn.execute(
+            """
+            INSERT INTO jobs (job_type, status, asset_id, payload_json, dedup_key)
+            VALUES (?, 'queued', ?, ?, ?)
+            """,
+            (job_type, asset_id, payload_json, dedup_key),
+        )
     row = conn.execute(
         "SELECT * FROM jobs WHERE id = ?",
         (cursor.lastrowid,),
@@ -90,6 +113,13 @@ def get_job_by_dedup_key(conn: sqlite3.Connection, dedup_key: str) -> dict[str, 
 def _has_dedup_key_column(conn: sqlite3.Connection) -> bool:
     return any(
         row["name"] == "dedup_key"
+        for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+    )
+
+
+def _has_preview_generation_column(conn: sqlite3.Connection) -> bool:
+    return any(
+        row["name"] == "preview_generation"
         for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
     )
 

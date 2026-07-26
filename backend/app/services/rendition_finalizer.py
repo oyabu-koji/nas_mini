@@ -21,6 +21,9 @@ from app.repositories.renditions import (
     get_rendition_by_job,
 )
 from app.services.processed_result_delivery import is_phase2a_deliverable_asset
+from app.services.processed_result_authority import (
+    validate_managed_pointer_transition_source,
+)
 from app.services.processed_result_integrity import hash_file_sha256
 from app.services.storage import StorageError, promote_rendition_candidate
 
@@ -73,11 +76,7 @@ def finalize_rendition_output(
                 if rendition is None or rendition["id"] != rendition_id:
                     raise RenditionFinalizationError("rendition_relation_invalid")
                 asset = get_asset(conn, int(rendition["asset_id"]))
-                if (
-                    asset is None
-                    or rendition["state"] != "finalizing"
-                    or not is_phase2a_deliverable_asset(conn=conn, asset=asset)
-                ):
+                if asset is None or rendition["state"] != "finalizing":
                     raise RenditionFinalizationError("rendition_asset_not_eligible")
                 current_generation = (
                     rendition["selection_generation"]
@@ -86,6 +85,21 @@ def finalize_rendition_output(
                 active = get_active_processed_result(conn, asset_id=int(asset["id"]))
                 if active is None:
                     raise RenditionFinalizationError("rendition_asset_not_eligible")
+                if "formal_preview_id" in asset:
+                    eligible = validate_managed_pointer_transition_source(
+                        conn,
+                        asset=asset,
+                        rendition=rendition,
+                        active=active,
+                    )
+                else:
+                    eligible = is_phase2a_deliverable_asset(
+                        conn=conn, asset=asset
+                    )
+                if not eligible:
+                    raise RenditionFinalizationError(
+                        "rendition_asset_not_eligible"
+                    )
                 if current_generation and (
                     rendition["base_result_id"] is not None
                     and (
@@ -138,11 +152,6 @@ def finalize_rendition_output(
                     color_transform_error_code=evidence.color_transform_error_code,
                 )
                 _inject(fault_injector, "after_provenance")
-                if current_generation:
-                    set_active_processed_result(
-                        conn, asset_id=int(asset["id"]), result_id=result["id"]
-                    )
-                    _inject(fault_injector, "after_active_pointer")
                 complete_rendition_in_transaction(
                     conn,
                     rendition_id=rendition_id,
@@ -153,6 +162,11 @@ def finalize_rendition_output(
                     error_code=evidence.color_transform_error_code,
                 )
                 _inject(fault_injector, "after_rendition")
+                if current_generation:
+                    set_active_processed_result(
+                        conn, asset_id=int(asset["id"]), result_id=result["id"]
+                    )
+                    _inject(fault_injector, "after_active_pointer")
                 set_job_done_in_transaction(conn, job_id=job_id)
                 _inject(fault_injector, "after_job")
                 conn.commit()

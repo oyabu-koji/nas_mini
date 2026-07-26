@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.detector_capability import DetectorCapability
 
 
 def configure(monkeypatch, tmp_path, *, with_custom=False):
@@ -30,12 +31,15 @@ def test_capabilities_are_authenticated_and_report_fixed_feature_flags(monkeypat
     assert response.json() == {
         "api_version": "v1",
         "minimum_client_version": None,
+        "formal_preview_schema_version": 1,
         "features": {
             "processed_result_delivery": True,
             "managed_preview_presets": True,
             "custom_lut": True,
             "generated_apple_log_conversion": False,
             "numeric_rendition_progress": False,
+            "detector_certified": False,
+            "formal_apple_log_preview": False,
         },
     }
 
@@ -57,3 +61,27 @@ def test_preset_catalog_requires_auth_and_always_contains_compress_only(monkeypa
     }
     forbidden = {"lut_sha256", "manifest_sha256", "lut_relative_path"}
     assert all(not forbidden.intersection(item) for item in items)
+
+
+def test_capabilities_require_mobile_020_only_when_formal_preview_is_enabled(
+    monkeypatch, tmp_path
+):
+    configure(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "app.api.capabilities.evaluate_detector_capability",
+        lambda _settings: DetectorCapability(
+            mode="phase2b_enabled",
+            detector_certified=True,
+            formal_apple_log_preview=True,
+            blocked_reason=None,
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/capabilities", headers=auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["minimum_client_version"] == "0.2.0"
+    assert body["features"]["generated_apple_log_conversion"] is False
+    assert body["features"]["formal_apple_log_preview"] is True

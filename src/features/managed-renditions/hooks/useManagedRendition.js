@@ -17,12 +17,19 @@ import {
 const TERMINAL_STATES = new Set(['ready', 'failed', 'superseded']);
 
 export function isManagedRenditionEligible(asset) {
+  const hasFormalPreview = Boolean(
+    asset && Object.prototype.hasOwnProperty.call(asset, 'formal_preview'),
+  );
   return Boolean(
     asset
     && asset.type === 'video'
     && asset.verification_status === 'file_verified'
     && asset.preview_status === 'preview_ready'
-    && asset.is_log === false
+    && (
+      hasFormalPreview
+        ? asset.formal_preview?.state === 'ready'
+        : asset.is_log === false
+    )
     && asset.active_processed_result,
   );
 }
@@ -40,6 +47,7 @@ export function useManagedRendition({
   const [submitStatus, setSubmitStatus] = useState('idle');
   const [rendition, setRendition] = useState(null);
   const [error, setError] = useState(null);
+  const [capabilities, setCapabilities] = useState(null);
   const [readyResultConfirmed, setReadyResultConfirmed] = useState(false);
   const mountedRef = useRef(true);
   const operationRef = useRef(0);
@@ -64,15 +72,21 @@ export function useManagedRendition({
     catalogOperationRef.current = operation;
     if (!eligible) {
       setCatalogStatus('idle');
+      setCapabilities(null);
       setPresets([]);
       presetsRef.current = [];
       setSelectedPresetId(null);
       return;
     }
     setCatalogStatus('loading');
+    setCapabilities(null);
     setError(null);
     try {
-      await getManagedCapabilities(settings);
+      const nextCapabilities = await getManagedCapabilities(settings);
+      if (!mountedRef.current || operation !== catalogOperationRef.current) {
+        return;
+      }
+      setCapabilities(nextCapabilities);
       const nextPresets = await listManagedPresets(settings);
       if (!mountedRef.current || operation !== catalogOperationRef.current) {
         return;
@@ -334,6 +348,7 @@ export function useManagedRendition({
   return {
     eligible,
     catalogStatus,
+    capabilities,
     presets,
     selectedPresetId,
     submitStatus,

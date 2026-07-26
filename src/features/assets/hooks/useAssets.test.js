@@ -146,4 +146,29 @@ describe('useAssetDetail', () => {
     await jest.advanceTimersByTimeAsync(4000);
     expect(getAsset).toHaveBeenCalledTimes(2);
   });
+
+  it('polls only while a formal preview is generating', async () => {
+    jest.useFakeTimers();
+    const generating = {
+      id: 42,
+      preview_status: 'preview_ready',
+      formal_preview: { state: 'generating' },
+    };
+    const failed = {
+      id: 42,
+      preview_status: 'failed',
+      formal_preview: { state: 'failed' },
+    };
+    getAsset.mockResolvedValueOnce(generating).mockResolvedValueOnce(failed);
+    const view = await render(<DetailHarness />);
+    await waitFor(() => expect(global.latestAssetDetail.asset).toBe(generating));
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => expect(global.latestAssetDetail.asset).toBe(failed));
+    await jest.advanceTimersByTimeAsync(4000);
+    expect(getAsset).toHaveBeenCalledTimes(2);
+    await view.unmount();
+  });
 });

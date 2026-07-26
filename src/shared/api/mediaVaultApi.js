@@ -7,6 +7,10 @@ import {
 } from '../utils/errors';
 import { File } from 'expo-file-system';
 import { fetch as expoFetch } from 'expo/fetch';
+import {
+  CLIENT_VERSION,
+  CLIENT_VERSION_HEADER,
+} from '../constants/clientVersion';
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 export const UPLOAD_REQUEST_TIMEOUT_MS = 600000;
@@ -15,6 +19,22 @@ export const SESSION_CHUNK_TIMEOUT_MS = 600000;
 
 const RESULT_ID_PATTERN = /^[0-9a-f]{32}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const PRESET_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const FORMAL_FAILURE_CODES = new Set([
+  'log_detector_manifest_invalid',
+  'log_detector_version_mismatch',
+  'log_probe_timeout',
+  'log_probe_failed',
+  'log_probe_output_invalid',
+  'lut_preset_registered_invalid',
+  'lut_preset_source_changed',
+  'lut_application_failed',
+  'formal_preview_source_invalid',
+  'formal_preview_render_failed',
+  'formal_preview_storage_failed',
+  'formal_preview_database_failed',
+  'formal_preview_relation_invalid',
+]);
 
 export function normalizeBaseUrl(input) {
   const trimmed = String(input ?? '').trim();
@@ -40,6 +60,13 @@ export function createAuthHeaders(apiToken) {
   }
   return {
     Authorization: `Bearer ${token}`,
+  };
+}
+
+export function createVersionedAuthHeaders(apiToken) {
+  return {
+    ...createAuthHeaders(apiToken),
+    [CLIENT_VERSION_HEADER]: CLIENT_VERSION,
   };
 }
 
@@ -246,6 +273,7 @@ export async function confirmPreview(settings, assetId) {
       apiToken: settings.apiToken,
       path: `/assets/${assetId}/preview-confirmation`,
       method: 'POST',
+      headers: { [CLIENT_VERSION_HEADER]: CLIENT_VERSION },
     }),
   );
 }
@@ -261,7 +289,7 @@ export function buildPreviewVideoSource({ baseUrl, apiToken, assetId }) {
 export function buildPreviewSource({ baseUrl, apiToken, assetId }) {
   return {
     uri: buildPreviewUrl(baseUrl, assetId),
-    headers: createAuthHeaders(apiToken),
+    headers: createVersionedAuthHeaders(apiToken),
   };
 }
 
@@ -285,7 +313,7 @@ export function buildProcessedResultSource({ baseUrl, apiToken, assetId, result 
   }
   return {
     uri: buildProcessedResultUrl(baseUrl, assetId, safeResult.result_id),
-    headers: createAuthHeaders(apiToken),
+    headers: createVersionedAuthHeaders(apiToken),
   };
 }
 
@@ -327,7 +355,142 @@ export function sanitizeAsset(asset) {
       safeAsset.id,
     );
   }
+  if (Object.prototype.hasOwnProperty.call(safeAsset, 'formal_preview')) {
+    safeAsset.formal_preview = sanitizeFormalPreview(
+      safeAsset.formal_preview,
+      safeAsset.id,
+    );
+  }
   return safeAsset;
+}
+
+export function sanitizeFormalPreview(value, assetId) {
+  if (value == null) {
+    return null;
+  }
+  const invalid = () => {
+    throw createAppError(
+      'formal_preview_invalid',
+      messageForErrorCode('formal_preview_invalid'),
+    );
+  };
+  if (
+    typeof value !== 'object'
+    || value.schema_version !== 1
+    || !['generating', 'ready', 'failed'].includes(value.state)
+    || !Number.isSafeInteger(value.generation)
+    || value.generation < 1
+  ) {
+    return invalid();
+  }
+  const detector = sanitizeDetectorGroup(value);
+  if (detector === false) {
+    return invalid();
+  }
+  if (value.state === 'generating') {
+    const hasPresetSnapshot = value.requested_preset_id != null;
+    if (
+      value.preview_id != null
+      || value.result != null
+      || value.failure_code != null
+      || !nullablePresetId(value.requested_preset_id)
+      || !nullablePresetId(value.applied_preset_id)
+      || (
+        hasPresetSnapshot
+          ? !isReadyTransformClaim(value)
+          : !emptyTransformGroup(value)
+      )
+    ) {
+      return invalid();
+    }
+    return {
+      ...formalBase(value, detector),
+      requested_preset_id: value.requested_preset_id ?? null,
+      applied_preset_id: value.applied_preset_id ?? null,
+      applied_preset_display_name: nullableSafeText(value.applied_preset_display_name, 128),
+      preset_version: nullableSafeText(value.preset_version, 64),
+      manifest_sha256: nullableDigest(value.manifest_sha256),
+      lut_sha256: nullableDigest(value.lut_sha256),
+      transform_kind: value.transform_kind ?? null,
+      color_transform_status: value.color_transform_status ?? null,
+      color_transform_error_code: nullableSafeText(value.color_transform_error_code, 100),
+      preview_id: null,
+      result: null,
+      failure_code: null,
+    };
+  }
+  if (value.state === 'failed') {
+    if (
+      !FORMAL_FAILURE_CODES.has(value.failure_code)
+      || value.preview_id != null
+      || value.result != null
+    || value.applied_preset_id != null
+    || !nullablePresetId(value.requested_preset_id)
+    || (value.transform_kind == null) !== (value.color_transform_status == null)
+    || (value.color_transform_status != null && value.color_transform_status !== 'failed')
+    || !validNullableText(value.color_transform_error_code, 100)
+    ) {
+      return invalid();
+    }
+    return {
+      ...formalBase(value, detector),
+      requested_preset_id: value.requested_preset_id ?? null,
+      applied_preset_id: null,
+      applied_preset_display_name: null,
+      preset_version: null,
+      manifest_sha256: null,
+      lut_sha256: null,
+      transform_kind: value.transform_kind ?? null,
+      color_transform_status: value.color_transform_status ?? null,
+      color_transform_error_code: nullableSafeText(value.color_transform_error_code, 100),
+      preview_id: null,
+      result: null,
+      failure_code: value.failure_code,
+    };
+  }
+
+  const result = sanitizeProcessedResult(value.result, assetId);
+  const previewId = String(value.preview_id ?? '');
+  if (
+    detector == null
+    || !result
+    || !RESULT_ID_PATTERN.test(previewId)
+    || !PRESET_ID_PATTERN.test(String(value.requested_preset_id ?? ''))
+    || !PRESET_ID_PATTERN.test(String(value.applied_preset_id ?? ''))
+    || value.failure_code != null
+  ) {
+    return invalid();
+  }
+  const applied = (
+    value.detection_status === 'apple_log'
+    && value.requested_preset_id === 'generated-apple-log-rec709'
+    && value.applied_preset_id === 'generated-apple-log-rec709'
+    && value.transform_kind === 'lut'
+    && value.color_transform_status === 'applied'
+    && value.color_transform_error_code == null
+    && safeText(value.applied_preset_display_name, 128)
+    && safeText(value.preset_version, 64)
+    && SHA256_PATTERN.test(String(value.manifest_sha256 ?? ''))
+    && SHA256_PATTERN.test(String(value.lut_sha256 ?? ''))
+  );
+  if (!isReadyTransformClaim(value)) {
+    return invalid();
+  }
+  return {
+    ...formalBase(value, detector),
+    requested_preset_id: value.requested_preset_id,
+    applied_preset_id: value.applied_preset_id,
+    applied_preset_display_name: applied ? value.applied_preset_display_name : null,
+    preset_version: applied ? value.preset_version : null,
+    manifest_sha256: applied ? value.manifest_sha256 : null,
+    lut_sha256: applied ? value.lut_sha256 : null,
+    transform_kind: value.transform_kind,
+    color_transform_status: value.color_transform_status,
+    color_transform_error_code: value.color_transform_error_code ?? null,
+    preview_id: previewId,
+    result,
+    failure_code: null,
+  };
 }
 
 export function sanitizeProcessedResult(result, assetId) {
@@ -374,6 +537,131 @@ function normalizeBackendAssetId(assetId) {
     );
   }
   return numericAssetId;
+}
+
+function sanitizeDetectorGroup(value) {
+  const status = value.detection_status;
+  const identity = [
+    value.detector_rule_version,
+    value.detector_manifest_sha256,
+    value.detector_evidence_sha256,
+  ];
+  if (status == null) {
+    return value.source_profile == null && identity.every((item) => item == null)
+      ? null
+      : false;
+  }
+  if (
+    !['apple_log', 'not_log', 'unknown'].includes(status)
+    || !safeText(value.detector_rule_version, 64)
+    || !SHA256_PATTERN.test(String(value.detector_manifest_sha256 ?? ''))
+    || !SHA256_PATTERN.test(String(value.detector_evidence_sha256 ?? ''))
+    || (value.source_profile != null && !safeText(value.source_profile, 128))
+  ) {
+    return false;
+  }
+  return {
+    detection_status: status,
+    source_profile: value.source_profile ?? null,
+    detector_rule_version: value.detector_rule_version,
+    detector_manifest_sha256: value.detector_manifest_sha256,
+    detector_evidence_sha256: value.detector_evidence_sha256,
+  };
+}
+
+function formalBase(value, detector) {
+  return {
+    schema_version: 1,
+    state: value.state,
+    generation: value.generation,
+    detection_status: detector?.detection_status ?? null,
+    source_profile: detector?.source_profile ?? null,
+    detector_rule_version: detector?.detector_rule_version ?? null,
+    detector_manifest_sha256: detector?.detector_manifest_sha256 ?? null,
+    detector_evidence_sha256: detector?.detector_evidence_sha256 ?? null,
+  };
+}
+
+function nullablePresetId(value) {
+  return value == null || PRESET_ID_PATTERN.test(String(value));
+}
+
+function nullableSafeText(value, maximum) {
+  return value == null ? null : safeText(value, maximum) ? value : null;
+}
+
+function nullableDigest(value) {
+  return value == null ? null : SHA256_PATTERN.test(String(value)) ? value : null;
+}
+
+function emptyAppliedIdentity(value) {
+  return (
+    value.applied_preset_display_name == null
+    && value.preset_version == null
+    && value.manifest_sha256 == null
+    && value.lut_sha256 == null
+  );
+}
+
+function emptyTransformGroup(value) {
+  return (
+    value.requested_preset_id == null
+    && value.applied_preset_id == null
+    && value.applied_preset_display_name == null
+    && value.preset_version == null
+    && value.manifest_sha256 == null
+    && value.lut_sha256 == null
+    && value.transform_kind == null
+    && value.color_transform_status == null
+    && value.color_transform_error_code == null
+  );
+}
+
+function isReadyTransformClaim(value) {
+  const fallback = (
+    value.detection_status === 'apple_log'
+    && value.requested_preset_id === 'generated-apple-log-rec709'
+    && value.applied_preset_id === 'compress-only'
+    && value.transform_kind === 'none'
+    && value.color_transform_status === 'unavailable'
+    && value.color_transform_error_code === 'lut_preset_unavailable'
+    && emptyAppliedIdentity(value)
+  );
+  const ordinary = (
+    ['not_log', 'unknown'].includes(value.detection_status)
+    && value.requested_preset_id === 'compress-only'
+    && value.applied_preset_id === 'compress-only'
+    && value.transform_kind === 'none'
+    && value.color_transform_status === 'not_requested'
+    && value.color_transform_error_code == null
+    && emptyAppliedIdentity(value)
+  );
+  const applied = (
+    value.detection_status === 'apple_log'
+    && value.requested_preset_id === 'generated-apple-log-rec709'
+    && value.applied_preset_id === 'generated-apple-log-rec709'
+    && value.transform_kind === 'lut'
+    && value.color_transform_status === 'applied'
+    && value.color_transform_error_code == null
+    && safeText(value.applied_preset_display_name, 128)
+    && safeText(value.preset_version, 64)
+    && SHA256_PATTERN.test(String(value.manifest_sha256 ?? ''))
+    && SHA256_PATTERN.test(String(value.lut_sha256 ?? ''))
+  );
+  return fallback || ordinary || applied;
+}
+
+function validNullableText(value, maximum) {
+  return value == null || safeText(value, maximum);
+}
+
+function safeText(value, maximum) {
+  return (
+    typeof value === 'string'
+    && value.length > 0
+    && value.length <= maximum
+    && !/[\u0000-\u001f\u007f]/.test(value)
+  );
 }
 
 function normalizeResultId(resultId) {

@@ -75,9 +75,11 @@ must remain visible.
   `processed_result` from the same original; it never overwrites historical derived bytes.
 - Persist a rendition's requested preset, applied preset, preset version, LUT SHA-256,
   manifest SHA-256, and transform state with the resulting derived file and immutable
-  `processed_result`. It has its own result ID, size, SHA-256, MIME type, and the
-  applicable preview generation (null during Phase 2A delivery and required after the
-  Phase 2B migration). The active-result pointer changes atomically only after those
+  `processed_result`. It has its own result ID, size, SHA-256, and MIME type.
+  `processed_result.preview_generation` remains null for managed renditions in both
+  Phase 2A and Phase 2B because their ordering authority is
+  `rendition_selection_generation`; only Phase 2B formal-preview results carry a non-null
+  formal preview generation. The active-result pointer changes atomically only after those
   values are committed and must satisfy the delivery feature's `processed_results`
   foreign-key, same-asset, ready-state, and unique-derived-file invariants. Historical
   derived files and results remain audit records until retention removes them.
@@ -254,8 +256,11 @@ must remain visible.
   rendition provenance is internally valid. This extends the candidate-result branch of
   the shared service without weakening its asset-state, legacy LOG, active-pointer, or
   storage checks. It does not set `formal_preview_id`, claim Apple Log detection, confirm
-  review, or provide safe-delete evidence. Phase 2B later requires matching formal
-  preview ID, preview generation, and detection provenance.
+  review, or provide safe-delete evidence. After Phase 2B, kind-aware exact-result delivery
+  continues to validate a managed result by its active pointer, selection generation, and
+  rendition provenance while requiring `preview_generation = null`. Formal preview
+  delivery separately requires a matching formal preview ID, non-null preview generation,
+  and detection provenance.
 - Preview confirmation and safe-delete logic remain bound to their existing formal
   preview contract. This feature does not silently use a test-LUT rendition as evidence
   that an iPhone original may be deleted.
@@ -341,6 +346,8 @@ must remain visible.
   fails the rendition and exposes neither playback nor download for that failed result.
 - Applying a new preset leaves the original and earlier derived rendition bytes intact,
   and records the exact requested/applied preset evidence for the new result.
+- Managed ready/superseded results keep `preview_generation = null` before and after the
+  Phase 2B migration. Only formal-preview results use a non-null preview generation.
 - Identity, test, and custom LUT output is never displayed as Apple Log to Rec.709.
 - Manifest digest verification is reproducible from the schema-version-1 canonical bytes,
   rejects duplicate keys and self-hash ambiguity, and produces the same digest in

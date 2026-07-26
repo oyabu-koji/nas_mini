@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Literal
 
-import rfc8785
+from app.services.canonical_json import CanonicalJsonError, canonical_json_bytes, sha256_hex
 
 
 MANIFEST_MAX_BYTES = 65_536
@@ -167,7 +167,7 @@ def load_manifest_bytes(raw: bytes, *, max_bytes: int = MANIFEST_MAX_BYTES) -> P
 
     _validate_manifest_object(value)
     canonical_bytes = canonicalize_manifest_payload(value)
-    calculated_digest = hashlib.sha256(canonical_bytes).hexdigest()
+    calculated_digest = sha256_hex(canonical_bytes)
     if calculated_digest != value["manifest_sha256"]:
         raise PresetValidationError("manifest digest does not match")
 
@@ -193,15 +193,15 @@ def load_manifest_bytes(raw: bytes, *, max_bytes: int = MANIFEST_MAX_BYTES) -> P
 def canonicalize_manifest_payload(value: dict[str, Any]) -> bytes:
     digest_input = {key: member for key, member in value.items() if key != "manifest_sha256"}
     try:
-        return rfc8785.dumps(digest_input)
-    except (rfc8785.CanonicalizationError, UnicodeError, ValueError, TypeError) as exc:
+        return canonical_json_bytes(digest_input)
+    except CanonicalJsonError as exc:
         raise PresetValidationError("manifest cannot be canonicalized") from exc
 
 
 def manifest_document_with_digest(value: dict[str, Any]) -> bytes:
     """Build deterministic manifest bytes for generated fixtures and tests."""
     without_digest = {key: member for key, member in value.items() if key != "manifest_sha256"}
-    digest = hashlib.sha256(canonicalize_manifest_payload(without_digest)).hexdigest()
+    digest = sha256_hex(canonicalize_manifest_payload(without_digest))
     complete = {**without_digest, "manifest_sha256": digest}
     return (json.dumps(complete, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
