@@ -29,7 +29,7 @@ describe('AssetListScreen result unknown acknowledgement', () => {
         onOpenSettings={jest.fn()}
         onPendingAcknowledged={onPendingAcknowledged}
         onSelectAsset={jest.fn()}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
 
@@ -57,7 +57,7 @@ describe('AssetListScreen result unknown acknowledgement', () => {
         onOpenSettings={jest.fn()}
         onPendingAcknowledged={jest.fn()}
         onSelectAsset={jest.fn()}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
 
@@ -106,7 +106,7 @@ describe('AssetListScreen result unknown acknowledgement', () => {
         onOpenSettings={jest.fn()}
         onPendingAcknowledged={jest.fn()}
         onSelectAsset={onSelectAsset}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
 
@@ -126,7 +126,7 @@ describe('AssetListScreen result unknown acknowledgement', () => {
         onOpenSettings={jest.fn()}
         onPendingAcknowledged={jest.fn()}
         onSelectAsset={jest.fn()}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
 

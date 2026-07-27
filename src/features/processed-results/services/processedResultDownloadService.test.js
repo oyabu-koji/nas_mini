@@ -20,7 +20,7 @@ jest.mock('../../asset-picker/services/streamingSha256Service', () => ({
   hashWholeFile: jest.fn(),
 }));
 
-const settings = { backendUrl: 'http://backend.test', apiToken: 'secret-token' };
+const settings = { backendUrl: 'http://mediavault', apiToken: 'secret-token' };
 const result = {
   result_id: 'a'.repeat(32),
   mime_type: 'video/mp4',
@@ -75,7 +75,7 @@ describe('processedResultDownloadService', () => {
     });
 
     expect(FileSystem.createDownloadResumable).toHaveBeenCalledWith(
-      `http://backend.test/assets/42/results/${result.result_id}`,
+      `http://mediavault/assets/42/results/${result.result_id}`,
       `file:///cache/mediavault-processed-${result.result_id}.mp4`,
       expect.objectContaining({
         headers: {
@@ -103,6 +103,24 @@ describe('processedResultDownloadService', () => {
         result: { ...result, url: 'https://attacker.invalid/file.mp4' },
       }),
     ).rejects.toMatchObject({ code: 'processed_result_invalid_identity' });
+    expect(FileSystem.createDownloadResumable).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid backend URL before token coercion or download adapter creation', async () => {
+    const token = { toString: jest.fn(() => 'secret-token') };
+
+    await expect(
+      downloadProcessedResult({
+        settings: {
+          backendUrl: 'http://results.example.com',
+          apiToken: token,
+        },
+        assetId: 42,
+        result,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_url' });
+
+    expect(token.toString).not.toHaveBeenCalled();
     expect(FileSystem.createDownloadResumable).not.toHaveBeenCalled();
   });
 

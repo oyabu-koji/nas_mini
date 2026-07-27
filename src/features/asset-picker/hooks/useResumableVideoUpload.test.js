@@ -56,7 +56,7 @@ const record = {
 
 function HookHarness({ asset = pickedVideo, onUploaded, onMappingUnavailable }) {
   global.latestResumableHook = useResumableVideoUpload({
-    settings: { backendUrl: 'http://backend.test', apiToken: 'masked' },
+    settings: { backendUrl: 'http://mediavault', apiToken: 'masked' },
     pickedAsset: asset,
     isLog: false,
     canUseApi: true,

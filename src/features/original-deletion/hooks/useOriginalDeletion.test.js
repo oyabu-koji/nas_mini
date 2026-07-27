@@ -23,6 +23,9 @@ const store = require('../services/originalDeletionStore');
 const readyAsset = {
   id: 42,
   filename: 'clip.mov',
+  type: 'video',
+  verification_status: 'file_verified',
+  preview_status: 'preview_ready',
   review_status: 'preview_confirmed',
   formal_preview: { state: 'ready' },
 };

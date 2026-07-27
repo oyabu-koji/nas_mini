@@ -20,7 +20,7 @@ const api = require('../../../shared/api/mediaVaultApi');
 const { useAssetDetail } = require('../../assets/hooks/useAssets');
 const { downloadPreviewToCache } = require('../services/previewCacheService');
 
-const settings = { backendUrl: 'http://backend.test', apiToken: 'token' };
+const settings = { backendUrl: 'http://mediavault', apiToken: 'token' };
 const loadAsset = jest.fn();
 const readyVideo = {
   id: 42,

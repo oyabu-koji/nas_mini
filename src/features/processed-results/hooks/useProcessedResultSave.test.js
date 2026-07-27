@@ -43,7 +43,7 @@ const replacementResult = {
 
 function HookHarness({ activeResult = result, onSuperseded }) {
   global.latestProcessedResultSave = useProcessedResultSave({
-    settings: { backendUrl: 'http://backend.test', apiToken: 'secret-token' },
+    settings: { backendUrl: 'http://mediavault', apiToken: 'secret-token' },
     assetId: 42,
     result: activeResult,
     onSuperseded,

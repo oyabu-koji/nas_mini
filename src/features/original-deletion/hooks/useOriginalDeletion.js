@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 import { getLocalAssetMappingState } from '../../../shared/services/localAssetMappingStore';
 import { toDisplayError } from '../../../shared/utils/errors';
 import { deleteOriginalAsset } from '../services/originalDeletionMediaLibraryService';
+import { isOriginalDeletionEligible } from '../services/originalDeletionEligibility';
 import {
   readOriginalDeletionOutcome,
   writeOriginalDeletionOutcome,
@@ -52,20 +53,17 @@ export function useOriginalDeletion({ asset, capabilities }) {
     };
   }, [assetId]);
 
-  const eligible = useMemo(() => Boolean(
-    capabilities?.features?.formalAppleLogPreview === true
-    && asset?.formal_preview?.state === 'ready'
-    && asset?.review_status === 'preview_confirmed'
-    && mappingState?.status === 'available'
-    && outcome?.status !== 'deleted'
-    && status !== 'loading'
-    && status !== 'deleting',
-  ), [
-    asset?.formal_preview?.state,
-    asset?.review_status,
-    capabilities?.features?.formalAppleLogPreview,
+  const eligible = useMemo(() => isOriginalDeletionEligible({
+    asset,
+    capabilities,
     mappingState,
-    outcome?.status,
+    outcome,
+    status,
+  }), [
+    asset,
+    capabilities,
+    mappingState,
+    outcome,
     status,
   ]);
 

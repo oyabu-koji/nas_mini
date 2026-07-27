@@ -14,14 +14,21 @@ describe('settingsStorage', () => {
     expect(AsyncStorage.getItem).toHaveBeenCalledWith('mediavault.backendUrl');
   });
 
-  it('trims and persists the backend URL', async () => {
+  it('normalizes and persists an accepted backend URL', async () => {
     AsyncStorage.setItem.mockResolvedValue();
 
-    await expect(saveBackendUrl('  http://100.64.0.1:8000/  ')).resolves.toBe('http://100.64.0.1:8000/');
+    await expect(saveBackendUrl('  http://100.64.0.1:8000/  ')).resolves.toBe('http://100.64.0.1:8000');
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       'mediavault.backendUrl',
-      'http://100.64.0.1:8000/',
+      'http://100.64.0.1:8000',
     );
+  });
+
+  it('rejects an invalid URL without writing AsyncStorage', async () => {
+    await expect(saveBackendUrl('http://public.example.com')).rejects.toMatchObject({
+      code: 'invalid_url',
+    });
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 
   it('propagates AsyncStorage read and write failures', async () => {
@@ -29,6 +36,6 @@ describe('settingsStorage', () => {
     AsyncStorage.setItem.mockRejectedValueOnce(new Error('write unavailable'));
 
     await expect(getBackendUrl()).rejects.toThrow('read unavailable');
-    await expect(saveBackendUrl('http://backend.test')).rejects.toThrow('write unavailable');
+    await expect(saveBackendUrl('http://mediavault')).rejects.toThrow('write unavailable');
   });
 });

@@ -78,7 +78,7 @@ describe('AssetDetailScreen LOG safety gate', () => {
         canUseApi
         onBack={jest.fn()}
         onPreview={onPreview}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
 
@@ -105,7 +105,7 @@ describe('AssetDetailScreen LOG safety gate', () => {
         canUseApi
         onBack={onBack}
         onPreview={jest.fn()}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
     expect(loadingView.getByText('Loading asset...')).toBeTruthy();
@@ -125,7 +125,7 @@ describe('AssetDetailScreen LOG safety gate', () => {
         canUseApi
         onBack={jest.fn()}
         onPreview={jest.fn()}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
     expect(errorView.getByText('Asset unavailable')).toBeTruthy();
@@ -159,7 +159,7 @@ describe('AssetDetailScreen LOG safety gate', () => {
         mappingUnavailable
         onBack={jest.fn()}
         onPreview={jest.fn()}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
 
@@ -209,7 +209,7 @@ describe('AssetDetailScreen LOG safety gate', () => {
         canUseApi
         onBack={jest.fn()}
         onPreview={jest.fn()}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
 
@@ -270,7 +270,7 @@ describe('AssetDetailScreen LOG safety gate', () => {
         canUseApi
         onBack={jest.fn()}
         onPreview={onPreview}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
 
@@ -339,7 +339,7 @@ describe('AssetDetailScreen LOG safety gate', () => {
         canUseApi
         onBack={jest.fn()}
         onPreview={jest.fn()}
-        settings={{ backendUrl: 'http://backend.test', apiToken: 'masked' }}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
       />,
     );
 

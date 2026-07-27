@@ -43,7 +43,7 @@ export function classifyHttpStatus(status) {
 export function messageForErrorCode(code) {
   const messages = {
     missing_settings: 'Backend URL and API token are required.',
-    invalid_url: 'Enter a valid http:// backend URL.',
+    invalid_url: 'Use a private HTTP backend or a valid HTTPS backend.',
     unauthorized: 'API token is missing or invalid.',
     forbidden: 'This API token cannot access the backend.',
     not_found: 'The requested asset or preview was not found.',

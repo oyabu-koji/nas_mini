@@ -60,17 +60,23 @@
 - metadata欠落をエラーにせずnullableとして扱う。
 - `taken_at` は秒精度の ISO 8601 datetime に正規化する。正規化不能なEXIF日時やoffset単体はnullとして送信し、文字列`null`を送らない。
 - Phase 1では`104857600 bytes`超過をupload開始前に案内する。
-- サーバー名とBackend URLは通常設定保存領域、固定APIトークンはサーバーIDごとの`expo-secure-store`へ保存する。初期リリースでQRコードからtokenをimportしない。
-- Backend URLはLANまたはTailscale private network上のHTTP endpointを許容する。
+- 初期リリースは1つのBackend URLを通常設定保存領域、1つの固定APIトークンを
+  既存の`expo-secure-store` keyへ保存する。server name/ID、複数profile、QR importは追加しない。
+- shared endpoint policyをSettings保存と全通信境界で使い、private HTTP又は有効なHTTPS originだけを許容する。
+- rejected URLではtokenを文字列化せず、Authorization headerとnetwork adapterを構築しない。
 - Tailscale IPまたはMagicDNS名を使う場合も、固定APIトークン認証を必須にする。
 - `127.0.0.1`はiPhone自身を指すため、iPhone実機からMBA/Mac mini backendへ接続するURLとして使わない。
 - 公開インターネット上のHTTP endpointをPhase 1の接続先にしない。
 - App Review用の公開接続先は、自宅Mac miniとデータを分離したHTTPS backendだけを使う。
 - iPhone側original削除は自動実行しない。
-- iPhone側original削除操作は、`preview_status = preview_ready`かつ`review_status = preview_confirmed`のassetにだけ表示する。
+- iPhone側original削除の共通条件は`preview_ready`、`preview_confirmed`、
+  local mapping available、未削除、非busyとする。
 - 削除前に対象asset、filename、撮影日時などを表示し、ユーザーの明示確認を必須にする。
 - iPhone側original削除は`expo-media-library` service経由で実行し、screenから端末APIを直接呼ばない。
-- iPhone側original削除はsanitized Phase 2B capabilityとclient compatibilityも条件に含める。native削除成功をlocal outcome保存より先にterminal確定し、AsyncStorage失敗を削除失敗へ戻して再削除actionを出さない。
+- Phase 1 direct assetは`server_hash_recorded`だけをorigin authorityとしformal capabilityを要求しない。
+  Phase 2 session videoだけ`video + file_verified`、sanitized compatible capability、
+  ready formal previewを追加要求する。
+- eligibilityはpure serviceへ置き、native削除成功をlocal outcome保存より先にterminal確定する。
 - Backend側originalやderived fileをMobileの削除操作で削除しない。
 
 ## Backend実装ルール
@@ -97,7 +103,10 @@
 - detector certificationのexternal recordingはno-follow descriptorから初期sizeを上限にowner-only temporary snapshotへcopyし、copy中のidentity不変とexpected SHA-256を検証する。Dockerへはsnapshotだけをread-only mountし、manifest digest確定後にexternal pathを再openしない。
 - `file_verified`動画の`preview_ready`、stream、confirmationは`formal_preview_id`とそのprovenanceを検証する。Phase 1 direct image/videoはこのPhase 2B triggerの対象外とする。
 - 外部SSD未接続、容量不足、I/O失敗を明示的に扱う。
-- `/assets/upload`, `/upload-sessions`, `/upload-sessions/{session_id}`, `/upload-sessions/{session_id}/chunks/{chunk_index}`, `/upload-sessions/{session_id}/finalize`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/results/{result_id}`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`、`/api/v1/capabilities`、`/api/v1/presets`、`/api/v1/assets/{asset_id}/renditions`配下は固定APIトークンを要求する。
+- `/assets/upload`, `/upload-sessions`配下、`/assets`,
+  `/assets/{asset_id}`配下、`/api/v1/capabilities`、`/api/v1/presets`、
+  `/api/v1/assets/{asset_id}/renditions`配下は固定APIトークンを要求する。
+- jobs repository/worker/leaseは内部modelとして維持し、public `/jobs`又は専用Upload Queueを追加しない。
 - API要求は`Authorization: Bearer <token>`形式とする。
 - Tailscaleは通信経路であり、backend認証の代替にはしない。
 
@@ -137,7 +146,9 @@
 - unit test: upload timeout後の結果不明状態と再送抑止、EXIF `taken_at` 正規化、local mapping失敗後のupload成功状態。
 - unit test: `result_unknown`の再起動後の復元、一覧確認済みの明示操作による解除、local asset idなしのglobal pending marker。
 - component/実機 test: 未登録または無効化済みLUTのApple Log assetで、未変換表示付き`preview_ready`、再生、confirmation、削除導線を確認する。登録済みだが不正なLUTの`failed` assetには同導線を出さない。mapping未取得時に削除導線を出さないことも確認する。
-- component test: Settings、Asset Picker、Upload Queue、Preview Review。
+- component test: Settings、Asset Picker、Asset Detail、Preview Review。
+- unit test: endpoint accept/reject matrix、rejected URLのheader/network 0 call、
+  Phase 1/2 original deletion eligibility。
 - unit/component test: iPhone側original削除導線がpreview確認後だけ表示されること。
 - unit/component test: canonical processed-result URL以外へtokenを送らないこと、header/size/digest mismatchで写真ライブラリへ保存しないこと、unknown write-ahead/save cleanup順序、source-original mappingとの非参照を確認する。
 - unit/component test: malformed/unknown catalog、secure request ID、write-before-POST、same-ID retry、restart polling、A/B response guard、全rendition phase、fallback/terminal error、ineligible/legacy LOG非表示を確認する。
@@ -191,6 +202,17 @@ Backend test commandの標準形:
 cd backend
 uv run pytest
 ```
+
+release contractの追加固定command:
+
+```bash
+node scripts/verify-ios-native-config.mjs
+env API_TOKEN=test-token docker compose --profile image-codec-validation \
+  run --build --rm --no-deps -T image-codec-validator
+```
+
+Docker codec validatorはrepository-owned fixtureだけをread-only mountし、runtime networkを
+無効化する。`--build`は未cache layer取得にnetworkを必要とし得る。
 
 ### Backend ローカル疎通確認
 

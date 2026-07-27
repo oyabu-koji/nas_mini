@@ -8,15 +8,7 @@ jest.mock('expo-file-system/legacy', () => ({
   FileSystemSessionType: { FOREGROUND: 'FOREGROUND' },
   downloadAsync: jest.fn(),
 }));
-jest.mock('../../../shared/api/mediaVaultApi', () => ({
-  buildPreviewUrl: jest.fn((baseUrl, assetId) => `${baseUrl}/assets/${assetId}/preview`),
-  createVersionedAuthHeaders: jest.fn((apiToken) => ({
-    Authorization: `Bearer ${apiToken}`,
-    'X-MediaVault-Client-Version': '0.2.0',
-  })),
-}));
-
-const settings = { backendUrl: 'http://backend.test', apiToken: 'secret-token' };
+const settings = { backendUrl: 'http://mediavault', apiToken: 'secret-token' };
 
 describe('previewCacheService', () => {
   beforeEach(() => {
@@ -33,7 +25,7 @@ describe('previewCacheService', () => {
       downloadPreviewToCache({ settings, assetId: 42, extension: '.m-p4!' }),
     ).resolves.toBe('file:///cache/saved.mp4');
     expect(FileSystem.downloadAsync).toHaveBeenCalledWith(
-      'http://backend.test/assets/42/preview',
+      'http://mediavault/assets/42/preview',
       'file:///cache/mediavault-preview-42.mp4',
       {
         headers: {
@@ -79,5 +71,27 @@ describe('previewCacheService', () => {
     await expect(downloadPreviewToCache({ settings, assetId: 42 })).rejects.toMatchObject({
       code: 'missing_settings',
     });
+  });
+
+  it('rejects an invalid URL before token coercion or a cache download', async () => {
+    const token = {
+      toString: jest.fn(() => 'must-not-be-read'),
+    };
+
+    await expect(
+      downloadPreviewToCache({
+        settings: {
+          backendUrl: 'http://public.example.com/private-path?token=leak',
+          apiToken: token,
+        },
+        assetId: 42,
+      }),
+    ).rejects.toMatchObject({
+      code: 'invalid_url',
+      message: 'Use a private HTTP backend or a valid HTTPS backend.',
+    });
+
+    expect(token.toString).not.toHaveBeenCalled();
+    expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
   });
 });

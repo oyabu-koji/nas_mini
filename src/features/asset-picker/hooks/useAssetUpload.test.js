@@ -44,7 +44,7 @@ const pickedAsset = {
 
 function UploadHarness({ onMappingUnavailable, onUploaded }) {
   const upload = useAssetUpload({
-    settings: { backendUrl: 'http://backend.test', apiToken: 'masked' },
+    settings: { backendUrl: 'http://mediavault', apiToken: 'masked' },
     canUseApi: true,
     onMappingUnavailable,
     onUploaded,

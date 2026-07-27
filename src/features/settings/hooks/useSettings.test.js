@@ -88,8 +88,8 @@ describe('useSettings', () => {
       await global.latestSettingsState.saveSettings();
     });
 
-    expect(backendStorage.saveBackendUrl).toHaveBeenLastCalledWith('  http://100.64.0.2:8000  ');
-    expect(tokenStorage.saveApiToken).toHaveBeenCalledWith('  replacement-token  ');
+    expect(backendStorage.saveBackendUrl).toHaveBeenLastCalledWith('http://100.64.0.2:8000');
+    expect(tokenStorage.saveApiToken).toHaveBeenCalledWith('replacement-token');
     expect(global.latestSettingsState.settings).toEqual({
       backendUrl: 'http://100.64.0.2:8000',
       apiToken: 'replacement-token',
@@ -98,7 +98,7 @@ describe('useSettings', () => {
     expect(global.latestSettingsState.message).toBe('Settings saved.');
   });
 
-  it('keeps the saved token when the replacement input is blank and rejects missing settings', async () => {
+  it('keeps the saved token when the replacement input is blank', async () => {
     await render(<HookHarness />);
     await waitFor(() => expect(global.latestSettingsState.status).toBe('idle'));
 
@@ -106,19 +106,110 @@ describe('useSettings', () => {
       await global.latestSettingsState.saveSettings();
     });
     expect(tokenStorage.saveApiToken).not.toHaveBeenCalled();
+    expect(global.latestSettingsState.settings.apiToken).toBe('saved-token');
+  });
 
-    backendStorage.saveBackendUrl.mockResolvedValueOnce('');
+  it('rejects an invalid URL before either storage write', async () => {
+    await render(<HookHarness />);
+    await waitFor(() => expect(global.latestSettingsState.status).toBe('idle'));
+
     await act(async () => {
-      global.latestSettingsState.setBackendUrl('');
+      global.latestSettingsState.setBackendUrl('http://public.example.com/private');
+      global.latestSettingsState.setApiTokenInput('replacement-token');
     });
     await act(async () => {
       await global.latestSettingsState.saveSettings();
     });
+    expect(backendStorage.saveBackendUrl).not.toHaveBeenCalled();
+    expect(tokenStorage.saveApiToken).not.toHaveBeenCalled();
     expect(global.latestSettingsState.status).toBe('error');
+    expect(global.latestSettingsState.message).toBe(
+      'Use a private HTTP backend or a valid HTTPS backend.',
+    );
+  });
+
+  it('rejects a missing selected token before either storage write', async () => {
+    backendStorage.getBackendUrl.mockResolvedValue('http://mediavault');
+    tokenStorage.getApiToken.mockResolvedValue('');
+    await render(<HookHarness />);
+    await waitFor(() => expect(global.latestSettingsState.status).toBe('idle'));
+
+    await act(async () => {
+      await global.latestSettingsState.saveSettings();
+    });
+    expect(backendStorage.saveBackendUrl).not.toHaveBeenCalled();
+    expect(tokenStorage.saveApiToken).not.toHaveBeenCalled();
     expect(global.latestSettingsState.message).toBe('Backend URL and API token are required.');
   });
 
-  it('reports storage load failures and health success or failure without leaking adapter errors', async () => {
+  it('treats a whitespace-only stored token as missing before either storage write', async () => {
+    backendStorage.getBackendUrl.mockResolvedValue('http://mediavault');
+    tokenStorage.getApiToken.mockResolvedValue('   ');
+    await render(<HookHarness />);
+    await waitFor(() => expect(global.latestSettingsState.status).toBe('idle'));
+
+    expect(global.latestSettingsState.settings.apiToken).toBe('');
+    expect(global.latestSettingsState.hasSavedToken).toBe(false);
+    expect(global.latestSettingsState.canUseApi).toBe(false);
+
+    await act(async () => {
+      await global.latestSettingsState.saveSettings();
+    });
+
+    expect(backendStorage.saveBackendUrl).not.toHaveBeenCalled();
+    expect(tokenStorage.saveApiToken).not.toHaveBeenCalled();
+    expect(global.latestSettingsState.message).toBe('Backend URL and API token are required.');
+  });
+
+  it('normalizes a trailing root slash before persistence', async () => {
+    await render(<HookHarness />);
+    await waitFor(() => expect(global.latestSettingsState.status).toBe('idle'));
+
+    await act(async () => {
+      global.latestSettingsState.setBackendUrl('http://mediavault/');
+    });
+    await act(async () => {
+      await global.latestSettingsState.saveSettings();
+    });
+
+    expect(backendStorage.saveBackendUrl).toHaveBeenCalledWith('http://mediavault');
+    expect(global.latestSettingsState.settings.backendUrl).toBe('http://mediavault');
+  });
+
+  it('keeps an invalid legacy URL visible but disables API use and connection checks', async () => {
+    backendStorage.getBackendUrl.mockResolvedValue('http://public.example.com');
+    await render(<HookHarness />);
+    await waitFor(() => expect(global.latestSettingsState.status).toBe('idle'));
+
+    expect(global.latestSettingsState.settings.backendUrl).toBe('http://public.example.com');
+    expect(global.latestSettingsState.canUseApi).toBe(false);
+    await act(async () => {
+      await global.latestSettingsState.runConnectionCheck();
+    });
+    expect(checkHealth).not.toHaveBeenCalled();
+    expect(global.latestSettingsState.message).toBe(
+      'Use a private HTTP backend or a valid HTTPS backend.',
+    );
+  });
+
+  it('reports URL storage failure without attempting token replacement', async () => {
+    backendStorage.saveBackendUrl.mockRejectedValueOnce(new Error('private write failure'));
+    await render(<HookHarness />);
+    await waitFor(() => expect(global.latestSettingsState.status).toBe('idle'));
+
+    await act(async () => {
+      global.latestSettingsState.setApiTokenInput('replacement-token');
+    });
+    await act(async () => {
+      await global.latestSettingsState.saveSettings();
+    });
+
+    expect(tokenStorage.saveApiToken).not.toHaveBeenCalled();
+    expect(global.latestSettingsState.status).toBe('error');
+    expect(global.latestSettingsState.message).toBe('Something went wrong.');
+  });
+
+  it('reports storage load failures and refuses a health request without valid settings', async () => {
     backendStorage.getBackendUrl.mockRejectedValueOnce(new Error('private storage detail'));
     await render(<HookHarness />);
     await waitFor(() => expect(global.latestSettingsState.status).toBe('error'));
@@ -127,7 +218,23 @@ describe('useSettings', () => {
     await act(async () => {
       await global.latestSettingsState.runConnectionCheck();
     });
-    expect(checkHealth).toHaveBeenCalledWith({ backendUrl: '', apiToken: '' });
+    expect(checkHealth).not.toHaveBeenCalled();
+    expect(global.latestSettingsState.message).toBe(
+      'Use a private HTTP backend or a valid HTTPS backend.',
+    );
+  });
+
+  it('reports health success or failure without leaking adapter errors', async () => {
+    await render(<HookHarness />);
+    await waitFor(() => expect(global.latestSettingsState.status).toBe('idle'));
+
+    await act(async () => {
+      await global.latestSettingsState.runConnectionCheck();
+    });
+    expect(checkHealth).toHaveBeenCalledWith({
+      backendUrl: 'http://100.64.0.1:8000',
+      apiToken: 'saved-token',
+    });
     expect(global.latestSettingsState.message).toBe('Backend is reachable.');
 
     checkHealth.mockRejectedValueOnce(createAppError('network_unreachable', 'Backend unavailable'));

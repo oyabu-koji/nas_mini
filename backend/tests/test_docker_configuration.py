@@ -29,6 +29,29 @@ def test_detector_certifier_is_profiled_read_only_and_offline():
     assert "volumes:" not in certifier
 
 
+def test_image_codec_validator_uses_production_image_and_is_isolated():
+    compose = (REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    service = compose.split("  image-codec-validator:", maxsplit=1)[1].split(
+        "\n  detector-certifier:", maxsplit=1
+    )[0]
+
+    assert "image-codec-validation" in service
+    assert "context: ./backend" in service
+    assert "scripts/validate_image_codecs.py" in service
+    assert "/fixtures/valid/manifest.json" in service
+    assert "UV_CACHE_DIR: /tmp/uv-cache" in service
+    assert "read_only: true" in service
+    assert "network_mode: none" in service
+    assert "no-new-privileges:true" in service
+    assert "/tmp:rw,noexec,nosuid,nodev,size=32m" in service
+    assert "./backend/tests/fixtures/image-codecs:/fixtures:ro" in service
+    assert "MEDIA_ROOT" not in service
+    assert "DATABASE_PATH" not in service
+    assert "LUT_PATH" not in service
+    assert "/media_root" not in service
+    assert "/user_luts" not in service
+
+
 def test_phase2b_migrator_is_one_shot_offline_with_only_database_volume():
     compose = (REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     migrator = compose.split("  phase2b-migrator:", maxsplit=1)[1].split(

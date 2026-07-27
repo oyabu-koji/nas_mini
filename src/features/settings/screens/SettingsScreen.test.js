@@ -55,16 +55,19 @@ describe('SettingsScreen', () => {
     expect(state.runConnectionCheck).not.toHaveBeenCalled();
   });
 
-  it('warns for localhost and public HTTP but accepts private or HTTPS endpoints', async () => {
-    const view = await render(<SettingsScreen settingsState={settingsState({ backendUrl: 'http://localhost:8000' })} />);
-    expect(screen.getByText(/localhost point to the iPhone itself/)).toBeTruthy();
+  it('shows accepted endpoint guidance without implying public HTTP is savable', async () => {
+    await render(
+      <SettingsScreen
+        settingsState={settingsState({ backendUrl: 'http://public.example.com' })}
+      />,
+    );
 
-    await view.rerender(<SettingsScreen settingsState={settingsState({ backendUrl: 'http://example.com' })} />);
-    expect(screen.getByText('Use HTTP only for LAN or Tailscale private endpoints.')).toBeTruthy();
-
-    for (const backendUrl of ['http://10.0.0.1', 'http://192.168.1.2', 'http://172.31.0.1', 'http://host.ts.net', 'https://example.com']) {
-      await view.rerender(<SettingsScreen settingsState={settingsState({ backendUrl })} />);
-      expect(screen.queryByText(/Use HTTP only|point to the iPhone/)).toBeNull();
-    }
+    expect(
+      screen.getByText(
+        'Private HTTP: Tailscale IPv4, single-label MagicDNS, or .local. HTTPS is also supported.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Use HTTP only|point to the iPhone/)).toBeNull();
+    expect(screen.getByDisplayValue('http://public.example.com')).toBeTruthy();
   });
 });

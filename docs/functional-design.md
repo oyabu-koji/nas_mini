@@ -41,19 +41,20 @@ graph LR
 | 画面 | 責務 | Phase 1主要操作 |
 |------|------|----------------|
 | Asset Picker | 写真・動画選択、メタデータ確認、LOG指定 | 選択、LOG toggle、upload開始 |
-| Upload Queue | 進捗と失敗状態の確認 | 進捗確認、失敗時再試行 |
 | Asset Detail | 素材と処理状態の確認 | SHA256、各status、要求・適用プリセット、未変換表示、preview導線確認 |
 | Preview Review | preview再生、内容確認、iPhone側original削除導線 | 再生、色変換状態確認、確認済みにする、手動削除 |
-| Settings | backend接続情報設定 | サーバー名、Backend URL、固定APIトークン保存 |
+| Settings | backend接続情報設定 | 1つのBackend URLと固定APIトークンを保存 |
 
 ## Phase 1 ユースケース
 
 ### UC-01: 接続設定
 
-1. ユーザーがSettingsでサーバー名、Backend URL、固定APIトークンを手入力する。初期リリースにQRコードによる設定インポートは含めない。
-2. 自宅用Backend URLは`http://<tailscale-ip>:8000`または`http://<magicdns-name>:8000`のようなprivate endpointを許容する。将来のApp Review用接続先は独立したHTTPS endpointだけを許容する。
-3. アプリはサーバー名とBackend URLを通常の設定保存領域、固定APIトークンをサーバーIDごとの`expo-secure-store`へ保存する。
-4. API要求では選択中サーバーの`Authorization`ヘッダーを付ける。
+1. ユーザーがSettingsで1つのBackend URLと固定APIトークンを手入力する。初期リリースにserver name/ID、複数profile、QR importは含めない。
+2. HTTPはRFC1918、Tailscale IPv4、single-label MagicDNS、`.local`だけを許容し、
+   有効なHTTPS originも許容する。public HTTPやqualified `.ts.net` HTTPは拒否する。
+3. URLとselected tokenを両方検証してから、URLを通常設定保存領域、
+   tokenを既存の`expo-secure-store` keyへ保存する。空のreplacement tokenでは保存済みtokenを維持する。
+4. 保存時と各通信境界で同じURL policyを再評価し、拒否時はAuthorization headerを構築せずnetwork adapterを呼ばない。
 5. Tailscaleは到達経路であり、固定APIトークン認証は省略しない。
 
 ### UC-02: 素材upload
@@ -91,11 +92,17 @@ graph LR
 ### UC-05: preview確認後のiPhone側original手動削除
 
 1. アプリはasset詳細とpreview状態を取得する。
-2. `preview_status = preview_ready`かつ`review_status = preview_confirmed`の場合だけ削除操作を表示する。
-3. アプリは対象asset、filename、撮影日時などを表示し、ユーザーの明示確認を求める。
-4. アプリはupload時に保持したiPhone写真ライブラリのlocal asset identifierを使い、`expo-media-library` service経由で削除を要求する。
-5. iOS側確認、権限拒否、ユーザーキャンセル、local asset不在をそれぞれ扱う。
-6. 成功時はMobile側のlocal状態を`deleted`にする。Backend側original、derived file、asset statusは削除しない。
+2. 共通条件として`preview_status = preview_ready`、
+   `review_status = preview_confirmed`、local mapping available、未削除、非busyを要求する。
+3. Phase 1 direct assetは`verification_status = server_hash_recorded`を追加条件とし、
+   formal capabilityを要求しない。Phase 2 session videoは`type = video`かつ
+   `verification_status = file_verified`に加え、compatible capabilityと
+   `formal_preview.state = ready`を要求する。
+4. アプリは対象asset、filename、撮影日時などを表示し、ユーザーの明示確認を求める。
+5. アプリはupload時に保持したiPhone写真ライブラリのlocal asset identifierを使い、`expo-media-library` service経由で削除を要求する。
+6. iOS側確認、権限拒否、ユーザーキャンセル、local asset不在をそれぞれ扱う。
+7. native成功直後にMobile memoryをterminal `deleted`へ遷移する。Backend側original、
+   derived file、asset statusは削除しない。
 
 ## API設計
 
@@ -109,12 +116,13 @@ graph LR
 | `GET` | `/assets/{asset_id}/preview` | preview取得 |
 | `GET` | `/assets/{asset_id}/results/{result_id}` | active processed videoの取得 |
 | `POST` | `/assets/{asset_id}/preview-confirmation` | preview確認済み更新 |
-| `GET` | `/jobs` | job一覧取得 |
-| `GET` | `/jobs/{job_id}` | job詳細取得 |
 | `GET` | `/api/v1/capabilities` | versioned feature capability取得 |
 | `GET` | `/api/v1/presets` | selectable managed preset取得 |
 | `POST` | `/api/v1/assets/{asset_id}/renditions` | managed rendition作成 |
 | `GET` | `/api/v1/assets/{asset_id}/renditions/{rendition_id}` | managed rendition進捗取得 |
+
+Backendのjobs table、claim/lease/statusは内部実行modelとして維持するが、
+`GET /jobs`、job detail API、専用Upload Queue画面は初期リリースで公開しない。
 
 ### Phase 2A processed result API契約
 
@@ -295,6 +303,7 @@ stateDiagram-v2
 | 条件 | backend | mobile |
 |------|---------|--------|
 | Token不正 | `401`または`403` | Settings確認を促す |
+| Backend URL拒否 | network callなし | private HTTPまたはHTTPS endpointを入力する |
 | Backend URL到達不可 | なし | Tailscale接続、URL、backend起動状態を確認する |
 | `104857600 bytes`超過 | `413` | Phase 2対象と表示する |
 | 外部SSD未接続 | 保存開始前に失敗 | retry可能として表示する |
@@ -354,7 +363,8 @@ stateDiagram-v2
 - Tokenなし要求を拒否する。
 - metadata欠落を許容する。
 - Apple Logを自動判定し、利用可能なRec.709 presetでは変換済みpreviewを生成する。未登録または無効化済みpresetでは、未変換表示付き`compress-only` previewを生成する。
-- identity LUTで生成済みのLOG previewはRec.709変換済みとして扱わず、要求・適用presetと色変換状態がないpreviewは確認・削除導線に使えない。
+- Phase 2 session由来の`file_verified` LOG videoでは、identity LUTで生成済みのpreviewを
+  Rec.709変換済みとして扱わず、要求・適用presetと色変換状態がないpreviewは確認・削除導線に使えない。
 - upload timeout後に同一素材を自動または即時に再送しない。
 - `result_unknown`はlocal asset idまたはglobal pending markerで再起動後も復元し、一覧確認済みの明示操作までuploadを再開しない。
 - 未登録LUTのApple Log assetが`preview_ready`、`color_transform_status = unavailable`、未変換表示となり、preview再生、confirmation、削除導線を表示できることを実機またはcomponent testで確認する。登録済みだが不正なLUTは`failed`となり、同導線を表示しないことも確認する。
@@ -371,5 +381,11 @@ stateDiagram-v2
 - formal resultだけがnon-null `preview_generation`を持ち、migration前後と新規作成後のmanaged ready/superseded resultがnullを維持することを確認する。
 - preview確認が`review_status`だけを更新する。
 - iPhone側original削除操作がpreview確認後にだけ表示される。
+- Phase 1 direct assetはformal capabilityなしで削除eligibleとなり、Phase 2 session videoは
+  compatible capabilityとready formal previewがない限りineligibleになる。
+- rejected Backend URLでAuthorization header、fetch、preview cache、processed-result
+  download adapterが呼ばれない。
+- pinned Docker imageでrepository-owned HEIC/JPEG/PNGをJPEGへ実decodeし、
+  controlled invalid HEICをnon-zeroで拒否する。
 - 削除権限拒否、ユーザーキャンセル、local asset不在でBackend側statusが変わらない。
 - iCloud-only素材、ライブラリ権限拒否、metadata欠落、Tailscale経由のBackend URL到達をDevelopment Build実機で確認する。

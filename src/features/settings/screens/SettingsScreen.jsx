@@ -17,8 +17,6 @@ export function SettingsScreen({ settingsState }) {
   } = settingsState;
 
   const isBusy = status === 'saving' || status === 'checking' || status === 'loading';
-  const urlWarning = getBackendUrlWarning(backendUrl);
-
   return (
     <View style={styles.container}>
       <ScreenHeader
@@ -37,7 +35,9 @@ export function SettingsScreen({ settingsState }) {
           style={styles.input}
           value={backendUrl}
         />
-        {urlWarning ? <Text style={styles.warning}>{urlWarning}</Text> : null}
+        <Text style={styles.hint}>
+          Private HTTP: Tailscale IPv4, single-label MagicDNS, or .local. HTTPS is also supported.
+        </Text>
       </View>
 
       <View style={styles.field}>
@@ -105,33 +105,4 @@ const styles = StyleSheet.create({
   error: {
     color: '#b91c1c',
   },
-  warning: {
-    color: '#b45309',
-    fontSize: 12,
-    lineHeight: 18,
-  },
 });
-
-function getBackendUrlWarning(backendUrl) {
-  const normalized = String(backendUrl ?? '').trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  if (normalized.startsWith('http://127.0.0.1') || normalized.startsWith('http://localhost')) {
-    return '127.0.0.1 and localhost point to the iPhone itself. Use the MBA or Mac mini Tailscale IP.';
-  }
-  if (normalized.startsWith('http://') && !looksLikePrivateHttpEndpoint(normalized)) {
-    return 'Use HTTP only for LAN or Tailscale private endpoints.';
-  }
-  return null;
-}
-
-function looksLikePrivateHttpEndpoint(value) {
-  return (
-    value.startsWith('http://100.') ||
-    value.startsWith('http://10.') ||
-    value.startsWith('http://192.168.') ||
-    /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\./.test(value) ||
-    value.includes('.ts.net')
-  );
-}

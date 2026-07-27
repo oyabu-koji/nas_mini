@@ -53,9 +53,11 @@
 - 写真previewはJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映で生成する。
 - iPhoneアプリでpreviewを再生し、`review_status = preview_confirmed` に更新する。
 - preview確認後、ユーザー明示操作によるiPhone側original削除導線を提供する。
-- Backend URLと固定APIトークンをSettingsから設定する。
-- Phase 1のBackend URLは、LANまたはTailscaleで到達可能なprivate endpointとする。
-- Tailscale利用時のBackend URLは`http://<tailscale-ip>:8000`または`http://<magicdns-name>:8000`を想定する。
+- 初期リリースは1つのBackend URLと1つの固定APIトークンだけをSettingsから設定する。
+- HTTPはRFC1918、Tailscale IPv4、single-label MagicDNS、`.local`のprivate endpointだけを
+  許可し、有効なHTTPS originも許可する。public HTTP、`localhost`、qualified `.ts.net`
+  HTTP、credential/query/fragment/non-root pathは保存時と全通信境界で拒否する。
+- URLは通常設定領域、トークンは既存の`expo-secure-store` keyへ保存する。
 
 ### Phase 1対象外
 
@@ -170,6 +172,11 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - 削除操作はiPhone側originalだけを対象とし、Backend側originalやderived fileは削除しない。
 - 権限拒否、ユーザーキャンセル、local asset不在の場合は失敗または未実行として表示し、Backend側statusを壊さない。
 - Phase 1の手動削除は`safe_to_delete_candidate`を必須条件にしない。Phase 2以降の削除候補判定は、より強いhash verification条件として扱う。
+- Phase 1 direct assetは`verification_status = server_hash_recorded`を根拠とし、
+  formal preview capabilityを要求しない。
+- Phase 2 session由来videoは`type = video`かつ`verification_status = file_verified`を
+  根拠とし、compatibleなformal Apple Log preview capabilityと
+  `formal_preview.state = ready`を追加で要求する。
 
 ### P0: Private endpointアクセス制御
 
@@ -179,11 +186,13 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 
 - Backend URLを手入力できる。
 - 固定APIトークンを設定できる。
-- 初期リリースではURLとトークンを手入力し、URL・名称は通常設定保存、トークンは`expo-secure-store`へ分離保存する。
-- 接続先は固定値にせず、将来の複数サーバー設定に対応する。自宅利用はLAN/Tailscale private endpoint、App Review用の独立環境はHTTPS endpointとする。
+- 初期リリースでは1つのURLと1つのトークンを手入力し、URLは通常設定保存、
+  トークンは`expo-secure-store`へ分離保存する。server name/ID、複数profile、
+  server切替は将来機能とする。
 - API要求は`Authorization: Bearer <token>`形式を使う。
 - uploadとpreview APIはトークンなしの要求を拒否する。
-- `/jobs`, `/jobs/{job_id}`を含む全Phase 1 APIはトークンなしの要求を拒否する。
+- jobsはBackend内部の実行modelであり、`GET /jobs`、job detail API、専用Upload Queue画面を
+  初期リリースのpublic surfaceに含めない。
 - Tailscaleは通信経路を提供するだけで、固定APIトークン認証の代替にはしない。
 - Phase 1ではTailscale private network内のHTTP endpointを許容する。
 - 公開インターネットへbackendを晒す場合はPhase 1対象外とし、HTTPSを必須にする。
@@ -214,7 +223,11 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 
 ### セキュリティ
 
-- `/assets/upload`, `/assets`, `/assets/{asset_id}`, `/assets/{asset_id}/preview`, `/assets/{asset_id}/results/{result_id}`, `/assets/{asset_id}/preview-confirmation`, `/jobs`, `/jobs/{job_id}`に加え、`/api/v1/capabilities`、`/api/v1/presets`、`/api/v1/assets/{asset_id}/renditions`配下は固定APIトークンを要求する。
+- `/assets/upload`, `/upload-sessions`配下、`/assets`,
+  `/assets/{asset_id}`, `/assets/{asset_id}/preview`,
+  `/assets/{asset_id}/results/{result_id}`,
+  `/assets/{asset_id}/preview-confirmation`に加え、`/api/v1/capabilities`、
+  `/api/v1/presets`、`/api/v1/assets/{asset_id}/renditions`配下は固定APIトークンを要求する。
 - トークンや機密値をログへ出力しない。
 - 保存パスはbackend側で生成し、クライアント由来のパスを信用しない。
 - Phase 1のHTTP通信はLANまたはTailscale private network内に限定する。
@@ -234,7 +247,8 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - Apple公式LUTの配布元・利用条件、自前生成変換の入力仕様・metadata検出根拠・品質閾値・SHA-256の確定値。
 - Docker Compose上のworker service詳細設定。
 - 将来のLAN/Tailscale endpoint discovery。
-- iOS/ExpoでHTTP private endpointへ接続するためのapp config詳細。
+- checked-in iOS設定は`MediaVault`、version `0.2.0`、
+  `NSAllowsArbitraryLoads = false`、`NSAllowsLocalNetworking = true`を正とする。
 - `expo-media-library` で取得可能なEXIF/location項目。
 - thumbnail/proxy生成はPhase 1では本番対象外とし、将来候補として扱う。
 - ffmpeg失敗時のretry回数。

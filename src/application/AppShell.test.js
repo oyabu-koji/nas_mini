@@ -76,7 +76,7 @@ describe('AppShell', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     useSettings.mockReturnValue({
-      settings: { backendUrl: 'http://backend.test', apiToken: 'token' },
+      settings: { backendUrl: 'http://mediavault', apiToken: 'token' },
       canUseApi: true,
     });
   });

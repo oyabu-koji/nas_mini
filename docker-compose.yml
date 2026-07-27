@@ -36,6 +36,33 @@ services:
       - ${USER_LUT_ROOT_HOST_PATH:-/private/tmp/mediavault-user-luts}:/user_luts:ro
       - backend-db:/data
 
+  image-codec-validator:
+    profiles:
+      - image-codec-validation
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - scripts/validate_image_codecs.py
+      - --manifest
+      - /fixtures/valid/manifest.json
+    environment:
+      UV_CACHE_DIR: /tmp/uv-cache
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    volumes:
+      - ./backend/tests/fixtures/image-codecs:/fixtures:ro
+
   detector-certifier:
     profiles:
       - detector-certification

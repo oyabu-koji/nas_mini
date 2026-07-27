@@ -136,17 +136,15 @@ LUTファイルが登録済みでも、manifest検証、SHA-256、形式、FFmpe
 const API_BASE_URL = "http://100.x.x.x:8000";
 ```
 
-採用する設計例:
+初期リリースで採用する設計例:
 
 ```js
-const serverConfig = {
-  id: "home-mac-mini",
-  name: "Home Mac mini",
-  baseUrl: "http://100.x.x.x:8000",
-};
+const backendUrl = "http://100.x.x.x:8000";
 ```
 
-`baseUrl`や名称は通常の設定保存領域に保存し、`accessToken`は`serverConfig.id`をキーとして`expo-secure-store`（iOS Keychain）へ分離保存する。ソースコードにトークンを固定したり、平文で保存したりしない。
+初期リリースは1つの`backendUrl`を通常の設定保存領域、1つの`accessToken`を既存keyの
+`expo-secure-store`（iOS Keychain）へ分離保存する。server name/ID、複数profile、
+server切替は将来機能とし、ソースコードにトークンを固定したり平文保存したりしない。
 
 ---
 
@@ -162,24 +160,28 @@ App Review:
 iPhone → 公開HTTPS URL → 審査用API
 ```
 
-推奨API例:
+現在のpublic API例:
 
 ```text
 GET  /api/v1/capabilities
-POST /api/v1/jobs
-PUT  /api/v1/jobs/{jobId}/source
-GET  /api/v1/jobs/{jobId}
-GET  /api/v1/jobs/{jobId}/result
-DELETE /api/v1/jobs/{jobId}
+POST /upload-sessions
+PUT  /upload-sessions/{sessionId}/chunks/{chunkIndex}
+POST /upload-sessions/{sessionId}/finalize
+GET  /assets/{assetId}
+GET  /assets/{assetId}/results/{resultId}
 ```
 
-バックエンド実装は可能な限り共通化する。
+Backend jobsは内部実行modelとして共通化するが、public `/jobs` APIや専用Upload Queue画面は
+初期リリースへ含めない。
 
 ---
 
 ### 3.3 初期リリースは手入力でサーバー設定を登録する
 
-初期リリースでは、SettingsからBackend URLとアクセストークンを手入力する。トークンは`expo-secure-store`へ保存し、QRコードに含めない。
+初期リリースでは、Settingsから1つのBackend URLと1つのアクセストークンを手入力する。
+トークンは既存keyの`expo-secure-store`へ保存し、QRコードに含めない。
+App Review用HTTPS backendや複数server profileは将来の配布準備として扱い、
+現在のsingle-server保存契約へ混在させない。
 
 QRコードによる接続設定インポートは後続フェーズとする。実装する際は、ワンタイム交換、TTL、失効、漏えい時のrevokeを定義し、長期固定トークンをQRコードへ含めない。
 
@@ -567,9 +569,11 @@ App Reviewの最終判断はAppleが個別に行うため、審査通過を保�
 
 ---
 
-### Phase B: 接続先の抽象化
+### Phase B: 将来の複数接続先対応
 
-Mac miniでの一周を壊さない範囲で進める。
+Mac miniでの一周と初期リリースのsingle-server保存契約を壊さない後続機能として進める。
+1つのBackend URLと1つのtokenの手入力・分離保存は実装済みの前提とし、
+次の項目を初期リリースのblocking taskにはしない。
 
 - [ ] 固定のTailscale URL/IPをコードから除去する
 - [ ] `ServerConfig`モデルを作成する

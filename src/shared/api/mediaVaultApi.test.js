@@ -1,6 +1,7 @@
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   UPLOAD_REQUEST_TIMEOUT_MS,
+  buildPreviewSource,
   buildProcessedResultPath,
   buildProcessedResultSource,
   requestJson,
@@ -27,7 +28,7 @@ describe('mediaVaultApi timeouts', () => {
     const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
 
     await requestJson({
-      baseUrl: 'http://backend.test',
+      baseUrl: 'http://mediavault',
       path: '/assets',
       requiresAuth: false,
     });
@@ -39,7 +40,7 @@ describe('mediaVaultApi timeouts', () => {
     const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
 
     await uploadAsset({
-      settings: { backendUrl: 'http://backend.test', apiToken: 'masked' },
+      settings: { backendUrl: 'http://mediavault', apiToken: 'masked' },
       pickedAsset: {
         uri: 'media-reference',
         filename: 'clip.mov',
@@ -60,7 +61,7 @@ describe('mediaVaultApi timeouts', () => {
     const networkFetch = jest.fn().mockRejectedValue(new Error('private network detail'));
     await expect(
       requestJson({
-        baseUrl: 'http://backend.test',
+        baseUrl: 'http://mediavault',
         path: '/assets',
         requiresAuth: false,
         fetchImpl: networkFetch,
@@ -77,7 +78,7 @@ describe('mediaVaultApi timeouts', () => {
     }));
     const pendingTimeout = expect(
       requestJson({
-        baseUrl: 'http://backend.test',
+        baseUrl: 'http://mediavault',
         path: '/assets',
         requiresAuth: false,
         timeoutMs: 10,
@@ -100,7 +101,7 @@ describe('mediaVaultApi timeouts', () => {
 
     await expect(
       requestJson({
-        baseUrl: 'http://backend.test',
+        baseUrl: 'http://mediavault',
         apiToken: 'token',
         path: '/renditions',
         fetchImpl,
@@ -122,12 +123,71 @@ describe('mediaVaultApi timeouts', () => {
 
     await expect(
       requestJson({
-        baseUrl: 'http://backend.test',
+        baseUrl: 'http://mediavault',
         path: '/health',
         requiresAuth: false,
         fetchImpl,
       }),
     ).resolves.toBeNull();
+  });
+
+  it('rejects an invalid JSON endpoint before token coercion or fetch', async () => {
+    const fetchImpl = jest.fn();
+    const token = { toString: jest.fn(() => 'secret-token') };
+
+    await expect(
+      requestJson({
+        baseUrl: 'http://public.example.com/private?secret=value',
+        apiToken: token,
+        path: '/assets',
+        fetchImpl,
+      }),
+    ).rejects.toMatchObject({
+      code: 'invalid_url',
+      message: 'Use a private HTTP backend or a valid HTTPS backend.',
+    });
+
+    expect(token.toString).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid multipart endpoint before fetch', async () => {
+    const fetchImpl = jest.spyOn(global, 'fetch');
+
+    await expect(
+      uploadAsset({
+        settings: {
+          backendUrl: 'http://203.0.113.10',
+          apiToken: 'secret-token',
+        },
+        pickedAsset: {
+          uri: 'media-reference',
+          filename: 'clip.mov',
+          type: 'video',
+          mimeType: 'video/quicktime',
+          takenAt: null,
+          latitude: null,
+          longitude: null,
+          exif: null,
+        },
+        isLog: false,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_url' });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid preview endpoint before token coercion or source creation', () => {
+    const token = { toString: jest.fn(() => 'secret-token') };
+
+    expect(() =>
+      buildPreviewSource({
+        baseUrl: 'http://preview.example.com',
+        apiToken: token,
+        assetId: 42,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'invalid_url' }));
+    expect(token.toString).not.toHaveBeenCalled();
   });
 
   it('retains only a canonical processed-result identity on asset detail', () => {
@@ -177,7 +237,7 @@ describe('mediaVaultApi timeouts', () => {
       expect(sanitizeProcessedResult({ ...baseResult, url }, 42)).toBeNull();
       expect(() =>
         buildProcessedResultSource({
-          baseUrl: 'http://backend.test',
+          baseUrl: 'http://mediavault',
           apiToken: 'secret-token',
           assetId: 42,
           result: { ...baseResult, url },
@@ -192,7 +252,7 @@ describe('mediaVaultApi timeouts', () => {
     expect(buildProcessedResultPath(42, resultId)).toBe(`/assets/42/results/${resultId}`);
     expect(
       buildProcessedResultSource({
-        baseUrl: 'http://backend.test/',
+        baseUrl: 'http://mediavault/',
         apiToken: 'secret-token',
         assetId: 42,
         result: {
@@ -205,12 +265,34 @@ describe('mediaVaultApi timeouts', () => {
         },
       }),
     ).toEqual({
-      uri: `http://backend.test/assets/42/results/${resultId}`,
+      uri: `http://mediavault/assets/42/results/${resultId}`,
       headers: {
         Authorization: 'Bearer secret-token',
         'X-MediaVault-Client-Version': '0.2.0',
       },
     });
+  });
+
+  it('rejects an invalid processed-result endpoint before token coercion', () => {
+    const resultId = 'e'.repeat(32);
+    const token = { toString: jest.fn(() => 'secret-token') };
+
+    expect(() =>
+      buildProcessedResultSource({
+        baseUrl: 'http://results.example.com',
+        apiToken: token,
+        assetId: 42,
+        result: {
+          result_id: resultId,
+          mime_type: 'video/mp4',
+          size_bytes: 1,
+          sha256: 'f'.repeat(64),
+          created_at: '2026-07-18T00:00:00Z',
+          url: `/assets/42/results/${resultId}`,
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: 'invalid_url' }));
+    expect(token.toString).not.toHaveBeenCalled();
   });
 
   it('sanitizes formal Apple Log fallback and ordinary preview claims', () => {

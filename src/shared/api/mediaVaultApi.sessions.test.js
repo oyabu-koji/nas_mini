@@ -34,7 +34,7 @@ describe('mediaVaultApi upload sessions', () => {
     const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
 
     const session = await createUploadSession({
-      settings: { backendUrl: 'http://backend.test', apiToken: 'masked' },
+      settings: { backendUrl: 'http://mediavault', apiToken: 'masked' },
       session: { client_upload_id: 'client-123' },
     });
 
@@ -42,7 +42,7 @@ describe('mediaVaultApi upload sessions', () => {
     expect(session.total_chunks).toBe(2);
     expect(session.expires_at).toBe('2026-07-19T00:00:00+00:00');
     expect(global.fetch).toHaveBeenCalledWith(
-      'http://backend.test/upload-sessions',
+      'http://mediavault/upload-sessions',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ client_upload_id: 'client-123' }) }),
     );
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), SESSION_REQUEST_TIMEOUT_MS);
@@ -54,7 +54,7 @@ describe('mediaVaultApi upload sessions', () => {
     const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
 
     await uploadUploadSessionChunk({
-      settings: { backendUrl: 'http://backend.test', apiToken: 'masked' },
+      settings: { backendUrl: 'http://mediavault', apiToken: 'masked' },
       sessionId: 'session-123',
       uri: 'file:///clip.mov',
       chunkIndex: 1,
@@ -66,7 +66,7 @@ describe('mediaVaultApi upload sessions', () => {
 
     expect(File).toHaveBeenCalledWith('file:///clip.mov');
     expect(global.fetch).toHaveBeenCalledWith(
-      'http://backend.test/upload-sessions/session-123/chunks/1',
+      'http://mediavault/upload-sessions/session-123/chunks/1',
       expect.objectContaining({
         method: 'PUT',
         body: slicedFile,
@@ -88,9 +88,31 @@ describe('mediaVaultApi upload sessions', () => {
 
     await expect(
       createUploadSession({
-        settings: { backendUrl: 'http://backend.test', apiToken: 'masked' },
+        settings: { backendUrl: 'http://mediavault', apiToken: 'masked' },
         session: { client_upload_id: 'client-123' },
       }),
     ).rejects.toMatchObject({ code: 'active_session_limit', retryable: true, status: 429 });
+  });
+
+  it('rejects an invalid chunk endpoint before expo fetch', async () => {
+    File.mockImplementation(() => ({ slice: jest.fn().mockReturnValue({ kind: 'slice' }) }));
+
+    await expect(
+      uploadUploadSessionChunk({
+        settings: {
+          backendUrl: 'http://public.example.com',
+          apiToken: 'secret-token',
+        },
+        sessionId: 'session-123',
+        uri: 'file:///clip.mov',
+        chunkIndex: 0,
+        offset: 0,
+        length: 8,
+        totalSize: 16,
+        sha256: 'b'.repeat(64),
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_url' });
+
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

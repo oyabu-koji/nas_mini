@@ -10,7 +10,7 @@ jest.mock('../../../shared/api/mediaVaultApi', () => ({
 }));
 
 const { getAsset, listAssets } = require('../../../shared/api/mediaVaultApi');
-const settings = { backendUrl: 'http://backend.test', apiToken: 'token' };
+const settings = { backendUrl: 'http://mediavault', apiToken: 'token' };
 
 function ListHarness({ canUseApi = true }) {
   global.latestAssetList = useAssetList(settings, canUseApi, { autoLoad: false });

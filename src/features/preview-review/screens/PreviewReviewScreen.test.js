@@ -35,7 +35,7 @@ function reviewState(overrides = {}) {
     assetStatus: 'ready',
     assetError: null,
     canReview: true,
-    videoSource: { uri: 'http://backend.test/video' },
+    videoSource: { uri: 'http://mediavault/video' },
     imageSource: null,
     confirmStatus: 'idle',
     confirmError: null,

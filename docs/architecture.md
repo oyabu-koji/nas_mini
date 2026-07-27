@@ -5,7 +5,9 @@
 - Mobile AppはReact Native + Expo managed workflow + JavaScriptで実装する。
 - BackendはFastAPI、DBはSQLite、preview生成はffmpegを使う。
 - Mac mini移行時はDocker内の実行環境を正とする。
-- 自宅利用のiPhone-backend通信は、LANまたはTailscale private network上のHTTP endpointと固定APIトークンを使う。接続先URLはMobile設定値であり、ソースコードへ固定しない。
+- 初期リリースは1つのBackend URLと1つの固定APIトークンだけを持つ。URLはMobile設定値であり、
+  ソースコードへ固定しない。shared endpoint policyを保存時と全通信境界のauthorityとし、
+  accepted private HTTP又は有効なHTTPS originだけへtokenを送る。
 - 自宅Mac miniのbackendを公開インターネットへ直接公開しない。App Review用に公開運用する場合は、自宅環境・データと分離したHTTPS backendを使う。
 - 外部SSDの保存先ルートは`MEDIA_ROOT`で指定する。
 - originalはimmutableとして扱い、derived fileと分離する。
@@ -55,8 +57,9 @@ graph LR
 ### Mobile App
 
 - 写真・動画選択、nullable metadata取得、LOG指定。
-- サーバー名、Backend URL、固定APIトークンの設定。URLと名称は通常設定保存、トークンはサーバーIDごとに`expo-secure-store`へ保存する。初期リリースでQR importは実装しない。
-- Tailscale IPまたはMagicDNS名を含むprivate endpoint URLの設定。
+- 1つのBackend URLと固定APIトークンを設定する。URLは通常設定保存、
+  tokenは既存の`expo-secure-store` keyへ保存する。server name/ID、複数profile、QR importは将来機能とする。
+- RFC1918、Tailscale IPv4、single-label MagicDNS、`.local`のHTTP又は有効なHTTPS originを設定する。
 - upload進捗、asset状態、要求・適用presetと色変換状態を含むpreview表示、確認操作。
 - Asset Detailでactive processed resultを明示downloadし、temporary fileのresponse identity、size、native streaming SHA-256を検証してから`expo-media-library`へ保存する。
 - eligibleな通常videoではversioned catalogのpresetだけを選択し、client request IDをPOST前にasset単位で永続化してrendition phaseをpollする。新しいselection後の古いPOST/poll結果はcurrent UIを上書きしない。
@@ -88,7 +91,9 @@ graph LR
 - Phase 2Bのdetector ruleはrepository ownerが根拠/source reference付きcanonical inputとして人手承認する。認証scriptはruleを生成せず、repo外のユーザー所有Apple Log/通常動画をno-follow descriptorからowner-only temporary snapshotへbounded copyしてwhole-file SHA-256を固定し、そのsnapshotだけをversion/resource limit固定のDocker ffprobeで検証してdetector manifestを作る。manifestのfixture digestと分類対象bytesは同じsnapshotを正本とし、検証後にexternal pathを再openしない。Docker processは`Popen`とshellなしの固定argvで起動し、stdout/stderrを別々にbounded captureする。timeout又は各1 MiB超過ではprocess groupを停止し、一意な検証済みcontainer名で残存containerを強制回収してから失敗を返す。rule input、manifest、ffprobe version、Phase 2B migration markerの全てが有効になるまでcapabilityをfalseにし、migrationとprofile-aware jobを開始しない。
 - 初期formal previewは自動presetだけを解決する。Apple Logは`generated-apple-log-rec709`を要求し、非Log/判定不能は`compress-only`を要求する。identity/test/customの選択はmanaged renditionに閉じ、formal previewへ昇格しない。
 - 写真はJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映でpreviewを生成する。
-- Phase 1でHEIC、JPEG、PNG入力の検証fixtureを用意し、Docker内ffmpeg buildのcodec対応を確認する。
+- repository-owned HEIC/JPEG/PNG fixtureとstrict manifestを
+  `image-codec-validation` Compose profileでproduction imageへmountし、
+  read-only/offline runtimeでproduction image-preview adapterの実decodeを検証する。
 - stdout/stderrを安全に扱い、機密値をログへ含めない。
 
 ### Managed Preset Rendition
@@ -119,7 +124,8 @@ graph LR
 - upload timeout後の`result_unknown`はtoken、URI、filenameを含めず端末に保存する。local asset idがない場合はglobal pending markerを使い、asset一覧確認済みの明示操作までuploadを再開しない。
 - source originalのmappingとは別に、処理済みcopyの保存を`backend_asset_id`、`backend_result_id`、result SHA-256で識別する。写真ライブラリnative call直前に`unknown` markerを永続化し、成功時だけsaved local asset identifierを記録する。
 - managed rendition requestはさらに別のasset-scoped AsyncStorage namespaceへclient request/rendition ID、selection sequence、safe rendition fieldsだけを保存する。token、URL、path、manifest/LUT本文は保存しない。
-- サーバー設定はサーバーID、名称、URLを通常設定へ保存し、tokenは`expo-secure-store`へ分離保存する。
+- 初期リリースのサーバー設定は1つのURLを通常設定へ保存し、
+  1つのtokenを既存の`expo-secure-store` keyへ分離保存する。
 
 ### External SSD
 
@@ -153,10 +159,13 @@ ${MEDIA_ROOT}/
 
 1. ユーザーがMac mini側previewを再生し、内容確認する。
 2. Mobileは`POST /assets/{asset_id}/preview-confirmation`で`review_status = preview_confirmed`にする。
-3. Mobileは`preview_ready`かつ`preview_confirmed`のassetだけ削除操作を表示する。
-4. ユーザーが対象情報を確認し、削除を明示実行する。
-5. Mobileは`expo-media-library` service経由でiPhone写真ライブラリ上のlocal original削除を要求する。
-6. native削除成功は不可逆なterminal状態として直ちにMobile memoryへ反映し、その後のlocal state永続化失敗で削除actionを再表示しない。Backend側originalは保持する。
+3. Mobileのpure predicateは`preview_ready`、`preview_confirmed`、local mapping available、
+   未削除、非busyを共通条件として評価する。
+4. `server_hash_recorded`のPhase 1 direct image/videoはformal capabilityを要求しない。
+   `video + file_verified`のPhase 2 session videoだけcompatible capabilityとready formal previewを追加要求する。
+5. ユーザーが対象情報を確認し、削除を明示実行する。
+6. Mobileは`expo-media-library` service経由でiPhone写真ライブラリ上のlocal original削除を要求する。
+7. native削除成功は不可逆なterminal状態として直ちにMobile memoryへ反映し、その後のlocal state永続化失敗で削除actionを再表示しない。Backend側originalは保持する。
 
 ## セキュリティ
 
@@ -171,6 +180,11 @@ ${MEDIA_ROOT}/
 - Tailscaleは到達経路であり、固定APIトークン認証の代替ではない。
 - Phase 1で許容するHTTPはLANまたはTailscale private network内に限定する。
 - iPhoneから接続するbackendは`127.0.0.1`ではなく、Tailscale IP、MagicDNS名、またはLAN IPで指定する。
+- URL policyはcredential、query、fragment、non-root path、public HTTP、
+  `localhost`、qualified `.ts.net` HTTPをAuthorization header生成前に拒否する。
+- checked-in Expo/plistは表示名`MediaVault`、version `0.2.0`、
+  `NSAllowsArbitraryLoads = false`、`NSAllowsLocalNetworking = true`で同期し、
+  application URL policyをATSより上位のauthorityとする。
 - iPhone側original削除はユーザー確認を必須とし、background jobや自動同期で実行しない。
 
 ## 信頼性
@@ -226,4 +240,3 @@ ${MEDIA_ROOT}/
 
 - Docker Composeの具体構成とMac miniのSSD mount path。
 - HTTP/HTTPSと将来のLAN/Tailscale endpoint discovery。
-- iOS/ExpoでTailscale private endpointのHTTP通信を許可するapp config詳細。

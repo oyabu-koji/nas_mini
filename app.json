@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Latest Template",
+    "name": "MediaVault",
     "slug": "latest-template",
     "version": "0.2.0",
     "orientation": "portrait",
@@ -14,7 +14,7 @@
         "NSPhotoLibraryUsageDescription": "MediaVault needs photo library access so you can upload selected photos and videos to your private backend.",
         "NSPhotoLibraryAddUsageDescription": "MediaVault needs permission to save verified processed videos to your photo library.",
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true,
+          "NSAllowsArbitraryLoads": false,
           "NSAllowsLocalNetworking": true
         }
       },

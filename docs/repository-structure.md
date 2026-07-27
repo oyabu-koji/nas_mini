@@ -28,10 +28,10 @@ project-root/
 │   ├── features/
 │   │   ├── settings/
 │   │   ├── asset-picker/
-│   │   ├── upload-queue/
 │   │   ├── processed-results/
 │   │   ├── managed-renditions/
-│   │   ├── asset-detail/
+│   │   ├── original-deletion/
+│   │   ├── assets/
 │   │   └── preview-review/
 │   └── shared/
 │       ├── api/
@@ -59,7 +59,10 @@ project-root/
 │   ├── pyproject.toml
 │   ├── uv.lock
 │   └── .env.example
-├── docker/
+├── ios/
+├── scripts/
+│   └── verify-ios-native-config.mjs
+├── docker-compose.yml
 ├── docs/
 ├── docs/ideas/
 ├── .agents/
@@ -101,17 +104,22 @@ project-root/
 ### `src/shared/api/`
 
 - Backend URL、Authorizationヘッダー、API response処理を集約する。
-- 選択中のserver profileに対応するBackend URL、Authorization、`capabilities`、preset一覧、preview/job response処理を集約する。
-- 自宅用のBackend URLはLAN IP、Tailscale IP、MagicDNS名のprivate endpointを扱う。将来のApp Review用profileはHTTPS endpointだけを扱う。
+- 初期リリースの1つのBackend URLに対するAuthorization、`capabilities`、preset一覧、
+  preview response処理を集約する。
+- `src/shared/services/backendEndpointPolicy.js`をURL classification/normalizationの正本とし、
+  rejected URLではheader構築とnetwork adapter呼び出しを行わない。
 - Tokenをログ出力しない。
 - processed result metadataをsanitizeし、validated asset/result IDからcanonical relative delivery pathを再構築する。response URLをそのまま認証付きrequestへ渡さない。
 
 ### `src/shared/services/`
 
 - `expo-media-library`、通常設定保存、`expo-secure-store`など端末依存処理を集約する。
-- server profileのURL・名称は通常設定保存領域、固定APIトークンはserver IDごとに`expo-secure-store`へ保存する。初期リリースでQRコードからtokenをimportしない。
+- 1つのURLは通常設定保存領域、1つの固定APIトークンは既存keyで
+  `expo-secure-store`へ保存する。server profile/name/IDは将来機能とする。
 - Tailscale接続状態そのものはアプリ内認証として扱わず、固定APIトークンを常に送信する。
 - 写真ライブラリ選択、metadata取得、local asset identifier保持、iPhone側original手動削除要求は`mediaLibraryService.js`へ閉じ込める。
+- `original-deletion/services/originalDeletionEligibility.js`はPhase 1 direct assetと
+  Phase 2 session videoの削除eligibilityを副作用なしで判定する。
 
 ### `src/features/preview-review/`
 
@@ -205,6 +213,14 @@ project-root/
 - `generate_test_luts.py`は17-point identityとred/blue swap test LUT、schema v1 manifestをdeterministicに再生成する。
 - generated LUT/manifestはcommitし、generator再実行後の差分とSHA-256をtestで検証する。実user LUTは生成・commitしない。
 - `certify_apple_log_detector.py`は人手承認済みrule inputを変更せず、repo外fixtureをpinned Docker ffprobeで検査し、sanitized candidate manifestとpath-free certificate summaryを決定的に生成・再検証する。fixture差分からpredicateを推論せず、認証前のmanifestを有効化せず、media/pathを出力又はcommitしない。
+- `validate_image_codecs.py`は`tests/fixtures/image-codecs/`のprovenance/hash/dimensionsを
+  strictに検証し、production adapterでHEIC/JPEG/PNGをJPEGへ実decodeする。
+
+### checked-in iOSとroot verifier
+
+- `ios/LatestTemplate/Info.plist`はrelease inputであり、`app.json`と表示名、version、ATSを同期する。
+- `scripts/verify-ios-native-config.mjs`は`plutil`でplistをstructured parseし、
+  `MediaVault`、`0.2.0`、ATS `false/true`を固定commandで検証する。
 
 ### `backend/pyproject.toml`, `backend/uv.lock`
 

@@ -50,7 +50,9 @@ export function AssetPickerScreen({ settings, canUseApi, onMappingUnavailable, o
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
               <Text style={styles.toggleTitle}>LOG material</Text>
-              <Text style={styles.meta}>Apply backend LOG preview pipeline.</Text>
+              <Text style={styles.meta}>
+                Stored as a legacy hint. Apple Log detection is automatic.
+              </Text>
             </View>
             <Switch disabled={Boolean(upload.pendingUpload) || upload.pendingLoading} onValueChange={upload.setIsLog} value={upload.isLog} />
           </View>

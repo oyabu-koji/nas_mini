@@ -79,4 +79,19 @@ describe('AssetPickerScreen video upload state', () => {
     expect(screen.getByText('Start new upload')).toBeTruthy();
     expect(screen.getByText('Upload expired')).toBeTruthy();
   });
+
+  it('describes LOG as a legacy hint while preserving the toggle behavior', async () => {
+    const state = uploadState({ status: 'idle', canPickAsset: true, canUpload: true });
+    useAssetUpload.mockReturnValue(state);
+    await render(<AssetPickerScreen settings={{}} canUseApi />);
+
+    expect(
+      screen.getByText('Stored as a legacy hint. Apple Log detection is automatic.'),
+    ).toBeTruthy();
+    expect(screen.queryByText('Apply backend LOG preview pipeline.')).toBeNull();
+    await act(async () => {
+      fireEvent(screen.getByRole('switch'), 'valueChange', true);
+    });
+    expect(state.setIsLog).toHaveBeenCalledWith(true);
+  });
 });

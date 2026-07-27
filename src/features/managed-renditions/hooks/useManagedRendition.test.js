@@ -20,7 +20,7 @@ jest.mock('../services/managedRenditionStore', () => ({
 const api = require('../services/managedRenditionApi');
 const store = require('../services/managedRenditionStore');
 
-const settings = { backendUrl: 'http://backend.test', apiToken: 'secret-token' };
+const settings = { backendUrl: 'http://mediavault', apiToken: 'secret-token' };
 const asset = {
   id: 42,
   type: 'video',

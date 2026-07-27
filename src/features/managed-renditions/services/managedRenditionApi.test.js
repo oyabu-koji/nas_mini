@@ -8,7 +8,7 @@ import {
   sanitizeRendition,
 } from './managedRenditionApi';
 
-const settings = { backendUrl: 'http://backend.test', apiToken: 'secret-token' };
+const settings = { backendUrl: 'http://mediavault', apiToken: 'secret-token' };
 
 function capabilities(overrides = {}) {
   return {
@@ -156,10 +156,10 @@ describe('managedRenditionApi', () => {
     await getManagedRendition({ settings, assetId: 42, renditionId: 'a'.repeat(32) });
 
     expect(global.fetch.mock.calls.map(([url]) => url)).toEqual([
-      'http://backend.test/api/v1/capabilities',
-      'http://backend.test/api/v1/presets',
-      'http://backend.test/api/v1/assets/42/renditions',
-      `http://backend.test/api/v1/assets/42/renditions/${'a'.repeat(32)}`,
+      'http://mediavault/api/v1/capabilities',
+      'http://mediavault/api/v1/presets',
+      'http://mediavault/api/v1/assets/42/renditions',
+      `http://mediavault/api/v1/assets/42/renditions/${'a'.repeat(32)}`,
     ]);
     const post = global.fetch.mock.calls[2][1];
     expect(JSON.parse(post.body)).toEqual({

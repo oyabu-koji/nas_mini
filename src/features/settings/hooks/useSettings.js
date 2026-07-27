@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { checkHealth } from '../../../shared/api/mediaVaultApi';
+import {
+  isAcceptedBackendUrl,
+  validateAndNormalizeBackendUrl,
+} from '../../../shared/services/backendEndpointPolicy';
 import { getBackendUrl, saveBackendUrl } from '../../../shared/services/settingsStorage';
 import { getApiToken, saveApiToken } from '../../../shared/services/secureTokenStorage';
 import { createAppError, messageForErrorCode, toDisplayError } from '../../../shared/utils/errors';
@@ -21,7 +25,7 @@ export function useSettings() {
           return;
         }
         setBackendUrl(storedBackendUrl);
-        setApiToken(storedApiToken);
+        setApiToken(String(storedApiToken ?? '').trim());
         setStatus('idle');
       } catch {
         if (isMounted) {
@@ -44,19 +48,22 @@ export function useSettings() {
     [backendUrl, apiToken],
   );
 
-  const hasSavedToken = apiToken.length > 0;
-  const canUseApi = backendUrl.trim().length > 0 && hasSavedToken;
+  const normalizedSavedToken = String(apiToken ?? '').trim();
+  const hasSavedToken = normalizedSavedToken.length > 0;
+  const canUseApi = isAcceptedBackendUrl(backendUrl) && hasSavedToken;
 
   const saveSettings = useCallback(async () => {
     setStatus('saving');
     setMessage(null);
     try {
-      const normalizedBackendUrl = await saveBackendUrl(backendUrl);
-      const nextToken = apiTokenInput.trim() || apiToken;
-      if (!normalizedBackendUrl || !nextToken) {
+      const normalizedBackendUrl = validateAndNormalizeBackendUrl(backendUrl);
+      const replacementToken = apiTokenInput.trim();
+      const nextToken = replacementToken || normalizedSavedToken;
+      if (!nextToken) {
         throw createAppError('missing_settings', messageForErrorCode('missing_settings'));
       }
-      const savedToken = apiTokenInput.trim() ? await saveApiToken(apiTokenInput) : apiToken;
+      await saveBackendUrl(normalizedBackendUrl);
+      const savedToken = replacementToken ? await saveApiToken(replacementToken) : nextToken;
       setBackendUrl(normalizedBackendUrl);
       setApiToken(savedToken);
       setApiTokenInput('');
@@ -67,12 +74,13 @@ export function useSettings() {
       setStatus('error');
       setMessage(displayError.message);
     }
-  }, [apiToken, apiTokenInput, backendUrl]);
+  }, [apiTokenInput, backendUrl, normalizedSavedToken]);
 
   const runConnectionCheck = useCallback(async () => {
     setStatus('checking');
     setMessage(null);
     try {
+      validateAndNormalizeBackendUrl(settings.backendUrl);
       await checkHealth(settings);
       setStatus('success');
       setMessage('Backend is reachable.');

@@ -11,6 +11,7 @@ import {
   CLIENT_VERSION,
   CLIENT_VERSION_HEADER,
 } from '../constants/clientVersion';
+import { validateAndNormalizeBackendUrl } from '../services/backendEndpointPolicy';
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 export const UPLOAD_REQUEST_TIMEOUT_MS = 600000;
@@ -37,14 +38,7 @@ const FORMAL_FAILURE_CODES = new Set([
 ]);
 
 export function normalizeBaseUrl(input) {
-  const trimmed = String(input ?? '').trim();
-  if (!trimmed) {
-    throw createAppError('missing_settings', messageForErrorCode('missing_settings'));
-  }
-  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-    throw createAppError('invalid_url', messageForErrorCode('invalid_url'));
-  }
-  return trimmed.replace(/\/+$/, '');
+  return validateAndNormalizeBackendUrl(input);
 }
 
 export function joinApiUrl(baseUrl, path) {
@@ -93,6 +87,7 @@ export async function requestJson({
   timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   fetchImpl = fetch,
 }) {
+  const requestUrl = joinApiUrl(baseUrl, path);
   const requestHeaders = {
     Accept: 'application/json',
     ...headers,
@@ -103,7 +98,7 @@ export async function requestJson({
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
-    response = await fetchImpl(joinApiUrl(baseUrl, path), {
+    response = await fetchImpl(requestUrl, {
       method,
       headers: requestHeaders,
       body,
@@ -126,12 +121,13 @@ export async function requestJson({
 }
 
 export async function checkHealth(settings) {
+  const baseUrl = normalizeBaseUrl(settings?.backendUrl);
   const apiToken = String(settings?.apiToken ?? '').trim();
   if (!apiToken) {
     throw createAppError('missing_settings', messageForErrorCode('missing_settings'));
   }
   return requestJson({
-    baseUrl: settings.backendUrl,
+    baseUrl,
     apiToken,
     path: '/health',
     requiresAuth: false,
@@ -287,8 +283,9 @@ export function buildPreviewVideoSource({ baseUrl, apiToken, assetId }) {
 }
 
 export function buildPreviewSource({ baseUrl, apiToken, assetId }) {
+  const uri = buildPreviewUrl(baseUrl, assetId);
   return {
-    uri: buildPreviewUrl(baseUrl, assetId),
+    uri,
     headers: createVersionedAuthHeaders(apiToken),
   };
 }
@@ -311,8 +308,9 @@ export function buildProcessedResultSource({ baseUrl, apiToken, assetId, result 
       messageForErrorCode('processed_result_invalid_identity'),
     );
   }
+  const uri = buildProcessedResultUrl(baseUrl, assetId, safeResult.result_id);
   return {
-    uri: buildProcessedResultUrl(baseUrl, assetId, safeResult.result_id),
+    uri,
     headers: createVersionedAuthHeaders(apiToken),
   };
 }

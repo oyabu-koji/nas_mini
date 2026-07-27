@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "filename": "grid.heic",
+      "format": "heic",
+      "sha256": "4baf9758e3c27642a331f3cf016aeeb6574d01bae3be25dd53a859c4ed7015c1",
+      "width": 8,
+      "height": 8,
+      "generator": "Synthetic 8x8 FFmpeg testsrc PPM converted offline with macOS sips-316.",
+      "license": "Repository-owned test fixture."
+    },
+    {
+      "filename": "grid.jpg",
+      "format": "jpeg",
+      "sha256": "5b99b8dae647694b814ef876212177a20b1218a00f40fbce42005c6b5eacad28",
+      "width": 8,
+      "height": 8,
+      "generator": "Synthetic 8x8 FFmpeg testsrc PPM converted offline with macOS sips-316.",
+      "license": "Repository-owned test fixture."
+    },
+    {
+      "filename": "grid.png",
+      "format": "png",
+      "sha256": "4f7a5f16cdae213954baf8a98f5ce275ccab43da7c37511b5e4da5099ba2a1bc",
+      "width": 8,
+      "height": 8,
+      "generator": "Synthetic 8x8 FFmpeg testsrc PPM converted offline with macOS sips-316.",
+      "license": "Repository-owned test fixture."
+    }
+  ]
+}

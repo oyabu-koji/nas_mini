@@ -24,7 +24,26 @@ originalから生成した別ファイル。`preview`, `thumbnail`, `proxy`, `lu
 
 ### iPhone側original手動削除
 
-Mac mini側previewを確認した後、ユーザーが明示操作してiPhone写真ライブラリ上のoriginalを削除すること。Backend側originalやderived fileを削除する操作ではない。
+Mac mini側previewを確認した後、ユーザーが明示操作してiPhone写真ライブラリ上のoriginalを削除すること。
+共通条件に加え、Phase 1 direct assetは`server_hash_recorded`、Phase 2 session videoは
+`video + file_verified`とcompatibleなready formal previewを根拠にする。
+Backend側originalやderived fileを削除する操作ではない。
+
+### Phase 1 direct asset
+
+通常`POST /assets/upload`で保存され、`verification_status = server_hash_recorded`を持つ
+image又はhistorical video。original削除eligibilityではPhase 2B capabilityやformal previewを要求しない。
+
+### original deletion eligibility
+
+`preview_ready`、`preview_confirmed`、local mapping available、未削除、非busyを共通条件とし、
+asset originごとの追加条件を評価するMobileのpure predicate。managed rendition、
+active processed result、legacy `is_log`、`safe_to_delete_candidate`を権限根拠にしない。
+
+### internal job
+
+BackendのworkerがSQLite上でclaim/leaseし、preview、upload finalize、rendition等を実行する内部model。
+初期リリースではpublic `/jobs` APIや専用Upload Queue画面を持たない。
 
 ## 技術用語
 
@@ -168,7 +187,8 @@ managed rendition requestと永続phaseを表すBackend record。global unique�
 
 ### jobs
 
-preview生成や将来のAI解析処理を永続化して管理する。
+preview、upload finalize、renditionや将来のAI解析処理を永続化するBackend内部model。
+workerのclaim/lease/recoveryに使い、初期リリースのpublic APIや専用画面としては公開しない。
 
 ### upload_sessions
 
@@ -311,3 +331,9 @@ Tailscale上の端末名で到達できる名前解決機能。Phase 1ではBack
 ### private endpoint
 
 LANまたはTailscale private network内からだけ到達するbackend endpoint。Phase 1ではHTTP private endpointと固定APIトークンを組み合わせる。
+
+### Backend endpoint policy
+
+Backend URLをstructured parseし、HTTPではRFC1918、Tailscale IPv4、single-label MagicDNS、
+`.local`だけ、又は有効なHTTPS originを許可するMobile authority。保存時と全通信境界で使い、
+拒否時はAuthorization headerとnetwork callを作らない。
