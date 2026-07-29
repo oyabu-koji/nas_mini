@@ -3,6 +3,7 @@ from hashlib import sha256
 
 from fastapi.testclient import TestClient
 
+from app.core.settings import MAX_UPLOAD_CHUNKS, MAX_UPLOAD_SESSION_SIZE_BYTES
 from app.db.connection import connect
 from app.main import app
 from app.repositories.upload_sessions import isoformat, utc_now
@@ -32,6 +33,7 @@ def _create(client, client_upload_id="client-upload-123", **overrides):
 def test_create_session_is_idempotent_and_get_does_not_extend_expiry(monkeypatch, tmp_path):
     database_path = _set_required_env(monkeypatch, tmp_path)
     monkeypatch.setenv("UPLOAD_SESSION_CHUNK_SIZE_BYTES", "8")
+    monkeypatch.setenv("UPLOAD_SESSION_MAX_SIZE_BYTES", "1024")
 
     with TestClient(app) as client:
         created = _create(client)
@@ -87,7 +89,7 @@ def test_get_expired_session_marks_terminal_and_create_refuses_same_key(monkeypa
 
 
 def test_session_api_requires_token_and_rejects_size_limit(monkeypatch, tmp_path):
-    _set_required_env(monkeypatch, tmp_path)
+    database_path = _set_required_env(monkeypatch, tmp_path)
     monkeypatch.setenv("UPLOAD_SESSION_MAX_SIZE_BYTES", "8")
 
     with TestClient(app) as client:
@@ -97,3 +99,20 @@ def test_session_api_requires_token_and_rejects_size_limit(monkeypatch, tmp_path
     assert unauthorized.status_code == 401
     assert too_large.status_code == 413
     assert too_large.json()["code"] == "session_size_limit"
+    with connect(database_path, 5000) as conn:
+        assert conn.execute("SELECT COUNT(*) AS count FROM upload_sessions").fetchone()["count"] == 0
+
+
+def test_session_api_accepts_exact_hard_size_and_chunk_count_boundary(monkeypatch, tmp_path):
+    _set_required_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        created = _create(
+            client,
+            client_upload_id="client-upload-hard-boundary",
+            size_bytes=MAX_UPLOAD_SESSION_SIZE_BYTES,
+        )
+
+    assert created.status_code == 201
+    assert created.json()["size_bytes"] == MAX_UPLOAD_SESSION_SIZE_BYTES
+    assert created.json()["total_chunks"] == MAX_UPLOAD_CHUNKS

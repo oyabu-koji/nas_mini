@@ -107,5 +107,66 @@ services:
     volumes:
       - backend-db:/data
 
+  phase2c-migrator:
+    profiles:
+      - phase2c-migration
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.migrate_phase2c_safe_delete_candidate
+      - --dry-run
+      - --offline-maintenance-confirmed
+    environment:
+      API_TOKEN: migration-not-exposed
+      DATABASE_PATH: /data/mediavault.sqlite3
+      MEDIA_ROOT: /unmounted-media
+      USER_LUT_ROOT: ""
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - backend-db:/data
+
+  phase2c-reconciler:
+    profiles:
+      - phase2c-reconciliation
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.reconcile_safe_delete_candidates
+      - --dry-run
+    environment:
+      API_TOKEN: reconciliation-not-exposed
+      DATABASE_PATH: /data/mediavault.sqlite3
+      MEDIA_ROOT: /unmounted-media
+      USER_LUT_ROOT: ""
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - backend-db:/data
+
 volumes:
   backend-db:

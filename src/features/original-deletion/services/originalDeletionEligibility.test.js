@@ -7,10 +7,14 @@ const common = {
     verification_status: 'file_verified',
     preview_status: 'preview_ready',
     review_status: 'preview_confirmed',
+    delete_candidate_status: 'safe_to_delete_candidate',
     formal_preview: { state: 'ready' },
   },
   capabilities: {
-    features: { formalAppleLogPreview: true },
+    features: {
+      formalAppleLogPreview: true,
+      safeDeleteCandidate: true,
+    },
   },
   mappingState: {
     status: 'available',
@@ -84,7 +88,18 @@ describe('isOriginalDeletionEligible', () => {
 
   it.each([
     null,
-    { features: { formalAppleLogPreview: false } },
+    {
+      features: {
+        formalAppleLogPreview: false,
+        safeDeleteCandidate: true,
+      },
+    },
+    {
+      features: {
+        formalAppleLogPreview: true,
+        safeDeleteCandidate: false,
+      },
+    },
     { features: {} },
   ])('rejects Phase 2 when capability is unavailable: %o', (capabilities) => {
     expect(eligible({ capabilities })).toBe(false);
@@ -96,6 +111,16 @@ describe('isOriginalDeletionEligible', () => {
       expect(eligible({ asset: { formal_preview: formalPreview } })).toBe(false);
     },
   );
+
+  it.each([
+    undefined,
+    'not_candidate',
+    'future_candidate',
+  ])('rejects Phase 2 candidate status %p', (deleteCandidateStatus) => {
+    expect(eligible({
+      asset: { delete_candidate_status: deleteCandidateStatus },
+    })).toBe(false);
+  });
 
   it('does not treat managed results or a legacy LOG hint as deletion authority', () => {
     expect(eligible({

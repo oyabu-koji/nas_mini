@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.deps import require_bearer_token
 from app.core.settings import load_settings
+from app.db.phase_schema_identity import PhaseSchemaIdentityError
 from app.schemas.assets import (
     AssetDetailResponse,
     AssetListResponse,
@@ -50,6 +51,7 @@ from app.services.client_compatibility import (
     IncompatibleClientError,
     require_compatible_client_for_asset,
 )
+from app.services.phase2_rollout import resolve_phase2_rollout
 from app.services.upload import UploadTooLargeError, create_upload_asset
 
 
@@ -140,6 +142,8 @@ def stream_processed_result(
         )
     except IncompatibleClientError:
         return _conflict("incompatible_client")
+    except PhaseSchemaIdentityError as exc:
+        return _service_unavailable(exc.code)
     try:
         return open_processed_result_stream(
             settings=settings,
@@ -193,13 +197,17 @@ def stream_asset_preview(
 ):
     settings = load_settings()
     try:
-        phase2b_asset = require_compatible_client_for_asset(
+        rollout = resolve_phase2_rollout(
             settings=settings,
             asset_id=asset_id,
             client_version=client_version,
+            require_client_for_phase2_asset=True,
         )
+        phase2b_asset = rollout.phase2_asset
     except IncompatibleClientError:
         return _conflict("incompatible_client")
+    except PhaseSchemaIdentityError as exc:
+        return _service_unavailable(exc.code)
     try:
         return open_preview_stream(
             settings=settings,
@@ -244,15 +252,23 @@ def confirm_asset_preview(
 ):
     settings = load_settings()
     try:
-        phase2b_asset = require_compatible_client_for_asset(
+        rollout = resolve_phase2_rollout(
             settings=settings,
             asset_id=asset_id,
             client_version=client_version,
+            require_client_for_phase2_asset=True,
         )
+        phase2b_asset = rollout.phase2_asset
     except IncompatibleClientError:
         return _conflict("incompatible_client")
+    except PhaseSchemaIdentityError as exc:
+        return _service_unavailable(exc.code)
     try:
-        return confirm_preview(settings=settings, asset_id=asset_id)
+        return confirm_preview(
+            settings=settings,
+            asset_id=asset_id,
+            allow_candidate_promotion=rollout.safe_delete_candidate,
+        )
     except AssetNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -272,5 +288,12 @@ def confirm_asset_preview(
 def _conflict(code: str) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_409_CONFLICT,
+        content={"code": code, "retryable": False},
+    )
+
+
+def _service_unavailable(code: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"code": code, "retryable": False},
     )

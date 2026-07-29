@@ -26,6 +26,7 @@ def _settings(tmp_path):
         api_token="secret-token",
         database_path=tmp_path / "db.sqlite3",
         upload_session_chunk_size_bytes=8,
+        upload_session_max_size_bytes=1024,
     )
     initialize_storage(settings.media_root)
     with connect(settings.database_path, 5000) as conn:

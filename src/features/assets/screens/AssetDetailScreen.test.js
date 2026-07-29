@@ -11,13 +11,38 @@ jest.mock('../../processed-results/hooks/useProcessedResultSave', () => ({
 jest.mock('../../managed-renditions/hooks/useManagedRendition', () => ({
   useManagedRendition: jest.fn(),
 }));
+jest.mock('../../original-deletion/hooks/useDeletionCapability', () => ({
+  useDeletionCapability: jest.fn(),
+}));
+jest.mock('../../original-deletion/hooks/useOriginalDeletion', () => ({
+  useOriginalDeletion: jest.fn(),
+}));
 
 const { useAssetDetail } = require('../hooks/useAssets');
 const { useProcessedResultSave } = require('../../processed-results/hooks/useProcessedResultSave');
 const { useManagedRendition } = require('../../managed-renditions/hooks/useManagedRendition');
+const { useDeletionCapability } = require('../../original-deletion/hooks/useDeletionCapability');
+const { useOriginalDeletion } = require('../../original-deletion/hooks/useOriginalDeletion');
 
 describe('AssetDetailScreen LOG safety gate', () => {
   beforeEach(() => {
+    useDeletionCapability.mockReturnValue({
+      capabilities: {
+        features: {
+          formalAppleLogPreview: true,
+          safeDeleteCandidate: true,
+        },
+      },
+      status: 'ready',
+      error: null,
+      refreshCapabilities: jest.fn().mockResolvedValue(null),
+    });
+    useOriginalDeletion.mockReturnValue({
+      canDelete: false,
+      status: 'idle',
+      error: null,
+      requestDeletion: jest.fn(),
+    });
     useManagedRendition.mockReturnValue({
       eligible: false,
       catalogStatus: 'idle',
@@ -346,5 +371,146 @@ describe('AssetDetailScreen LOG safety gate', () => {
     expect(view.getByText('Identity test')).toBeTruthy();
     await fireEvent.press(view.getByText('Render rendition'));
     expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      'safe_to_delete_candidate',
+      'Ready for explicit iPhone deletion',
+    ],
+    [
+      'not_candidate',
+      'Not ready for iPhone deletion',
+    ],
+    [
+      'future_value',
+      'Not ready for iPhone deletion',
+    ],
+  ])('shows candidate state %s with matching accessibility text', async (
+    deleteCandidateStatus,
+    expectedText,
+  ) => {
+    useAssetDetail.mockReturnValue({
+      asset: {
+        id: 42,
+        type: 'video',
+        filename: 'clip.mov',
+        size_bytes: 10,
+        server_sha256: 'hash',
+        taken_at: null,
+        is_log: false,
+        transfer_status: 'uploaded',
+        verification_status: 'file_verified',
+        preview_status: 'preview_ready',
+        review_status: 'preview_confirmed',
+        delete_candidate_status: deleteCandidateStatus,
+        formal_preview: { state: 'ready', result: null },
+      },
+      status: 'ready',
+      error: null,
+      loadAsset: jest.fn(),
+    });
+
+    const view = await render(
+      <AssetDetailScreen
+        assetId={42}
+        canUseApi
+        onBack={jest.fn()}
+        onPreview={jest.fn()}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
+      />,
+    );
+
+    expect(view.getByText(expectedText).props.accessibilityLabel).toBe(expectedText);
+  });
+
+  it('refreshes asset, deletion capability, and managed catalog together', async () => {
+    const loadAsset = jest.fn().mockResolvedValue(null);
+    const refreshCapabilities = jest.fn().mockResolvedValue(null);
+    const reloadCatalog = jest.fn().mockResolvedValue(null);
+    useAssetDetail.mockReturnValue({
+      asset: null,
+      status: 'error',
+      error: null,
+      loadAsset,
+    });
+    useDeletionCapability.mockReturnValue({
+      capabilities: null,
+      status: 'error',
+      error: null,
+      refreshCapabilities,
+    });
+    useManagedRendition.mockReturnValue({
+      eligible: false,
+      catalogStatus: 'idle',
+      capabilities: null,
+      presets: [],
+      selectedPresetId: null,
+      submitStatus: 'idle',
+      rendition: null,
+      error: null,
+      selectPreset: jest.fn(),
+      submit: jest.fn(),
+      retry: jest.fn(),
+      reloadCatalog,
+    });
+    const view = await render(
+      <AssetDetailScreen
+        assetId={42}
+        canUseApi
+        onBack={jest.fn()}
+        onPreview={jest.fn()}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
+      />,
+    );
+
+    await fireEvent.press(view.getByText('Refresh'));
+
+    expect(loadAsset).toHaveBeenCalledTimes(1);
+    expect(refreshCapabilities).toHaveBeenCalledTimes(1);
+    expect(reloadCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps candidate readiness distinct from terminal local deletion', async () => {
+    useAssetDetail.mockReturnValue({
+      asset: {
+        id: 42,
+        type: 'video',
+        filename: 'clip.mov',
+        size_bytes: 10,
+        server_sha256: 'hash',
+        taken_at: null,
+        is_log: false,
+        transfer_status: 'uploaded',
+        verification_status: 'file_verified',
+        preview_status: 'preview_ready',
+        review_status: 'preview_confirmed',
+        delete_candidate_status: 'safe_to_delete_candidate',
+        formal_preview: { state: 'ready', result: null },
+      },
+      status: 'ready',
+      error: null,
+      loadAsset: jest.fn(),
+    });
+    useOriginalDeletion.mockReturnValue({
+      canDelete: false,
+      status: 'deleted',
+      error: null,
+      requestDeletion: jest.fn(),
+    });
+
+    const view = await render(
+      <AssetDetailScreen
+        assetId={42}
+        canUseApi
+        onBack={jest.fn()}
+        onPreview={jest.fn()}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
+      />,
+    );
+
+    expect(view.getByText('Ready for explicit iPhone deletion')).toBeTruthy();
+    expect(view.getByText('iPhone original deleted.')).toBeTruthy();
+    expect(view.queryByText('Delete iPhone original')).toBeNull();
   });
 });

@@ -5,6 +5,9 @@ from pathlib import Path
 
 DEFAULT_BUILT_IN_PRESET_ROOT = Path(__file__).parents[2] / "assets/lut/presets"
 DEFAULT_DETECTOR_ROOT = Path(__file__).parents[2] / "assets/detectors/apple-log-v1"
+MAX_UPLOAD_SESSION_SIZE_BYTES = 1_099_511_627_776
+MAX_UPLOAD_CHUNK_SIZE_BYTES = 8_388_608
+MAX_UPLOAD_CHUNKS = 131_072
 
 
 class SettingsError(RuntimeError):
@@ -35,6 +38,12 @@ class Settings:
     upload_session_active_limit: int = 2
     upload_session_expiry_seconds: int = 604_800
     upload_session_retry_after_seconds: int = 30
+
+    def __post_init__(self) -> None:
+        _validate_upload_session_bounds(
+            max_size_bytes=self.upload_session_max_size_bytes,
+            chunk_size_bytes=self.upload_session_chunk_size_bytes,
+        )
 
 
 def load_settings() -> Settings:
@@ -121,3 +130,28 @@ def _bounded_positive_int(name: str, default: int, *, maximum: int) -> int:
     if value > maximum:
         raise SettingsError(f"{name} must be at most {maximum}")
     return value
+
+
+def _validate_upload_session_bounds(
+    *,
+    max_size_bytes: int,
+    chunk_size_bytes: int,
+) -> None:
+    if not isinstance(max_size_bytes, int) or max_size_bytes <= 0:
+        raise SettingsError("UPLOAD_SESSION_MAX_SIZE_BYTES must be a positive integer")
+    if max_size_bytes > MAX_UPLOAD_SESSION_SIZE_BYTES:
+        raise SettingsError(
+            f"UPLOAD_SESSION_MAX_SIZE_BYTES must be at most {MAX_UPLOAD_SESSION_SIZE_BYTES}"
+        )
+    if not isinstance(chunk_size_bytes, int) or chunk_size_bytes <= 0:
+        raise SettingsError("UPLOAD_SESSION_CHUNK_SIZE_BYTES must be a positive integer")
+    if chunk_size_bytes > MAX_UPLOAD_CHUNK_SIZE_BYTES:
+        raise SettingsError(
+            f"UPLOAD_SESSION_CHUNK_SIZE_BYTES must be at most {MAX_UPLOAD_CHUNK_SIZE_BYTES}"
+        )
+    total_chunks = (max_size_bytes + chunk_size_bytes - 1) // chunk_size_bytes
+    if total_chunks > MAX_UPLOAD_CHUNKS:
+        raise SettingsError(
+            "UPLOAD_SESSION_MAX_SIZE_BYTES and UPLOAD_SESSION_CHUNK_SIZE_BYTES "
+            f"must require at most {MAX_UPLOAD_CHUNKS} chunks"
+        )

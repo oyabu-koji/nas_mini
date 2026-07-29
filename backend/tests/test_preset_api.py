@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.detector_capability import DetectorCapability
+from app.services.phase2_rollout import Phase2RolloutSnapshot
 
 
 def configure(monkeypatch, tmp_path, *, with_custom=False):
@@ -40,6 +40,7 @@ def test_capabilities_are_authenticated_and_report_fixed_feature_flags(monkeypat
             "numeric_rendition_progress": False,
             "detector_certified": False,
             "formal_apple_log_preview": False,
+            "safe_delete_candidate": False,
         },
     }
 
@@ -68,12 +69,16 @@ def test_capabilities_require_mobile_020_only_when_formal_preview_is_enabled(
 ):
     configure(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "app.api.capabilities.evaluate_detector_capability",
-        lambda _settings: DetectorCapability(
-            mode="phase2b_enabled",
+        "app.api.capabilities.resolve_phase2_rollout",
+        lambda **_kwargs: Phase2RolloutSnapshot(
+            phase2b_schema_enabled=True,
+            phase2c_schema_enabled=False,
+            minimum_client_version="0.2.0",
+            phase2_asset=False,
             detector_certified=True,
             formal_apple_log_preview=True,
-            blocked_reason=None,
+            safe_delete_candidate=False,
+            runtime_blocked_reason=None,
         ),
     )
 

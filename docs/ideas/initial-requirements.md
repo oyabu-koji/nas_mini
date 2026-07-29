@@ -372,7 +372,8 @@ Phase 2以降で、以下をすべて満たした場合のみ `safe_to_delete_ca
 - `assets.preview_status = preview_ready`
 - Phase 2Cのvideoでは、`assets.formal_preview_id`が対応するpreview provenanceを指す。
   - `log_detection_status = apple_log`では、有効なLUTを適用した`transform_kind = lut`の完全なLUT provenance、または`transform_kind = none`、`applied_preset_id = compress-only`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を持つ未変換fallback provenanceを要求する。
-  - `log_detection_status = not_log`または`unknown`では、`transform_kind = none`と対応する色変換状態を持つprovenanceを要求する。有効なユーザー選択LUTを適用した場合だけ`transform_kind = lut`を許可する。
+  - `log_detection_status = not_log`または`unknown`では、現在の自動formal previewである`requested_preset_id = compress-only`、`applied_preset_id = compress-only`、`transform_kind = none`、`color_transform_status = not_requested`、変換エラーなし、LUT identityなしのprovenanceだけを要求する。
+  - identity、test、customを含むユーザー選択LUTのmanaged renditionは別用途の生成物として扱い、formal previewまたは削除候補判定のauthorityにはしない。
 - `assets.review_status = preview_confirmed`
 
 ## Directory Structure

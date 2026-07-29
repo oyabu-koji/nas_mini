@@ -165,7 +165,9 @@ def prepare_formal_preview_attempt(
                 conn.execute(
                     """
                     UPDATE assets
-                    SET preview_status = 'failed', updated_at = CURRENT_TIMESTAMP
+                    SET preview_status = 'failed',
+                        delete_candidate_status = 'not_candidate',
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ? AND preview_generation = ?
                     """,
                     (asset_id, job_generation),
@@ -615,7 +617,9 @@ def _fail_current_attempt(
             conn.execute(
                 """
                 UPDATE assets
-                SET preview_status = 'failed', updated_at = CURRENT_TIMESTAMP
+                SET preview_status = 'failed',
+                    delete_candidate_status = 'not_candidate',
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND preview_generation = ?
                 """,
                 (current["asset_id"], current["preview_generation"]),

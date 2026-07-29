@@ -23,6 +23,7 @@ function capabilities(overrides = {}) {
       numeric_rendition_progress: false,
       detector_certified: false,
       formal_apple_log_preview: false,
+      safe_delete_candidate: false,
     },
     unknown_server_field: 'ignored',
     ...overrides,
@@ -86,16 +87,17 @@ describe('managedRenditionApi', () => {
       numericRenditionProgress: false,
       detectorCertified: false,
       formalAppleLogPreview: false,
+      safeDeleteCandidate: false,
     });
     expect(() => sanitizeCapabilities(capabilities({ api_version: 'v2' }))).toThrow('capabilities');
-    expect(() => sanitizeCapabilities(capabilities({
+    expect(sanitizeCapabilities(capabilities({
       features: { ...capabilities().features, managed_preview_presets: false },
-    }))).toThrow('compatible');
+    })).features.managedPreviewPresets).toBe(false);
     expect(() => sanitizeCapabilities(capabilities({
       minimum_client_version: '0.2',
     }))).toThrow('capabilities');
     expect(() => sanitizeCapabilities(capabilities({
-      minimum_client_version: '0.3.0',
+      minimum_client_version: '0.3.1',
     }))).toThrow('compatible');
     expect(sanitizeCapabilities(capabilities({
       minimum_client_version: '0.2.0',
@@ -105,6 +107,26 @@ describe('managedRenditionApi', () => {
         formal_apple_log_preview: true,
       },
     })).features.formalAppleLogPreview).toBe(true);
+    expect(() => sanitizeCapabilities(capabilities({
+      minimum_client_version: '0.3.0',
+      features: {
+        ...capabilities().features,
+        safe_delete_candidate: true,
+      },
+    }))).toThrow('capabilities');
+  });
+
+  it('keeps managed capability discovery dependent on the managed feature flag', async () => {
+    global.fetch.mockResolvedValue(response(capabilities({
+      features: {
+        ...capabilities().features,
+        managed_preview_presets: false,
+      },
+    })));
+
+    await expect(getManagedCapabilities(settings)).rejects.toMatchObject({
+      code: 'incompatible_client',
+    });
   });
 
   it('requires server returned compress-only and filters unknown preset kinds', () => {

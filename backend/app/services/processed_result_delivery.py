@@ -17,6 +17,9 @@ from app.services.processed_result_integrity import (
     verify_processed_result,
 )
 from app.services.processed_result_authority import classify_active_processed_result
+from app.services.formal_preview_authority import (
+    has_allowed_formal_transform_claim,
+)
 
 
 @dataclass(frozen=True)
@@ -120,6 +123,55 @@ def resolve_formal_preview_result(
         return None
     return _resolve_formal_delivery(
         settings=settings, conn=conn, asset=asset, result=result
+    )
+
+
+def has_valid_formal_preview_relation(
+    *,
+    conn,
+    asset: dict[str, Any],
+) -> bool:
+    result_id = asset.get("formal_preview_id")
+    if not isinstance(result_id, str):
+        return False
+    result = get_processed_result(
+        conn,
+        asset_id=int(asset["id"]),
+        result_id=result_id,
+    )
+    if (
+        result is None
+        or asset.get("preview_status") != PREVIEW_STATUS_PREVIEW_READY
+        or result.get("status") != "ready"
+        or result.get("preview_generation") != asset.get("preview_generation")
+    ):
+        return False
+    derived_file_id = result.get("derived_file_id")
+    if not isinstance(derived_file_id, int):
+        return False
+    derived_file = get_derived_file(conn, derived_file_id)
+    if derived_file is None:
+        return False
+    provenance = conn.execute(
+        """
+        SELECT preview_provenance.*, formal_preview_attempts.state AS attempt_state,
+               formal_preview_attempts.result_id AS attempt_result_id,
+               formal_preview_attempts.detector_evidence_json
+        FROM preview_provenance
+        JOIN formal_preview_attempts
+          ON formal_preview_attempts.id = preview_provenance.attempt_id
+        WHERE preview_provenance.result_id = ?
+        """,
+        (result_id,),
+    ).fetchone()
+    return bool(
+        provenance is not None
+        and _valid_formal_provenance(
+            asset=asset,
+            result=result,
+            derived_file=derived_file,
+            provenance=dict(provenance),
+        )
     )
 
 
@@ -256,29 +308,7 @@ def _valid_formal_provenance(
         and provenance.get("detector_evidence_sha256")
         == asset.get("detector_evidence_sha256")
     )
-    apple_fallback = (
-        provenance.get("detection_status") == "apple_log"
-        and provenance.get("requested_preset_id")
-        == "generated-apple-log-rec709"
-        and provenance.get("applied_preset_id") == "compress-only"
-        and provenance.get("transform_kind") == "none"
-        and provenance.get("color_transform_status") == "unavailable"
-        and provenance.get("color_transform_error_code")
-        == "lut_preset_unavailable"
-        and provenance.get("manifest_sha256") is None
-        and provenance.get("lut_sha256") is None
-    )
-    ordinary = (
-        provenance.get("detection_status") in {"not_log", "unknown"}
-        and provenance.get("requested_preset_id") == "compress-only"
-        and provenance.get("applied_preset_id") == "compress-only"
-        and provenance.get("transform_kind") == "none"
-        and provenance.get("color_transform_status") == "not_requested"
-        and provenance.get("color_transform_error_code") is None
-        and provenance.get("manifest_sha256") is None
-        and provenance.get("lut_sha256") is None
-    )
-    return bool(common and (apple_fallback or ordinary))
+    return bool(common and has_allowed_formal_transform_claim(provenance))
 
 
 def _passes_phase2b_forward_gate(

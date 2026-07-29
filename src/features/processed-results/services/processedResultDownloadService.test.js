@@ -80,7 +80,7 @@ describe('processedResultDownloadService', () => {
       expect.objectContaining({
         headers: {
           Authorization: 'Bearer secret-token',
-          'X-MediaVault-Client-Version': '0.2.0',
+          'X-MediaVault-Client-Version': '0.3.0',
         },
       }),
       expect.any(Function),

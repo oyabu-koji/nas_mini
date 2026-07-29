@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 
 from app.core.settings import Settings
 from app.db.connection import connect
-from app.db.phase2b import PHASE2B_MIGRATION_VERSION, schema_sql_sha256
+from app.db.phase2b import PHASE2B_MIGRATION_VERSION
+from app.db.phase_schema_identity import (
+    PhaseSchemaIdentityError,
+    resolve_managed_phase_schema,
+)
 from app.services.apple_log_detector import read_ffprobe_version
 from app.services.bounded_subprocess import BoundedProcessError
 from app.services.detector_manifest import (
@@ -34,6 +37,25 @@ class DetectorCapability:
 
 
 def evaluate_detector_capability(settings: Settings) -> DetectorCapability:
+    runtime = evaluate_detector_runtime(settings)
+    if not runtime.detector_certified:
+        return runtime
+    try:
+        with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+            schema = resolve_managed_phase_schema(conn)
+    except PhaseSchemaIdentityError as exc:
+        return _blocked(exc.code)
+    if not schema.phase2b_valid:
+        return DetectorCapability(
+            mode="phase2a_compatibility",
+            detector_certified=True,
+            formal_apple_log_preview=False,
+            blocked_reason="phase2b_migration_not_applied",
+        )
+    return runtime
+
+
+def evaluate_detector_runtime(settings: Settings) -> DetectorCapability:
     rule_path = settings.detector_root / "detector-rule-input-v1.json"
     manifest_path = settings.detector_root / "manifest.json"
     summary_path = settings.detector_root / "certificate-summary.json"
@@ -54,34 +76,10 @@ def evaluate_detector_capability(settings: Settings) -> DetectorCapability:
         if classify_preset(settings, "compress-only").registry_classification != "valid":
             return _blocked("log_detector_manifest_invalid")
         assert_generated_apple_log_conversion_disabled(settings)
-        with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
-            marker = conn.execute(
-                "SELECT 1 FROM schema_migrations WHERE version = ?",
-                (PHASE2B_MIGRATION_VERSION,),
-            ).fetchone()
-            identity = None
-            if marker is not None:
-                identity = conn.execute(
-                    """
-                    SELECT schema_sql_sha256
-                    FROM phase2b_schema_metadata
-                    WHERE version = ?
-                    """,
-                    (PHASE2B_MIGRATION_VERSION,),
-                ).fetchone()
     except InitialReleaseConfigurationError:
         return _blocked("generated_apple_log_conversion_not_approved")
-    except (DetectorValidationError, BoundedProcessError, OSError, sqlite3.DatabaseError):
+    except (DetectorValidationError, BoundedProcessError, OSError):
         return _blocked("log_detector_manifest_invalid")
-    if marker is None:
-        return DetectorCapability(
-            mode="phase2a_compatibility",
-            detector_certified=True,
-            formal_apple_log_preview=False,
-            blocked_reason="phase2b_migration_not_applied",
-        )
-    if identity is None or identity["schema_sql_sha256"] != schema_sql_sha256():
-        return _blocked("phase2b_migration_schema_identity_mismatch")
     return DetectorCapability(
         mode="phase2b_enabled",
         detector_certified=True,

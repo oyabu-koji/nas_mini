@@ -155,6 +155,9 @@ project-root/
   分離し、legacy preview又は置換された旧managed resultだけをsupersedeする。
 - Phase 2B migration CLIはoffline one-shot serviceだけで動作し、`BEGIN IMMEDIATE`取得後に
   schema/markerとdrain条件を再検証してからDDL、backfill、ledgerを同一transactionへ適用する。
+- `phase_schema_identity.py`はPhase 2B/2Cのmarker、metadata、column、index、trigger SQL identityを
+  closed signalで検証する。`phase2c/009_safe_delete_candidate.sql`はstartup migration外のtrusted
+  assets rebuildと11個のauthority保護triggerを所有する。
 
 ### `backend/app/models/`, `schemas/`
 
@@ -172,6 +175,12 @@ project-root/
   `api`/`worker`非稼働を確認し、`phase2b-migration` profileのone-shot migratorだけを起動する。
 - container内`backend/scripts/migrate_phase2b_formal_preview.py`はDB preflight、
   `BEGIN IMMEDIATE`内の再検証、schema/backfill/ledger transactionだけを所有する。
+- `run_phase2c_safe_delete_candidate_migration.py`とcontainer内
+  `migrate_phase2c_safe_delete_candidate.py`はPhase 2Cのdry-run/applyを分離し、API/worker停止、
+  drain、bounded output、failure時の停止維持を担当する。
+- `run_safe_delete_candidate_reconciliation.py`とcontainer内
+  `reconcile_safe_delete_candidates.py`はnetwork-disabled one-shot serviceでcandidate projectionを
+  dry-run/applyする。
 - `renditions.py`と`rendition_provenance.py`はrequest/job/result/provenance relationを扱い、finalizerのtransactionを内側でcommitしない。
 - formal preview repositoryとrendition repositoryはresult kindを共有flagから推測せず、
   各provenance relationでcurrent authorityを解決する。
@@ -185,6 +194,9 @@ project-root/
   managed finalizerのpointer切替は別のtransition validatorを使い、current selectionの一意なready targetだけを許可する。
 - original非改変ルールを守る。
 - managed presetはmanifest/JCS/`.cube`検証、registry分類、no-follow LUT snapshot、rendition作成、専用処理、原子的finalizeをそれぞれ`preset_manifest.py`、`preset_registry.py`、`lut_snapshot.py`、`rendition_creation.py`、`rendition_processing.py`、`rendition_finalizer.py`へ分離する。
+- `phase2_rollout.py`はschema、client version、runtimeの評価順と0.2.0/0.3.0 floorを共有する。
+  `safe_delete_candidate.py`は4 SQL以下の純粋なrelational evaluator/projection、
+  `safe_delete_reconciliation.py`はoperator再評価transactionを所有する。
 
 ### `modules/streaming-sha256/`
 
@@ -220,7 +232,7 @@ project-root/
 
 - `ios/LatestTemplate/Info.plist`はrelease inputであり、`app.json`と表示名、version、ATSを同期する。
 - `scripts/verify-ios-native-config.mjs`は`plutil`でplistをstructured parseし、
-  `MediaVault`、`0.2.0`、ATS `false/true`を固定commandで検証する。
+  `MediaVault`、Expo/npm/plist/Xcodeの`0.3.0`、ATS `false/true`を固定commandで検証する。
 
 ### `backend/pyproject.toml`, `backend/uv.lock`
 

@@ -111,6 +111,11 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 ### Phase 2C: 安全削除候補
 
 - `upload_sessions.status = completed`、全`upload_chunks.status = verified`、`assets.verification_status = file_verified`、`transform_kind = lut`または`none`の正式provenance付き`assets.preview_status = preview_ready`、`assets.review_status = preview_confirmed`をすべて満たす場合のみ`safe_to_delete_candidate`にする。Apple Logの`compress-only` fallbackも、未変換表示と`none` provenanceを持つ場合はこの条件に含める。
+- Backendの共通evaluatorはsession/chunk/whole-file identity、current formal result・attempt・provenance、preview確認を固定順で検証し、confirmation、offline backfill、operator reconciliationから再利用する。
+- `preview-confirmation`はformal file integrityをwrite transaction外で確認し、`BEGIN IMMEDIATE`後に同じsnapshotを再検証してからreview更新とcandidate projectionを原子的に確定する。
+- `009_safe_delete_candidate`は通常startup migrationへ追加せず、Phase 2B runtimeとdrainを確認したoffline one-shot migrationで適用する。completed upload ledger、finalized original identity、current formal derived identityはSQLite triggerで保護する。
+- Phase 2C有効時のminimum client versionはruntime停止中も`0.3.0`とする。Mobileはformal capability、safe candidate capability、ready formal preview、Backend candidate status、local mappingをすべて満たすPhase 2 videoだけに明示削除操作を表示する。
+- candidateは自動削除命令ではない。iPhone側originalは削除直前にasset/capabilityを再取得し、既存のnative確認後にだけ削除する。Backend original、derived file、asset recordは削除しない。
 
 ## Phase 3+ Backlog
 
@@ -175,8 +180,9 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - Phase 1 direct assetは`verification_status = server_hash_recorded`を根拠とし、
   formal preview capabilityを要求しない。
 - Phase 2 session由来videoは`type = video`かつ`verification_status = file_verified`を
-  根拠とし、compatibleなformal Apple Log preview capabilityと
-  `formal_preview.state = ready`を追加で要求する。
+  根拠とし、compatibleなformal Apple Log preview capability、
+  `safe_delete_candidate` capability、`formal_preview.state = ready`、
+  `delete_candidate_status = safe_to_delete_candidate`を追加で要求する。
 
 ### P0: Private endpointアクセス制御
 
@@ -247,7 +253,7 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - Apple公式LUTの配布元・利用条件、自前生成変換の入力仕様・metadata検出根拠・品質閾値・SHA-256の確定値。
 - Docker Compose上のworker service詳細設定。
 - 将来のLAN/Tailscale endpoint discovery。
-- checked-in iOS設定は`MediaVault`、version `0.2.0`、
+- checked-in iOS設定は`MediaVault`、version `0.3.0`、
   `NSAllowsArbitraryLoads = false`、`NSAllowsLocalNetworking = true`を正とする。
 - `expo-media-library` で取得可能なEXIF/location項目。
 - thumbnail/proxy生成はPhase 1では本番対象外とし、将来候補として扱う。

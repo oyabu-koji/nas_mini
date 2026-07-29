@@ -55,7 +55,7 @@ def test_image_codec_validator_uses_production_image_and_is_isolated():
 def test_phase2b_migrator_is_one_shot_offline_with_only_database_volume():
     compose = (REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     migrator = compose.split("  phase2b-migrator:", maxsplit=1)[1].split(
-        "\nvolumes:", maxsplit=1
+        "\n  phase2c-migrator:", maxsplit=1
     )[0]
 
     assert "phase2b-migration" in migrator
@@ -66,3 +66,18 @@ def test_phase2b_migrator_is_one_shot_offline_with_only_database_volume():
     assert "backend-db:/data" in migrator
     assert "/media_root" not in migrator
     assert migrator.count("    volumes:") == 1
+
+
+def test_phase2c_operator_services_use_importable_module_entrypoints():
+    compose = (REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    migrator = compose.split("  phase2c-migrator:", maxsplit=1)[1].split(
+        "\n  phase2c-reconciler:", maxsplit=1
+    )[0]
+    reconciler = compose.split("  phase2c-reconciler:", maxsplit=1)[1].split(
+        "\nvolumes:", maxsplit=1
+    )[0]
+
+    assert "scripts.migrate_phase2c_safe_delete_candidate" in migrator
+    assert "scripts/migrate_phase2c_safe_delete_candidate.py" not in migrator
+    assert "scripts.reconcile_safe_delete_candidates" in reconciler
+    assert "scripts/reconcile_safe_delete_candidates.py" not in reconciler

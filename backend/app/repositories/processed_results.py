@@ -100,6 +100,17 @@ def get_phase2a_backfill_candidate(
           AND assets.verification_status = 'file_verified'
           AND assets.preview_status = 'preview_ready'
           AND assets.is_log = 0
+          AND (
+              NOT EXISTS (
+                  SELECT 1 FROM processed_results
+                  WHERE processed_results.derived_file_id = derived_files.id
+              )
+              OR EXISTS (
+                  SELECT 1 FROM processed_results
+                  WHERE processed_results.id = assets.active_processed_result_id
+                    AND processed_results.derived_file_id = derived_files.id
+              )
+          )
         """,
         (asset_id,),
     ).fetchone()
@@ -139,6 +150,17 @@ def list_phase2a_backfill_candidates(
           AND assets.verification_status = 'file_verified'
           AND assets.preview_status = 'preview_ready'
           AND assets.is_log = 0
+          AND (
+              NOT EXISTS (
+                  SELECT 1 FROM processed_results
+                  WHERE processed_results.derived_file_id = derived_files.id
+              )
+              OR EXISTS (
+                  SELECT 1 FROM processed_results
+                  WHERE processed_results.id = assets.active_processed_result_id
+                    AND processed_results.derived_file_id = derived_files.id
+              )
+          )
         ORDER BY assets.id ASC
         """
     ).fetchall()

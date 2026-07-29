@@ -160,6 +160,7 @@ def update_preview_status(
         """
         UPDATE assets
         SET preview_status = ?,
+            delete_candidate_status = 'not_candidate',
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
@@ -175,15 +176,14 @@ def update_review_status(
     if review_status != REVIEW_STATUS_PREVIEW_CONFIRMED:
         raise ValueError("unsupported review status")
 
-    with conn:
-        conn.execute(
-            """
-            UPDATE assets
-            SET review_status = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (review_status, asset_id),
-        )
-        row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    conn.execute(
+        """
+        UPDATE assets
+        SET review_status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (review_status, asset_id),
+    )
+    row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
     return dict(row) if row is not None else None

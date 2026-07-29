@@ -254,6 +254,7 @@ def finalize_formal_preview_output(
                         detector_evidence_sha256 = ?,
                         preview_status = 'preview_ready',
                         review_status = 'not_reviewed',
+                        delete_candidate_status = 'not_candidate',
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ? AND preview_generation = ?
                     """,

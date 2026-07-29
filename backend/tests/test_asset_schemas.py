@@ -1,7 +1,16 @@
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.assets import AssetResponse, normalize_taken_at, parse_upload_metadata
+from app.schemas.assets import (
+    AssetReadBaseResponse,
+    AssetResponse,
+    DeleteCandidateStatus,
+    UploadAssetResponse,
+    normalize_taken_at,
+    parse_upload_metadata,
+)
 
 
 def _asset_response(original_path: str) -> AssetResponse:
@@ -29,6 +38,28 @@ def test_asset_response_accepts_relative_original_path():
     response = _asset_response("originals/generated.jpg")
 
     assert response.original_path == "originals/generated.jpg"
+
+
+@pytest.mark.parametrize(
+    "response_model",
+    [AssetResponse, AssetReadBaseResponse, UploadAssetResponse],
+)
+def test_asset_response_candidate_status_is_a_closed_enum(response_model):
+    annotation = response_model.model_fields["delete_candidate_status"].annotation
+
+    assert set(get_args(annotation)) == set(get_args(DeleteCandidateStatus))
+
+
+def test_asset_response_rejects_unknown_candidate_status():
+    response = _asset_response("originals/generated.jpg")
+
+    with pytest.raises(ValidationError):
+        AssetResponse.model_validate(
+            {
+                **response.model_dump(),
+                "delete_candidate_status": "unexpected",
+            }
+        )
 
 
 def test_asset_response_rejects_host_absolute_path():

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { getLocalAssetMappingState } from '../../../shared/services/localAssetMappingStore';
@@ -10,12 +10,21 @@ import {
   writeOriginalDeletionOutcome,
 } from '../services/originalDeletionStore';
 
-export function useOriginalDeletion({ asset, capabilities }) {
+export function useOriginalDeletion({
+  asset,
+  capabilities,
+  refreshAsset,
+  refreshCapabilities,
+}) {
   const [mappingState, setMappingState] = useState(null);
   const [outcome, setOutcome] = useState(null);
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState(null);
   const assetId = asset?.id ?? null;
+  const currentAssetIdRef = useRef(assetId);
+  const currentMappingStateRef = useRef(mappingState);
+  currentAssetIdRef.current = assetId;
+  currentMappingStateRef.current = mappingState;
 
   useEffect(() => {
     let active = true;
@@ -67,15 +76,24 @@ export function useOriginalDeletion({ asset, capabilities }) {
     status,
   ]);
 
-  const performDeletion = useCallback(async () => {
-    if (!eligible || !assetId) {
+  const performDeletion = useCallback(async ({
+    expectedAssetId = assetId,
+    expectedLocalAssetId = mappingState?.mapping?.localAssetId,
+  } = {}) => {
+    if (
+      !eligible
+      || !assetId
+      || expectedAssetId !== currentAssetIdRef.current
+      || expectedLocalAssetId !== currentMappingStateRef.current?.mapping?.localAssetId
+      || Number(currentMappingStateRef.current?.mapping?.backendAssetId) !== Number(expectedAssetId)
+    ) {
       return;
     }
     setStatus('deleting');
     setError(null);
     try {
       await deleteOriginalAsset({
-        localAssetId: mappingState.mapping.localAssetId,
+        localAssetId: expectedLocalAssetId,
       });
     } catch (deleteError) {
       const displayError = toDisplayError(deleteError);
@@ -112,23 +130,72 @@ export function useOriginalDeletion({ asset, capabilities }) {
     }
   }, [assetId, eligible, mappingState]);
 
-  const requestDeletion = useCallback(() => {
+  const requestDeletion = useCallback(async () => {
     if (!eligible) {
       return;
     }
+
+    const [assetRefresh, capabilityRefresh] = await Promise.allSettled([
+      Promise.resolve().then(refreshAsset),
+      Promise.resolve().then(refreshCapabilities),
+    ]);
+    const latestAsset = assetRefresh.status === 'fulfilled'
+      ? assetRefresh.value
+      : null;
+    const latestCapabilities = capabilityRefresh.status === 'fulfilled'
+      ? capabilityRefresh.value
+      : null;
+
+    const sameAsset = latestAsset?.id === assetId;
+    const sameMapping = (
+      mappingState?.status === 'available'
+      && Number(mappingState.mapping?.backendAssetId) === Number(assetId)
+      && Boolean(mappingState.mapping?.localAssetId)
+    );
+    const stillEligible = (
+      sameAsset
+      && sameMapping
+      && isOriginalDeletionEligible({
+        asset: latestAsset,
+        capabilities: latestCapabilities,
+        mappingState,
+        outcome,
+        status,
+      })
+    );
+    if (!stillEligible) {
+      Alert.alert(
+        'Deletion no longer available',
+        'The latest asset state is not ready for iPhone deletion. Refresh and try again.',
+      );
+      return;
+    }
+
     Alert.alert(
       'Delete iPhone original?',
-      `${asset.filename}\nOnly the iPhone original will be deleted. Backend originals and processed videos are kept.`,
+      `${latestAsset.filename}\nOnly the iPhone original will be deleted. Backend originals and processed videos are kept.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: performDeletion,
+          onPress: () => performDeletion({
+            expectedAssetId: latestAsset.id,
+            expectedLocalAssetId: mappingState.mapping.localAssetId,
+          }),
         },
       ],
     );
-  }, [asset?.filename, eligible, performDeletion]);
+  }, [
+    assetId,
+    eligible,
+    mappingState,
+    outcome,
+    performDeletion,
+    refreshAsset,
+    refreshCapabilities,
+    status,
+  ]);
 
   return {
     canDelete: eligible,

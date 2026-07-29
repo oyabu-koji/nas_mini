@@ -207,6 +207,7 @@ describe('mediaVaultApi timeouts', () => {
     });
 
     expect(asset.original_path).toBeUndefined();
+    expect(asset.delete_candidate_status).toBe('not_candidate');
     expect(asset.active_processed_result).toEqual({
       result_id: resultId,
       mime_type: 'video/mp4',
@@ -215,6 +216,18 @@ describe('mediaVaultApi timeouts', () => {
       created_at: '2026-07-18T00:00:00Z',
       url: `/assets/42/results/${resultId}`,
     });
+  });
+
+  it.each([
+    ['safe_to_delete_candidate', 'safe_to_delete_candidate'],
+    ['not_candidate', 'not_candidate'],
+    ['future_candidate', 'not_candidate'],
+    [undefined, 'not_candidate'],
+  ])('closes candidate status %p to %p', (input, expected) => {
+    expect(sanitizeAsset({
+      id: 42,
+      delete_candidate_status: input,
+    }).delete_candidate_status).toBe(expected);
   });
 
   it('rejects absolute, query, fragment, and path-mismatched result URLs before building an authenticated source', () => {
@@ -268,7 +281,7 @@ describe('mediaVaultApi timeouts', () => {
       uri: `http://mediavault/assets/42/results/${resultId}`,
       headers: {
         Authorization: 'Bearer secret-token',
-        'X-MediaVault-Client-Version': '0.2.0',
+        'X-MediaVault-Client-Version': '0.3.0',
       },
     });
   });

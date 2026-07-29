@@ -347,6 +347,11 @@ export function sanitizeAsset(asset) {
 
   const safeAsset = { ...asset };
   delete safeAsset.original_path;
+  safeAsset.delete_candidate_status = (
+    safeAsset.delete_candidate_status === 'safe_to_delete_candidate'
+      ? 'safe_to_delete_candidate'
+      : 'not_candidate'
+  );
   if (Object.prototype.hasOwnProperty.call(safeAsset, 'active_processed_result')) {
     safeAsset.active_processed_result = sanitizeProcessedResult(
       safeAsset.active_processed_result,

@@ -252,7 +252,11 @@ def insert_preview_provenance(
             attempt["applied_preset_id"],
             attempt["preset_display_name"],
             attempt["preset_kind"],
-            attempt["preset_version"],
+            (
+                attempt["preset_version"]
+                if attempt["color_transform_status"] == "applied"
+                else None
+            ),
             attempt["manifest_sha256"],
             attempt["expected_lut_sha256"],
             attempt["transform_kind"],

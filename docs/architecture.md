@@ -114,6 +114,9 @@ graph LR
 - processed_resultsはPhase 2Aのdeliverable video identityである。assetsのdeferred active pointerはsame-assetの`ready` resultだけを指し、result/derived file/size/SHA-256/pointer/job完了は一つのtransactionで確定する。
 - renditionsはglobal uniqueなclient request ID、job、asset、selection generation、immutable preset snapshot、phase、nullable resultを持つ。rendition_provenanceはrendition/result/derived fileと一対一で、要求・適用presetとmanifest/LUT digest、transform outcomeを不変に保持する。
 - Phase 2Bではcertified detector manifest、generation単位の`formal_preview_attempts`、完成したderived/resultと一対一のpreview provenanceを追加する。attemptはdetector/preset snapshot、provenanceは要求・適用preset、version、SHA-256、色変換状態・未適用理由を記録し、Apple Log fallbackを含む`transform_kind = none`も扱う。rendition provenanceとは相互変換しない。
+- Phase 2Cでは`safe_to_delete_candidate`をstored projectionとして扱い、session/chunk/whole-file identityとcurrent formal relationを共通evaluatorで再導出する。candidate単独を削除権限にせず、Mobile local mappingと明示確認を別authorityとして維持する。
+- `009_safe_delete_candidate`はstartup migrationに含めない。offline one-shot migratorがPhase 2B identity、runtime、drain、upload hard boundsをread/locked preflightし、assets table rebuild、metadata、backfill、foreign key/candidate integrityを一transactionで確定する。
+- completed session/chunk、file-verified original identity、current formal derived identityはSQLite triggerで不変にし、preview generation、formal pointer、review、detection authorityを変える正規更新はcandidateを同一statement又は同一transactionで降格する。
 - statusは一つの列へ集約せず、役割ごとに分離する。
 
 ### Mobile Local State
@@ -182,7 +185,7 @@ ${MEDIA_ROOT}/
 - iPhoneから接続するbackendは`127.0.0.1`ではなく、Tailscale IP、MagicDNS名、またはLAN IPで指定する。
 - URL policyはcredential、query、fragment、non-root path、public HTTP、
   `localhost`、qualified `.ts.net` HTTPをAuthorization header生成前に拒否する。
-- checked-in Expo/plistは表示名`MediaVault`、version `0.2.0`、
+- checked-in Expo/plistは表示名`MediaVault`、version `0.3.0`、
   `NSAllowsArbitraryLoads = false`、`NSAllowsLocalNetworking = true`で同期し、
   application URL policyをATSより上位のauthorityとする。
 - iPhone側original削除はユーザー確認を必須とし、background jobや自動同期で実行しない。
@@ -204,6 +207,8 @@ ${MEDIA_ROOT}/
 - Phase 2Bではtemporary LOG safety triggerを、`type = video AND verification_status = file_verified`のassetで`formal_preview_id`と`log_detection_status`に応じたformal preview provenanceがない場合に`preview_ready`を拒否するSQLite triggerへmigrationで置換する。Apple Logの未登録または無効化済みpresetは`transform_kind = none`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を持つprovenanceで許可する。登録済みLUTのhash不一致・形式不備・FFmpeg適用失敗だけはterminal failureにする。
 - preview jobのterminal failureでは、jobと存在するassetのstatusを同一SQLite transactionで更新し、部分更新を残さない。
 - Phase 2B preview migrationは旧`api`を先に停止して新規writeを遮断し、旧workerが`preview`/`lut_preview`/`rendition`とnonterminal renditionを全てdrainした後に旧`worker`も停止する。host wrapperが両serviceの非稼働を確認し、DB volumeを持つoffline one-shot migratorだけを起動する。preflight成功後も`BEGIN IMMEDIATE`内でschema/marker、queued/running job、nonterminal rendition、`preview_generating`を再検証し、競合変更又は残件があればschema/data/markerを無変更rollbackする。`phase2b-profile-preview:{asset_id}`の新規insertとasset generation/state更新を同一transactionにし、active resultをpersist済みprovenanceのsteady-state classifierで分類する。current managed resultは保持し、legacy Phase 2A previewだけをsupersedeし、ambiguous relationは全transactionをrollbackする。migration成功又はrollback完了までAPI/workerを再起動しないため、旧jobのlate commitがformal/managed preview又はreview stateを巻き戻さない。
+- Phase 2C confirmationはfilesystem size/SHA-256 preflightをwrite transaction外で完了し、`BEGIN IMMEDIATE`内ではmedia I/Oを行わない。preflight snapshotとformal relationを再読込してからreviewとcandidateを原子的に更新する。runtime停止時は新規昇格せず、relationally validな既存safeを保持し、不正なsafeだけを降格する。
+- Phase 2C reconciliationはruntime snapshotをwrite lock前に取得し、lock内でschema identityを再確認してconfirmed Phase 2 assetと既存safeのunionを同じevaluatorで処理する。dry-runも同じ更新pathをrollbackし、operator出力は件数とstable reasonだけに制限する。
 - rendition作成はread-only replay lookup後にpreflightし、`BEGIN IMMEDIATE`内でreplay、eligibility、active base identityを再確認してからgeneration/job/renditionを作る。finalizerも`BEGIN IMMEDIATE`内でeligibilityとcandidate/provenanceを再検証し、DB失敗時はrollbackしてcandidateをcleanupする。
 
 ## Docker方針

@@ -1,4 +1,5 @@
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from app.core.settings import Settings
 from app.db.connection import connect
@@ -21,10 +22,16 @@ from app.schemas.assets import (
 )
 from app.services.storage import StorageError, resolve_media_path
 from app.services.processed_result_delivery import (
+    DeliverableProcessedResult,
+    has_valid_formal_preview_relation,
     resolve_deliverable_result,
     resolve_formal_preview_result,
 )
 from app.services.formal_preview_read import build_formal_preview_response
+from app.services.safe_delete_candidate import (
+    evaluate_safe_delete_candidate,
+    project_candidate_status,
+)
 
 
 class AssetNotFoundError(RuntimeError):
@@ -37,6 +44,28 @@ class PreviewNotReadyError(RuntimeError):
 
 class PreviewProvenanceInvalidError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class FormalPreviewIntegritySnapshot:
+    result_id: str
+    derived_file_id: int
+    relative_path: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    asset_id: int
+    preview_generation: int
+
+
+@dataclass(frozen=True)
+class FormalPreviewConfirmationPreflight:
+    snapshot: FormalPreviewIntegritySnapshot
+    formal_preview: Any
+    delivery: DeliverableProcessedResult
+
+
+ConfirmationFaultInjector = Callable[[str], None]
 
 
 def list_asset_reads(
@@ -82,58 +111,207 @@ def get_asset_read(settings: Settings, *, asset_id: int) -> AssetDetailResponse:
     )
 
 
-def confirm_preview(settings: Settings, *, asset_id: int) -> AssetDetailResponse:
+def confirm_preview(
+    settings: Settings,
+    *,
+    asset_id: int,
+    allow_candidate_promotion: bool = False,
+    fault_injector: ConfirmationFaultInjector | None = None,
+) -> AssetDetailResponse:
+    preflight = _preflight_confirmation(
+        settings=settings,
+        asset_id=asset_id,
+    )
+    _inject(fault_injector, "after_preflight")
+    with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            asset = get_asset(conn, asset_id)
+            if asset is None:
+                raise AssetNotFoundError("asset not found")
+            is_phase2b = "formal_preview_id" in asset
+            if is_phase2b:
+                if preflight is None:
+                    raise PreviewProvenanceInvalidError()
+                if (
+                    not has_valid_formal_preview_relation(conn=conn, asset=asset)
+                    or not _snapshot_matches(
+                        conn,
+                        asset=asset,
+                        snapshot=preflight.snapshot,
+                    )
+                ):
+                    raise PreviewProvenanceInvalidError()
+            elif (
+                preflight is not None
+                or bool(asset["is_log"])
+                or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY
+            ):
+                raise PreviewNotReadyError("preview is not ready")
+
+            if (
+                is_phase2b
+                and asset.get("delete_candidate_status")
+                == "safe_to_delete_candidate"
+            ):
+                current_evaluation = evaluate_safe_delete_candidate(
+                    conn,
+                    asset_id=asset_id,
+                )
+                if not current_evaluation.eligible:
+                    project_candidate_status(
+                        conn,
+                        asset_id=asset_id,
+                        evaluation=current_evaluation,
+                        allow_promotion=False,
+                    )
+
+            updated_asset = update_review_status(
+                conn,
+                asset_id,
+                REVIEW_STATUS_PREVIEW_CONFIRMED,
+            )
+            if updated_asset is None:
+                raise AssetNotFoundError("asset not found")
+            _inject(fault_injector, "after_review")
+            if is_phase2b:
+                evaluation = evaluate_safe_delete_candidate(
+                    conn,
+                    asset_id=asset_id,
+                )
+                project_candidate_status(
+                    conn,
+                    asset_id=asset_id,
+                    evaluation=evaluation,
+                    allow_promotion=allow_candidate_promotion,
+                )
+                updated_asset = get_asset(conn, asset_id)
+                if updated_asset is None:
+                    raise AssetNotFoundError("asset not found")
+            _inject(fault_injector, "after_candidate")
+            updated_preview = get_preview_for_asset(conn, asset_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    return build_asset_detail_response(
+        asset=updated_asset,
+        preview=updated_preview,
+        active_processed_result=(
+            preflight.delivery
+            if preflight is not None
+            and updated_asset.get("active_processed_result_id")
+            == preflight.snapshot.result_id
+            else None
+        ),
+        formal_preview=preflight.formal_preview if preflight is not None else None,
+    )
+
+
+def _preflight_confirmation(
+    *,
+    settings: Settings,
+    asset_id: int,
+) -> FormalPreviewConfirmationPreflight | None:
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         asset = get_asset(conn, asset_id)
         if asset is None:
             raise AssetNotFoundError("asset not found")
         preview = get_preview_for_asset(conn, asset_id)
-        if "formal_preview_id" in asset:
-            if (
-                resolve_formal_preview_result(
-                    settings=settings, conn=conn, asset=asset
-                )
-                is None
-            ):
-                if (
-                    asset.get("preview_status") == PREVIEW_STATUS_PREVIEW_READY
-                    and asset.get("formal_preview_id") is not None
-                ):
-                    raise PreviewProvenanceInvalidError()
-                raise PreviewNotReadyError("preview is not ready")
-        else:
+        if "formal_preview_id" not in asset:
             if (
                 bool(asset["is_log"])
                 or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY
             ):
                 raise PreviewNotReadyError("preview is not ready")
             _validate_confirmable_preview(settings, preview)
-
-        updated_asset = update_review_status(
-            conn,
-            asset_id,
-            REVIEW_STATUS_PREVIEW_CONFIRMED,
-        )
-        if updated_asset is None:
-            raise AssetNotFoundError("asset not found")
-        updated_preview = get_preview_for_asset(conn, asset_id)
-        deliverable_result = resolve_deliverable_result(
+            return None
+        delivery = resolve_formal_preview_result(
             settings=settings,
             conn=conn,
-            asset=updated_asset,
+            asset=asset,
         )
+        if delivery is None:
+            if (
+                asset.get("preview_status") == PREVIEW_STATUS_PREVIEW_READY
+                and asset.get("formal_preview_id") is not None
+            ):
+                raise PreviewProvenanceInvalidError()
+            raise PreviewNotReadyError("preview is not ready")
         formal_preview = build_formal_preview_response(
             settings=settings,
             conn=conn,
-            asset=updated_asset,
+            asset=asset,
+        )
+        if formal_preview is None or formal_preview.state != "ready":
+            raise PreviewProvenanceInvalidError()
+        result = delivery.result
+        derived = delivery.derived_file
+        return FormalPreviewConfirmationPreflight(
+            snapshot=FormalPreviewIntegritySnapshot(
+                result_id=str(result["id"]),
+                derived_file_id=int(derived["id"]),
+                relative_path=str(derived["path"]),
+                mime_type=str(result["mime_type"]),
+                size_bytes=int(result["size_bytes"]),
+                sha256=str(result["sha256"]),
+                asset_id=int(asset["id"]),
+                preview_generation=int(asset["preview_generation"]),
+            ),
+            formal_preview=formal_preview,
+            delivery=delivery,
         )
 
-    return build_asset_detail_response(
-        asset=updated_asset,
-        preview=updated_preview,
-        active_processed_result=deliverable_result,
-        formal_preview=formal_preview,
+
+def _snapshot_matches(
+    conn,
+    *,
+    asset: dict[str, Any],
+    snapshot: FormalPreviewIntegritySnapshot,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT
+            processed_results.id AS result_id,
+            processed_results.derived_file_id,
+            processed_results.mime_type,
+            processed_results.size_bytes,
+            processed_results.sha256,
+            processed_results.asset_id,
+            processed_results.preview_generation,
+            derived_files.path AS relative_path,
+            derived_files.mime_type AS derived_mime_type,
+            derived_files.size_bytes AS derived_size_bytes,
+            derived_files.asset_id AS derived_asset_id
+        FROM processed_results
+        JOIN derived_files
+          ON derived_files.id = processed_results.derived_file_id
+        WHERE processed_results.id = ?
+        """,
+        (asset.get("formal_preview_id"),),
+    ).fetchone()
+    return bool(
+        row is not None
+        and row["result_id"] == snapshot.result_id
+        and row["derived_file_id"] == snapshot.derived_file_id
+        and row["relative_path"] == snapshot.relative_path
+        and row["mime_type"] == snapshot.mime_type
+        and row["derived_mime_type"] == snapshot.mime_type
+        and row["size_bytes"] == snapshot.size_bytes
+        and row["derived_size_bytes"] == snapshot.size_bytes
+        and row["sha256"] == snapshot.sha256
+        and row["asset_id"] == snapshot.asset_id
+        and row["derived_asset_id"] == snapshot.asset_id
+        and row["preview_generation"] == snapshot.preview_generation
+        and asset.get("id") == snapshot.asset_id
+        and asset.get("preview_generation") == snapshot.preview_generation
     )
+
+
+def _inject(injector: ConfirmationFaultInjector | None, step: str) -> None:
+    if injector is not None:
+        injector(step)
 
 
 def build_asset_list_item_response(

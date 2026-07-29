@@ -112,6 +112,7 @@ def _error_response(error: UploadSessionServiceError) -> JSONResponse:
         "session_expired": status.HTTP_410_GONE,
         "active_session_limit": status.HTTP_429_TOO_MANY_REQUESTS,
         "session_size_limit": status.HTTP_413_CONTENT_TOO_LARGE,
+        "session_chunk_limit": status.HTTP_413_CONTENT_TOO_LARGE,
     }.get(error.code, status.HTTP_409_CONFLICT)
     headers = (
         {"Retry-After": str(error.retry_after_seconds)}

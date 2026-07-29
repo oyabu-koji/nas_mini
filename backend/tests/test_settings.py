@@ -1,6 +1,13 @@
 import pytest
 
-from app.core.settings import SettingsError, load_settings
+from app.core.settings import (
+    MAX_UPLOAD_CHUNKS,
+    MAX_UPLOAD_CHUNK_SIZE_BYTES,
+    MAX_UPLOAD_SESSION_SIZE_BYTES,
+    Settings,
+    SettingsError,
+    load_settings,
+)
 
 
 def test_load_settings_requires_values(monkeypatch):
@@ -122,3 +129,70 @@ def test_settings_error_does_not_include_token_value(monkeypatch, tmp_path):
         load_settings()
 
     assert "super-secret-token" not in str(exc_info.value)
+
+
+def _settings(tmp_path, **overrides):
+    values = {
+        "media_root": tmp_path / "media",
+        "api_token": "secret-token",
+        "database_path": tmp_path / "db.sqlite3",
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
+def test_upload_hard_bound_constants_match_release_contract():
+    assert MAX_UPLOAD_SESSION_SIZE_BYTES == 1_099_511_627_776
+    assert MAX_UPLOAD_CHUNK_SIZE_BYTES == 8_388_608
+    assert MAX_UPLOAD_CHUNKS == 131_072
+
+
+def test_settings_direct_constructor_accepts_exact_upload_boundaries(tmp_path):
+    settings = _settings(
+        tmp_path,
+        upload_session_max_size_bytes=MAX_UPLOAD_SESSION_SIZE_BYTES,
+        upload_session_chunk_size_bytes=MAX_UPLOAD_CHUNK_SIZE_BYTES,
+    )
+
+    assert (
+        settings.upload_session_max_size_bytes
+        + settings.upload_session_chunk_size_bytes
+        - 1
+    ) // settings.upload_session_chunk_size_bytes == MAX_UPLOAD_CHUNKS
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"upload_session_max_size_bytes": 0},
+        {"upload_session_chunk_size_bytes": 0},
+        {"upload_session_max_size_bytes": MAX_UPLOAD_SESSION_SIZE_BYTES + 1},
+        {"upload_session_chunk_size_bytes": MAX_UPLOAD_CHUNK_SIZE_BYTES + 1},
+        {
+            "upload_session_max_size_bytes": MAX_UPLOAD_SESSION_SIZE_BYTES,
+            "upload_session_chunk_size_bytes": MAX_UPLOAD_CHUNK_SIZE_BYTES - 1,
+        },
+    ],
+)
+def test_settings_direct_constructor_rejects_invalid_upload_bounds(tmp_path, overrides):
+    with pytest.raises(SettingsError):
+        _settings(tmp_path, **overrides)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("UPLOAD_SESSION_MAX_SIZE_BYTES", str(MAX_UPLOAD_SESSION_SIZE_BYTES + 1)),
+        ("UPLOAD_SESSION_CHUNK_SIZE_BYTES", str(MAX_UPLOAD_CHUNK_SIZE_BYTES + 1)),
+        ("UPLOAD_SESSION_MAX_SIZE_BYTES", "0"),
+        ("UPLOAD_SESSION_CHUNK_SIZE_BYTES", "0"),
+    ],
+)
+def test_load_settings_rejects_invalid_upload_bounds(monkeypatch, tmp_path, name, value):
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path / "media"))
+    monkeypatch.setenv("API_TOKEN", "secret-token")
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "db.sqlite3"))
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(SettingsError):
+        load_settings()

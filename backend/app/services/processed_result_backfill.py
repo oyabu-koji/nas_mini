@@ -152,7 +152,9 @@ def persist_backfill_outcome(
                 conn.execute(
                     """
                     UPDATE assets
-                    SET preview_status = 'failed', updated_at = CURRENT_TIMESTAMP
+                    SET preview_status = 'failed',
+                        delete_candidate_status = 'not_candidate',
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     (outcome.asset_id,),
@@ -171,7 +173,9 @@ def persist_backfill_outcome(
                 conn.execute(
                     """
                     UPDATE assets
-                    SET preview_status = 'preview_ready', updated_at = CURRENT_TIMESTAMP
+                    SET preview_status = 'preview_ready',
+                        delete_candidate_status = 'not_candidate',
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     (outcome.asset_id,),

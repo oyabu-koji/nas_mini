@@ -6,8 +6,16 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.services.formal_preview_authority import (
+    has_allowed_formal_transform_claim,
+)
+
 
 AssetType = Literal["image", "video"]
+DeleteCandidateStatus = Literal[
+    "not_candidate",
+    "safe_to_delete_candidate",
+]
 TAKEN_AT_PATTERN = re.compile(
     r"^(?P<datetime>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?P<offset>Z|[+-]\d{2}:\d{2})?$"
 )
@@ -46,7 +54,7 @@ class AssetResponse(BaseModel):
     verification_status: str
     preview_status: str
     review_status: str
-    delete_candidate_status: str
+    delete_candidate_status: DeleteCandidateStatus
 
     @field_validator("original_path")
     @classmethod
@@ -90,7 +98,7 @@ class AssetReadBaseResponse(BaseModel):
     verification_status: str
     preview_status: str
     review_status: str
-    delete_candidate_status: str
+    delete_candidate_status: DeleteCandidateStatus
     created_at: str
     updated_at: str
     preview: PreviewMetadataResponse | None
@@ -186,43 +194,16 @@ class FormalPreviewReadyResponse(FormalPreviewBaseResponse):
 
     @model_validator(mode="after")
     def validate_transform_claim(self):
-        fallback = (
-            self.detection_status == "apple_log"
-            and self.requested_preset_id == "generated-apple-log-rec709"
-            and self.applied_preset_id == "compress-only"
-            and self.transform_kind == "none"
-            and self.color_transform_status == "unavailable"
-            and self.color_transform_error_code == "lut_preset_unavailable"
-            and self.applied_preset_display_name is None
-            and self.preset_version is None
-            and self.manifest_sha256 is None
-            and self.lut_sha256 is None
+        values = self.model_dump()
+        display_name_is_valid = (
+            self.applied_preset_display_name is not None
+            if self.color_transform_status == "applied"
+            else self.applied_preset_display_name is None
         )
-        ordinary = (
-            self.detection_status in {"not_log", "unknown"}
-            and self.requested_preset_id == "compress-only"
-            and self.applied_preset_id == "compress-only"
-            and self.transform_kind == "none"
-            and self.color_transform_status == "not_requested"
-            and self.color_transform_error_code is None
-            and self.applied_preset_display_name is None
-            and self.preset_version is None
-            and self.manifest_sha256 is None
-            and self.lut_sha256 is None
-        )
-        future_applied = (
-            self.detection_status == "apple_log"
-            and self.requested_preset_id == "generated-apple-log-rec709"
-            and self.applied_preset_id == "generated-apple-log-rec709"
-            and self.transform_kind == "lut"
-            and self.color_transform_status == "applied"
-            and self.color_transform_error_code is None
-            and self.applied_preset_display_name is not None
-            and self.preset_version is not None
-            and self.manifest_sha256 is not None
-            and self.lut_sha256 is not None
-        )
-        if not (fallback or ordinary or future_applied):
+        if not (
+            display_name_is_valid
+            and has_allowed_formal_transform_claim(values)
+        ):
             raise ValueError("formal preview transform claim is invalid")
         return self
 
@@ -305,7 +286,7 @@ class UploadAssetResponse(BaseModel):
     verification_status: str
     preview_status: str
     review_status: str
-    delete_candidate_status: str
+    delete_candidate_status: DeleteCandidateStatus
 
 
 def _validate_detector_group(value) -> None:

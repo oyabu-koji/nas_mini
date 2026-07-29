@@ -278,6 +278,7 @@ def fail_job_and_asset_preview_in_transaction(
             """
             UPDATE assets
             SET preview_status = 'failed',
+                delete_candidate_status = 'not_candidate',
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,

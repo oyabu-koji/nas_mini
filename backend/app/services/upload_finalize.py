@@ -244,6 +244,7 @@ def _commit_finalization(
                         detector_evidence_sha256 = NULL,
                         preview_status = 'preview_generating',
                         review_status = 'not_reviewed',
+                        delete_candidate_status = 'not_candidate',
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,

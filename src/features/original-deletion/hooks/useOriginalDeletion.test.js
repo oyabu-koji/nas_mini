@@ -27,14 +27,26 @@ const readyAsset = {
   verification_status: 'file_verified',
   preview_status: 'preview_ready',
   review_status: 'preview_confirmed',
+  delete_candidate_status: 'safe_to_delete_candidate',
   formal_preview: { state: 'ready' },
 };
 const validCapabilities = {
-  features: { formalAppleLogPreview: true },
+  features: {
+    formalAppleLogPreview: true,
+    safeDeleteCandidate: true,
+  },
 };
 
+const refreshAsset = jest.fn();
+const refreshCapabilities = jest.fn();
+
 function Harness({ asset = readyAsset, capabilities = validCapabilities }) {
-  global.latestOriginalDeletion = useOriginalDeletion({ asset, capabilities });
+  global.latestOriginalDeletion = useOriginalDeletion({
+    asset,
+    capabilities,
+    refreshAsset,
+    refreshCapabilities,
+  });
   return null;
 }
 
@@ -43,8 +55,13 @@ describe('useOriginalDeletion', () => {
     jest.clearAllMocks();
     mapping.getLocalAssetMappingState.mockResolvedValue({
       status: 'available',
-      mapping: { localAssetId: 'local-video-42' },
+      mapping: {
+        backendAssetId: 42,
+        localAssetId: 'local-video-42',
+      },
     });
+    refreshAsset.mockResolvedValue(readyAsset);
+    refreshCapabilities.mockResolvedValue(validCapabilities);
     store.readOriginalDeletionOutcome.mockResolvedValue(null);
     store.writeOriginalDeletionOutcome.mockImplementation(async (value) => ({
       ...value,
@@ -80,7 +97,12 @@ describe('useOriginalDeletion', () => {
     expect(global.latestOriginalDeletion.canDelete).toBe(false);
 
     await view.rerender(
-      <Harness capabilities={{ features: { formalAppleLogPreview: false } }} />,
+      <Harness capabilities={{
+        features: {
+          formalAppleLogPreview: false,
+          safeDeleteCandidate: true,
+        },
+      }} />,
     );
     expect(global.latestOriginalDeletion.canDelete).toBe(false);
 
@@ -92,7 +114,9 @@ describe('useOriginalDeletion', () => {
     await render(<Harness />);
     await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
 
-    global.latestOriginalDeletion.requestDeletion();
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
     const [title, message, buttons] = Alert.alert.mock.calls[0];
     expect(title).toBe('Delete iPhone original?');
     expect(message).toContain('clip.mov');
@@ -106,7 +130,9 @@ describe('useOriginalDeletion', () => {
     await render(<Harness />);
     await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
 
-    global.latestOriginalDeletion.requestDeletion();
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
     const buttons = Alert.alert.mock.calls[0][2];
     await act(async () => {
       await buttons[1].onPress();
@@ -131,7 +157,9 @@ describe('useOriginalDeletion', () => {
     await render(<Harness />);
     await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
 
-    global.latestOriginalDeletion.requestDeletion();
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
     const buttons = Alert.alert.mock.calls[0][2];
     await act(async () => {
       await buttons[1].onPress();
@@ -160,7 +188,9 @@ describe('useOriginalDeletion', () => {
     await render(<Harness />);
     await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
 
-    global.latestOriginalDeletion.requestDeletion();
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
     const buttons = Alert.alert.mock.calls[0][2];
     await act(async () => {
       await buttons[1].onPress();
@@ -173,5 +203,126 @@ describe('useOriginalDeletion', () => {
     expect(global.latestOriginalDeletion.error).toMatchObject({
       code: 'original_delete_state_unavailable',
     });
+  });
+
+  it.each([
+    ['asset refresh failure', null, validCapabilities],
+    ['capability refresh failure', readyAsset, null],
+    [
+      'candidate demotion',
+      { ...readyAsset, delete_candidate_status: 'not_candidate' },
+      validCapabilities,
+    ],
+    [
+      'capability disablement',
+      readyAsset,
+      {
+        features: {
+          formalAppleLogPreview: true,
+          safeDeleteCandidate: false,
+        },
+      },
+    ],
+  ])('stops before confirmation after %s', async (_name, nextAsset, nextCapabilities) => {
+    refreshAsset.mockResolvedValue(nextAsset);
+    refreshCapabilities.mockResolvedValue(nextCapabilities);
+    await render(<Harness />);
+    await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
+
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
+
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Deletion no longer available',
+      expect.any(String),
+    );
+    expect(media.deleteOriginalAsset).not.toHaveBeenCalled();
+  });
+
+  it('rejects a refreshed asset or local mapping with a different backend identity', async () => {
+    refreshAsset.mockResolvedValue({ ...readyAsset, id: 43 });
+    await render(<Harness />);
+    await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
+
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
+
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Deletion no longer available',
+      expect.any(String),
+    );
+    expect(media.deleteOriginalAsset).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Phase 1 direct path independent from Phase 2 feature flags', async () => {
+    const phase1Asset = {
+      ...readyAsset,
+      type: 'image',
+      verification_status: 'server_hash_recorded',
+      delete_candidate_status: 'not_candidate',
+      formal_preview: null,
+    };
+    const phase1Capabilities = {
+      features: {
+        formalAppleLogPreview: false,
+        safeDeleteCandidate: false,
+      },
+    };
+    refreshAsset.mockResolvedValue(phase1Asset);
+    refreshCapabilities.mockResolvedValue(phase1Capabilities);
+    await render(
+      <Harness
+        asset={phase1Asset}
+        capabilities={phase1Capabilities}
+      />,
+    );
+    await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
+
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
+
+    expect(Alert.alert.mock.calls[0][0]).toBe('Delete iPhone original?');
+  });
+
+  it('keeps the Phase 1 direct path available when capability refresh fails', async () => {
+    const phase1Asset = {
+      ...readyAsset,
+      type: 'image',
+      verification_status: 'server_hash_recorded',
+      delete_candidate_status: 'not_candidate',
+      formal_preview: null,
+    };
+    refreshAsset.mockResolvedValue(phase1Asset);
+    refreshCapabilities.mockRejectedValue(new Error('capability unavailable'));
+    await render(<Harness asset={phase1Asset} capabilities={null} />);
+    await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
+
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
+
+    expect(Alert.alert.mock.calls[0][0]).toBe('Delete iPhone original?');
+    expect(media.deleteOriginalAsset).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the current asset identity in the destructive action', async () => {
+    const view = await render(<Harness />);
+    await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
+    const destructiveAction = Alert.alert.mock.calls[0][2][1].onPress;
+
+    await view.rerender(
+      <Harness asset={{ ...readyAsset, id: 43 }} />,
+    );
+    await act(async () => {
+      await destructiveAction();
+    });
+
+    expect(media.deleteOriginalAsset).not.toHaveBeenCalled();
   });
 });

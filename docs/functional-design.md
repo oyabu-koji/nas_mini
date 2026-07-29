@@ -144,7 +144,7 @@ Backendのjobs table、claim/lease/statusは内部実行modelとして維持す�
 ### Phase 2B API契約
 
 - 動画の入力経路はPhase 2Aのupload sessionで確定した`file_verified` assetだけとし、変換用にoriginalを別経路で再uploadしない。
-- `GET /api/v1/capabilities`はdetector認証、formal preview有効化、schema versionを返す。有効時は`minimum_client_version = 0.2.0`とし、Mobileはstream/confirmation/resultへstrict SemVerの`X-MediaVault-Client-Version`を送る。旧clientはPhase 2B操作を`409 incompatible_client`で拒否する。
+- `GET /api/v1/capabilities`はdetector認証、formal preview有効化、schema versionを返す。008だけが有効なPhase 2Bでは`minimum_client_version = 0.2.0`、009も有効なPhase 2Cではruntime停止中を含め`minimum_client_version = 0.3.0`とする。Mobileはstream/confirmation/resultへstrict SemVerの`X-MediaVault-Client-Version`を送り、minimum未満のclientはPhase 2操作を`409 incompatible_client`で拒否する。
 - Asset Detailは`schema_version`、`generating | ready | failed`、generation、nullableな検出・detector・preset・transform情報、ready時だけのpreview/result、failed時だけのstable failure codeをnullable `formal_preview`として返す。状態別の必須/nullable fieldはfeature specのwire schemaを正本とし、path、raw probe値、rule input、manifest/LUT内容は返さない。
 - preview streamとconfirmationはsession origin、`formal_preview_id`、non-null generation、formal provenance、storage integrityを同じvalidatorで検証する。exact result deliveryはresult kindを先に解決し、current formalはformal relationと一致するnon-null `preview_generation`、current managedは`active_processed_result_id`が指す最新成功ready result/rendition、rendition provenance、`preview_generation = null`を検証する。assetのより新しいselection generationがfailed/supersededでも旧成功resultをcurrentとして維持する。どちらでもないstale又は不正relationはstable `409`で拒否する。
 - 初期formal previewはApple Logで`generated-apple-log-rec709`、非Log/判定不能で`compress-only`を自動要求する。preset catalogとidentity/test/custom選択はmanaged rendition専用であり、formal preview/review stateへ影響しない。
@@ -285,7 +285,8 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> not_candidate
-    not_candidate --> safe_to_delete_candidate: Phase 2+
+    not_candidate --> safe_to_delete_candidate: Phase 2C evaluator + promotion allowed
+    safe_to_delete_candidate --> not_candidate: authority invalidation / reconciliation
 ```
 
 ### local_delete_status
@@ -339,7 +340,19 @@ stateDiagram-v2
 - 必須条件をすべて満たす場合のみ`safe_to_delete_candidate`にする。
 - `safe_to_delete_candidate`は削除操作の自動実行ではなく、ユーザーへ削除候補として提示できる状態を表す。
 - 実削除はPhase 2以降も自動化しない。
-- Mobileはsanitized Phase 2B capability/client compatibilityも削除候補条件に含める。native削除成功は
+- Phase 2Cのcandidate evaluatorは最大4 SQLのindexed aggregateでsession、chunk、whole-file identity、
+  current formal result/attempt/provenance、reviewを検証し、confirmation、migration backfill、
+  reconciliationから同じtransaction snapshotで再利用する。
+- confirmationはformal file size/SHA-256をwrite transaction外で検証し、result、derived file、path、
+  MIME、size、SHA-256、asset、generationのsnapshotを`BEGIN IMMEDIATE`後に再比較する。review更新と
+  candidate promotion/demotionは同じtransactionで行う。
+- `009_safe_delete_candidate`は通常startup migration外のoffline migrationである。Phase 2B identity、
+  runtime、job drain、1 TiB/8 MiB/131072 boundsをread preflightとlocked preflightの両方で確認し、
+  schema、metadata、backfill、integrity checkを一括commit又はrollbackする。valid 009 schemaの
+  minimum client versionはruntime状態に関係なく`0.3.0`とする。
+- Mobileはsanitized `formal_apple_log_preview`と`safe_delete_candidate` capability、ready formal preview、
+  Backendの`safe_to_delete_candidate`をPhase 2削除条件に含める。削除直前にもasset/capabilityを
+  refreshし、Phase 1 direct assetはこれらPhase 2C条件を参照しない。native削除成功は
   local outcome保存より先に不可逆な`deleted`へ確定し、AsyncStorage失敗時も同一sessionで
   削除操作を再表示しない。
 

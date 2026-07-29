@@ -9,6 +9,7 @@ class FeatureFlagsResponse(BaseModel):
     numeric_rendition_progress: bool = False
     detector_certified: bool = False
     formal_apple_log_preview: bool = False
+    safe_delete_candidate: bool = False
 
 
 class CapabilitiesResponse(BaseModel):

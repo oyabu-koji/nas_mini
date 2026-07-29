@@ -14,6 +14,7 @@ def _set_required_env(monkeypatch, tmp_path):
     monkeypatch.setenv("API_TOKEN", "secret-token")
     monkeypatch.setenv("DATABASE_PATH", str(database_path))
     monkeypatch.setenv("UPLOAD_SESSION_CHUNK_SIZE_BYTES", "8")
+    monkeypatch.setenv("UPLOAD_SESSION_MAX_SIZE_BYTES", "1024")
     return media_root, database_path
 
 

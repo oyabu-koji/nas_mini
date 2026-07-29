@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from app.core.settings import Settings
+from app.core.settings import (
+    MAX_UPLOAD_CHUNKS,
+    MAX_UPLOAD_SESSION_SIZE_BYTES,
+    Settings,
+)
 from app.db.connection import connect
 from app.repositories.upload_chunks import (
     UploadChunkError,
@@ -61,8 +65,16 @@ def create_upload_session(
     settings: Settings,
     request: UploadSessionCreateRequest,
 ) -> tuple[dict[str, Any], bool]:
-    if request.size_bytes > settings.upload_session_max_size_bytes:
+    if request.size_bytes > min(
+        settings.upload_session_max_size_bytes,
+        MAX_UPLOAD_SESSION_SIZE_BYTES,
+    ):
         raise UploadSessionServiceError("session_size_limit")
+    total_chunks = (
+        request.size_bytes + settings.upload_session_chunk_size_bytes - 1
+    ) // settings.upload_session_chunk_size_bytes
+    if not 1 <= total_chunks <= MAX_UPLOAD_CHUNKS:
+        raise UploadSessionServiceError("session_chunk_limit")
 
     now = utc_now()
     session_id = str(uuid4())

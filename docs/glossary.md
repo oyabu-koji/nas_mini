@@ -20,13 +20,16 @@ originalから生成した別ファイル。`preview`, `thumbnail`, `proxy`, `lu
 
 ### safe delete candidate
 
-将来、iPhone側originalの削除候補として提示可能な状態。自動削除を意味しない。Phase 1では本番運用しない。
+Phase 2Cで、completed session、exact verified chunk ledger、whole-file identity、current formal
+preview provenance、preview確認をBackend evaluatorが検証したstored projection。
+自動削除やBackend media削除を意味せず、Phase 1 direct assetには付与しない。
 
 ### iPhone側original手動削除
 
 Mac mini側previewを確認した後、ユーザーが明示操作してiPhone写真ライブラリ上のoriginalを削除すること。
 共通条件に加え、Phase 1 direct assetは`server_hash_recorded`、Phase 2 session videoは
-`video + file_verified`とcompatibleなready formal previewを根拠にする。
+`video + file_verified`、formal/safe-delete capability、ready formal preview、
+`safe_to_delete_candidate`を根拠にする。
 Backend側originalやderived fileを削除する操作ではない。
 
 ### Phase 1 direct asset
@@ -37,8 +40,9 @@ image又はhistorical video。original削除eligibilityではPhase 2B capability
 ### original deletion eligibility
 
 `preview_ready`、`preview_confirmed`、local mapping available、未削除、非busyを共通条件とし、
-asset originごとの追加条件を評価するMobileのpure predicate。managed rendition、
-active processed result、legacy `is_log`、`safe_to_delete_candidate`を権限根拠にしない。
+asset originごとの追加条件を評価するMobileのpure predicate。Phase 2 session videoではBackend
+candidateと両capabilityを要求する。managed rendition、保存済みcopy、legacy `is_log`、
+active processed resultをcandidateの代替根拠にしない。
 
 ### internal job
 
@@ -260,7 +264,7 @@ Phase 2で導入する個別chunkとhash照合結果。`(session_id, chunk_index
 | 値 | 意味 |
 |----|------|
 | `not_candidate` | 削除候補ではない |
-| `safe_to_delete_candidate` | Phase 2以降で安全条件を満たした削除候補。ユーザー明示操作の候補であり、自動削除ではない |
+| `safe_to_delete_candidate` | Phase 2C evaluatorが完全なsession/formal/review relationを確認したstored projection。ユーザー明示操作の候補であり、自動削除ではない |
 
 ### local_delete_status
 

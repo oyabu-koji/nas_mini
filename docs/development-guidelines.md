@@ -75,7 +75,12 @@
 - iPhone側original削除は`expo-media-library` service経由で実行し、screenから端末APIを直接呼ばない。
 - Phase 1 direct assetは`server_hash_recorded`だけをorigin authorityとしformal capabilityを要求しない。
   Phase 2 session videoだけ`video + file_verified`、sanitized compatible capability、
-  ready formal previewを追加要求する。
+  ready formal preview、`formal_apple_log_preview`と`safe_delete_candidate` capability、
+  Backendの`safe_to_delete_candidate`を追加要求する。
+- Phase 2の削除操作を表示するときとnative削除確認直前にasset/capabilityを再取得する。asset取得失敗、
+  asset/local mappingの変化、capability取得失敗・停止、candidate降格はPhase 2だけをfail closedにし、
+  native削除を呼ばない。Phase 1 direct assetはasset再取得に成功して既存条件を満たす限り、
+  capability取得失敗の影響を受けない。
 - eligibilityはpure serviceへ置き、native削除成功をlocal outcome保存より先にterminal確定する。
 - Backend側originalやderived fileをMobileの削除操作で削除しない。
 
@@ -102,6 +107,17 @@
 - ffprobe/certifier subprocessは`Popen(..., shell=False, start_new_session=True)`と固定argvを使い、stdout/stderrを並行して各1 MiB以内へbounded captureする。timeout、output超過、reader failureではprocess groupをTERM/KILLし、certifierは一意な検証済みcontainer名を`docker rm -f`で回収する。cleanup完了前にartifactを公開せず、raw stderrやcontainer/pathを通常logへ出さない。
 - detector certificationのexternal recordingはno-follow descriptorから初期sizeを上限にowner-only temporary snapshotへcopyし、copy中のidentity不変とexpected SHA-256を検証する。Dockerへはsnapshotだけをread-only mountし、manifest digest確定後にexternal pathを再openしない。
 - `file_verified`動画の`preview_ready`、stream、confirmationは`formal_preview_id`とそのprovenanceを検証する。Phase 1 direct image/videoはこのPhase 2B triggerの対象外とする。
+- `safe_to_delete_candidate`はPhase 2C evaluatorから導出したstored projectionとし、request payload、
+  filename、path、legacy `is_log`、managed rendition、Mobile local stateを判定根拠にしない。
+- candidate evaluatorは既存SQLite connectionとasset IDだけを受け、最大4 SQLのindexed aggregateで
+  completed session、verified chunk ledger、whole-file identity、current formal provenance、
+  preview confirmationを評価する。commit、media file、ffmpeg、ffprobe、Photos APIを使用しない。
+- formal preview confirmationはschema/client/runtimeを先に解決し、formal fileのsize/SHA-256を
+  write transaction外で検証する。`BEGIN IMMEDIATE`後にsnapshotを再確認し、reviewとcandidateを
+  同じtransactionで更新する。
+- candidate authorityを変更する正規serviceは同じstatement又はtransactionでcandidateを
+  `not_candidate`へ降格する。completed session/chunk、file-verified original identity、
+  current formal derived identityの保護はSQLite triggerを境界とする。
 - 外部SSD未接続、容量不足、I/O失敗を明示的に扱う。
 - `/assets/upload`, `/upload-sessions`配下、`/assets`,
   `/assets/{asset_id}`配下、`/api/v1/capabilities`、`/api/v1/presets`、
@@ -134,8 +150,18 @@
 - managed rendition finalizerはcurrent selection generationの成功時だけ、derived fileとready processed result作成、provenance insert、rendition `ready`、`active_processed_result_id`更新、job `done`の順で同一transactionに確定し、各write境界の失敗では全変更をrollbackする。managed resultの`preview_generation`は全Phaseでnullとする。pointer更新ではsteady-state authority classifierとは別のtransition validatorを使い、OLDが完全なformal又はmanaged relation、NEWがcurrent selectionの一意なready managed relationの場合だけ許可する。失敗時は直前の成功済みactive resultを維持する。stale completionはsuperseded auditとして確定する。Phase 2Bではpointer切替時にcurrent formal resultをsupersedeせず、直前のcurrent managed resultだけをsupersedeする。いずれもformal preview、preview/review/delete-candidate stateを変更しない。
 - Phase 2Aではoriginal確定後にpreview jobを登録し、Phase 2BではApple Log判定とLUT変換をそのjob境界の後に置く。Phase 2Bの新規動画はprofile-awareな`preview` jobを使い、historical `lut_preview`はaudit-onlyとする。
 - Phase 2B migrationは旧`api`停止、旧workerによるdrain、旧`worker`停止の順でwriterを遮断し、host wrapperが両serviceの非稼働を確認した後、DB volumeを持つoffline one-shot migratorだけで実行する。preflightのread結果を信用してそのままwriteせず、`BEGIN IMMEDIATE`取得後にschema/marker、旧`preview`/`lut_preview`/`rendition`のqueued/running件数、nonterminal rendition、`preview_generating` assetを再検証する。残件又は競合変更があればmigrationは修復せずschema/data/markerを無変更rollbackし、完了までAPI/workerを再起動しない。active resultはpersist済みprovenanceのsteady-state classifierで分類し、current managedを保持、legacy Phase 2A previewだけをsupersede、ambiguous relationを全rollbackする。session由来video preview jobはassetと同じ`preview_generation`をpayload/columnに持ち、workerはclaim/commit時に両者が一致する場合だけasset、formal preview、review stateを更新する。世代不一致jobはattemptを`superseded`、jobを`failed` + `preview_generation_superseded`へlease clear付きで収束させ、assetを書き換えない。
+- Phase 2C migrationは通常startup migrationへ追加しない。host wrapperがAPI停止、Phase 2B work drain、
+  worker停止、両service非稼働を確認した後、network無効・read-only root・DB volumeだけRWの
+  `phase2c-migrator`を一度だけ実行する。read/locked preflight、009 schema、metadata、
+  shared evaluator backfill、integrity checkを一transactionでcommitし、dry-runは同じpathを
+  rollbackする。失敗時はAPI/workerを停止したままにする。
+- Phase 2C reconciliationはnetwork無効の`phase2c-reconciler`を使い、runtime snapshotをwrite lock前に
+  取得する。lock内でschema identityを再確認し、confirmed Phase 2 assetと既存safe candidateだけを
+  shared evaluatorでpromote/demote/no-opへ分類する。dry-run/applyを必ず明示する。
 - job失敗時は`error_message`へ運用に必要な情報を保存する。
-- 固定APIトークンや不要な個人情報をerror/logへ含めない。
+- 固定APIトークン、filename、host/media path、complete hash、raw SQL row、不要な個人情報を
+  routine error/log又はmigration/reconciliation summaryへ含めない。operator出力はaggregate件数と
+  stable reason codeだけにする。
 - identity LUTで生成済みのLOG previewはRec.709変換済みとして扱わない。preview配信・確認には、要求・適用presetと色変換状態を持つformal provenanceを必須にする。
 
 ## テスト戦略
@@ -150,6 +176,9 @@
 - unit test: endpoint accept/reject matrix、rejected URLのheader/network 0 call、
   Phase 1/2 original deletion eligibility。
 - unit/component test: iPhone側original削除導線がpreview確認後だけ表示されること。
+- unit/component test: Phase 2削除導線がformal/safe capability、ready formal preview、
+  `safe_to_delete_candidate`をすべて要求し、削除直前refreshの失敗又は状態変化でnative削除を
+  0 callにすること。Phase 1 direct assetはPhase 2C条件を参照しないこと。
 - unit/component test: canonical processed-result URL以外へtokenを送らないこと、header/size/digest mismatchで写真ライブラリへ保存しないこと、unknown write-ahead/save cleanup順序、source-original mappingとの非参照を確認する。
 - unit/component test: malformed/unknown catalog、secure request ID、write-before-POST、same-ID retry、restart polling、A/B response guard、全rendition phase、fallback/terminal error、ineligible/legacy LOG非表示を確認する。
 - 実機確認: Development Buildでprocessed resultのdownload、permission denial、network interruption、無進捗timeout、cancel、supersession、unknown outcome、restart cleanupを確認する。
@@ -168,6 +197,9 @@
 - managed pointer test: `active managed N -> ready N+1 -> switch -> N superseded`、formal activeからmanagedへの切替、複数/non-current/incomplete targetのdirect SQL拒否、formal non-null/managed nullの`preview_generation`を確認する。
 - unit/API/worker test: manifest JCSとstrict schema、`.cube`検証、catalog auth/sanitization、request replay/precondition、no-follow source snapshot、relation recovery、A/B両完了順、finalizer write failure、managed provenance deliveryを確認する。
 - migration test: Phase 2B profile-aware jobのdedup insert成功時だけasset generation/stateを更新し、queued/done/failed jobが既存の再実行ではstateを戻さないこと、generation `0`の旧Phase 2A jobがlate commitしてもformal preview/review stateを変更しないことを確認する。
+- Phase 2C unit/migration/API test: 10 reasonの固定順、131072 chunkでのindexed aggregate、
+  4 SQL上限、trigger/evaluator parity、009全fault境界rollback、confirmation race、
+  reconciliation dry-run/apply、0.3.0 rollout matrixを確認する。
 - 実機 test: Apple Log、通常動画、判定不能動画でのpreview表示と、Phase 2Aのchunk完了後だけpreview jobが登録されることを確認する。
 - integration test: tmp保存、original確定保存、ffmpeg成功/失敗、SSD未接続、容量不足。
 
@@ -213,6 +245,21 @@ env API_TOKEN=test-token docker compose --profile image-codec-validation \
 
 Docker codec validatorはrepository-owned fixtureだけをread-only mountし、runtime networkを
 無効化する。`--build`は未cache layer取得にnetworkを必要とし得る。
+
+Phase 2C operator commandは`backend/`をcurrent working directoryとして実行する。production applyは
+先にdry-runを成功させる。
+
+```bash
+cd backend
+uv run python -m scripts.run_phase2c_safe_delete_candidate_migration --dry-run
+uv run python -m scripts.run_phase2c_safe_delete_candidate_migration --apply
+uv run python -m scripts.run_safe_delete_candidate_reconciliation --dry-run
+uv run python -m scripts.run_safe_delete_candidate_reconciliation --apply
+```
+
+host wrapperは固定argvでCompose one-shot serviceを呼び、migration failure時はAPI/workerを
+再起動しない。reconciliationはschema migrationの代替ではなく、valid 009 schema上のstored
+projectionだけを修復する。
 
 ### Backend ローカル疎通確認
 

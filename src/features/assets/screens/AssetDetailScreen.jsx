@@ -9,6 +9,7 @@ import { useProcessedResultSave } from '../../processed-results/hooks/useProcess
 import { PresetSelector } from '../../managed-renditions/components/PresetSelector';
 import { useManagedRendition } from '../../managed-renditions/hooks/useManagedRendition';
 import { useOriginalDeletion } from '../../original-deletion/hooks/useOriginalDeletion';
+import { useDeletionCapability } from '../../original-deletion/hooks/useDeletionCapability';
 import { useAssetDetail } from '../hooks/useAssets';
 
 export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavailable = false, onBack, onPreview }) {
@@ -38,17 +39,33 @@ export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavail
     asset,
     loadAsset,
   });
+  const deletionCapability = useDeletionCapability({
+    settings,
+    canUseApi,
+  });
   const originalDeletion = useOriginalDeletion({
     asset,
-    capabilities: managedRendition.capabilities,
+    capabilities: deletionCapability.capabilities,
+    refreshAsset: loadAsset,
+    refreshCapabilities: deletionCapability.refreshCapabilities,
   });
+  const refreshDetail = () => Promise.all([
+    loadAsset(),
+    deletionCapability.refreshCapabilities(),
+    managedRendition.reloadCatalog(),
+  ]);
+  const candidateStateText = (
+    asset?.delete_candidate_status === 'safe_to_delete_candidate'
+      ? 'Ready for explicit iPhone deletion'
+      : 'Not ready for iPhone deletion'
+  );
 
   return (
     <View style={styles.container}>
       <ScreenHeader title="Asset Detail" subtitle={assetId ? `Backend asset #${assetId}` : 'No asset selected.'} />
       <View style={styles.actions}>
         <ActionButton label="Back to assets" onPress={onBack} variant="secondary" />
-        <ActionButton disabled={status === 'loading'} label="Refresh" onPress={loadAsset} variant="secondary" />
+        <ActionButton disabled={status === 'loading'} label="Refresh" onPress={refreshDetail} variant="secondary" />
       </View>
 
       {error ? <Text style={styles.error}>{error.message}</Text> : null}
@@ -71,6 +88,12 @@ export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavail
             <StatusBlock label="Preview" status={asset.preview_status} />
             <StatusBlock label="Review" status={asset.review_status} />
           </View>
+          <Text
+            accessibilityLabel={candidateStateText}
+            style={styles.meta}
+          >
+            {candidateStateText}
+          </Text>
 
           {asset.preview_status === PREVIEW_STATUS.GENERATING ? (
             <Text style={styles.meta}>Preview is generating. Manual refresh is available; lightweight polling is active while this screen is open.</Text>
