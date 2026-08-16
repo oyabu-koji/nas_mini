@@ -7,6 +7,10 @@ from app.schemas.presets import CapabilitiesResponse, FeatureFlagsResponse
 from app.services.preset_registry import custom_lut_capability
 from app.db.phase_schema_identity import PhaseSchemaIdentityError
 from app.services.phase2_rollout import resolve_phase2_rollout
+from app.services.initial_release_guard import (
+    InitialReleaseConfigurationError,
+    assert_generated_apple_log_conversion_disabled,
+)
 
 
 router = APIRouter(
@@ -20,7 +24,13 @@ router = APIRouter(
 def get_capabilities() -> CapabilitiesResponse | JSONResponse:
     settings = load_settings()
     try:
+        assert_generated_apple_log_conversion_disabled(settings)
         capability = resolve_phase2_rollout(settings=settings)
+    except InitialReleaseConfigurationError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"code": exc.code, "retryable": False},
+        )
     except PhaseSchemaIdentityError as exc:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

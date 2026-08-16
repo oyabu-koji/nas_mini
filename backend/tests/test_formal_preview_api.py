@@ -3,7 +3,11 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.main import app
-from app.schemas.assets import FormalPreviewFailedResponse
+from app.schemas.assets import (
+    FormalPreviewFailedResponse,
+    FormalPreviewGeneratingResponse,
+    FormalPreviewReadyResponse,
+)
 from app.services.client_compatibility import parse_semantic_version
 from tests.test_formal_preview_processing import (
     _claimed_formal_job,
@@ -70,7 +74,7 @@ def test_ready_formal_preview_detail_and_versioned_actions(
     )
 
     with TestClient(app) as client:
-        detail = client.get("/assets/1", headers=_auth())
+        detail = client.get("/assets/1", headers=_auth("0.2.0"))
         listing = client.get("/assets", headers=_auth())
         missing = client.get("/assets/1/preview", headers=_auth())
         old = client.get("/assets/1/preview", headers=_auth("0.1.9"))
@@ -112,7 +116,7 @@ def test_ready_formal_preview_detail_and_versioned_actions(
     assert "classification" not in serialized
 
 
-def test_generating_formal_preview_is_visible_without_client_header(
+def test_generating_formal_preview_is_visible_with_compatible_client_header(
     tmp_path, monkeypatch
 ):
     settings = _settings(tmp_path)
@@ -127,7 +131,7 @@ def test_generating_formal_preview_is_visible_without_client_header(
     )
 
     with TestClient(app) as client:
-        detail = client.get("/assets/1", headers=_auth())
+        detail = client.get("/assets/1", headers=_auth("0.2.0"))
         preview = client.get("/assets/1/preview", headers=_auth("0.2.0"))
 
     assert detail.status_code == 200
@@ -164,3 +168,126 @@ def test_failed_schema_rejects_unknown_failure_code():
             generation=1,
             failure_code="raw exception text",
         )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"transform_kind": "lut"},
+        {"applied_preset_id": "generated-apple-log2-rec709"},
+        {"manifest_sha256": "c" * 64},
+        {
+            "applied_preset_id": "generated-apple-log2-rec709",
+            "applied_preset_display_name": "Future conversion",
+            "preset_version": "future-1",
+            "manifest_sha256": "c" * 64,
+            "lut_sha256": "d" * 64,
+            "transform_kind": "lut",
+            "color_transform_status": "applied",
+            "color_transform_error_code": None,
+        },
+    ],
+)
+def test_ready_schema_rejects_apple_log_lut_or_applied_identity(overrides):
+    values = {
+        "state": "ready",
+        "generation": 1,
+        "detection_status": "apple_log",
+        "source_profile": "apple-log-2",
+        "detector_rule_version": "rule-v2",
+        "detector_manifest_sha256": "a" * 64,
+        "detector_evidence_sha256": "b" * 64,
+        "requested_preset_id": "generated-apple-log2-rec709",
+        "applied_preset_id": "compress-only",
+        "transform_kind": "none",
+        "color_transform_status": "unavailable",
+        "color_transform_error_code": "lut_preset_unavailable",
+        "preview_id": "e" * 32,
+        "result": {
+            "result_id": "f" * 32,
+            "mime_type": "video/mp4",
+            "size_bytes": 1,
+            "sha256": "0" * 64,
+            "created_at": "2026-08-14T00:00:00Z",
+            "url": "/assets/1/results/" + "f" * 32,
+        },
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValidationError):
+        FormalPreviewReadyResponse(**values)
+
+
+@pytest.mark.parametrize(
+    "source_profile",
+    ["apple-log-3", "Apple Log 2", ""],
+)
+def test_partial_schema_rejects_unknown_source_profile(source_profile):
+    with pytest.raises(ValidationError):
+        FormalPreviewGeneratingResponse(
+            state="generating",
+            generation=1,
+            detection_status="apple_log",
+            source_profile=source_profile,
+            detector_rule_version="rule-v2",
+            detector_manifest_sha256="a" * 64,
+            detector_evidence_sha256="b" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    ("model", "values"),
+    [
+        (
+            FormalPreviewGeneratingResponse,
+            {
+                "state": "generating",
+                "generation": 1,
+                "detection_status": "apple_log",
+                "source_profile": "apple-log-1",
+                "detector_rule_version": "rule-v2",
+                "detector_manifest_sha256": "a" * 64,
+                "detector_evidence_sha256": "b" * 64,
+                "requested_preset_id": "generated-apple-log2-rec709",
+            },
+        ),
+        (
+            FormalPreviewGeneratingResponse,
+            {
+                "state": "generating",
+                "generation": 1,
+                "detection_status": "apple_log",
+                "source_profile": "apple-log-2",
+                "detector_rule_version": "rule-v2",
+                "detector_manifest_sha256": "a" * 64,
+                "detector_evidence_sha256": "b" * 64,
+                "requested_preset_id": "generated-apple-log2-rec709",
+                "applied_preset_id": "generated-apple-log2-rec709",
+                "preset_version": "future",
+                "manifest_sha256": "c" * 64,
+                "lut_sha256": "d" * 64,
+                "transform_kind": "lut",
+                "color_transform_status": "applied",
+            },
+        ),
+        (
+            FormalPreviewFailedResponse,
+            {
+                "state": "failed",
+                "generation": 1,
+                "detection_status": "apple_log",
+                "source_profile": "apple-log-1",
+                "detector_rule_version": "rule-v2",
+                "detector_manifest_sha256": "a" * 64,
+                "detector_evidence_sha256": "b" * 64,
+                "requested_preset_id": "generated-apple-log2-rec709",
+                "transform_kind": "none",
+                "color_transform_status": "failed",
+                "failure_code": "formal_preview_render_failed",
+            },
+        ),
+    ],
+)
+def test_partial_formal_preview_schema_rejects_invalid_profile_claim(model, values):
+    with pytest.raises(ValidationError):
+        model(**values)

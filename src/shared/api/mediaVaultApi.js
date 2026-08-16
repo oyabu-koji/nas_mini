@@ -27,6 +27,9 @@ const FORMAL_FAILURE_CODES = new Set([
   'log_probe_timeout',
   'log_probe_failed',
   'log_probe_output_invalid',
+  'log_container_invalid',
+  'log_container_resource_limit',
+  'log_container_source_changed',
   'lut_preset_registered_invalid',
   'lut_preset_source_changed',
   'lut_application_failed',
@@ -258,6 +261,7 @@ export async function getAsset(settings, assetId) {
       baseUrl: settings.backendUrl,
       apiToken: settings.apiToken,
       path: `/assets/${assetId}`,
+      headers: { [CLIENT_VERSION_HEADER]: CLIENT_VERSION },
     }),
   );
 }
@@ -464,18 +468,6 @@ export function sanitizeFormalPreview(value, assetId) {
   ) {
     return invalid();
   }
-  const applied = (
-    value.detection_status === 'apple_log'
-    && value.requested_preset_id === 'generated-apple-log-rec709'
-    && value.applied_preset_id === 'generated-apple-log-rec709'
-    && value.transform_kind === 'lut'
-    && value.color_transform_status === 'applied'
-    && value.color_transform_error_code == null
-    && safeText(value.applied_preset_display_name, 128)
-    && safeText(value.preset_version, 64)
-    && SHA256_PATTERN.test(String(value.manifest_sha256 ?? ''))
-    && SHA256_PATTERN.test(String(value.lut_sha256 ?? ''))
-  );
   if (!isReadyTransformClaim(value)) {
     return invalid();
   }
@@ -483,10 +475,10 @@ export function sanitizeFormalPreview(value, assetId) {
     ...formalBase(value, detector),
     requested_preset_id: value.requested_preset_id,
     applied_preset_id: value.applied_preset_id,
-    applied_preset_display_name: applied ? value.applied_preset_display_name : null,
-    preset_version: applied ? value.preset_version : null,
-    manifest_sha256: applied ? value.manifest_sha256 : null,
-    lut_sha256: applied ? value.lut_sha256 : null,
+    applied_preset_display_name: null,
+    preset_version: null,
+    manifest_sha256: null,
+    lut_sha256: null,
     transform_kind: value.transform_kind,
     color_transform_status: value.color_transform_status,
     color_transform_error_code: value.color_transform_error_code ?? null,
@@ -559,7 +551,11 @@ function sanitizeDetectorGroup(value) {
     || !safeText(value.detector_rule_version, 64)
     || !SHA256_PATTERN.test(String(value.detector_manifest_sha256 ?? ''))
     || !SHA256_PATTERN.test(String(value.detector_evidence_sha256 ?? ''))
-    || (value.source_profile != null && !safeText(value.source_profile, 128))
+    || (
+      status === 'apple_log'
+        ? !['apple-log-1', 'apple-log-2'].includes(value.source_profile)
+        : value.source_profile != null
+    )
   ) {
     return false;
   }
@@ -621,9 +617,14 @@ function emptyTransformGroup(value) {
 }
 
 function isReadyTransformClaim(value) {
+  const requestedByProfile = {
+    'apple-log-1': 'generated-apple-log-rec709',
+    'apple-log-2': 'generated-apple-log2-rec709',
+  };
   const fallback = (
     value.detection_status === 'apple_log'
-    && value.requested_preset_id === 'generated-apple-log-rec709'
+    && Object.prototype.hasOwnProperty.call(requestedByProfile, value.source_profile)
+    && value.requested_preset_id === requestedByProfile[value.source_profile]
     && value.applied_preset_id === 'compress-only'
     && value.transform_kind === 'none'
     && value.color_transform_status === 'unavailable'
@@ -632,6 +633,7 @@ function isReadyTransformClaim(value) {
   );
   const ordinary = (
     ['not_log', 'unknown'].includes(value.detection_status)
+    && value.source_profile == null
     && value.requested_preset_id === 'compress-only'
     && value.applied_preset_id === 'compress-only'
     && value.transform_kind === 'none'
@@ -639,19 +641,7 @@ function isReadyTransformClaim(value) {
     && value.color_transform_error_code == null
     && emptyAppliedIdentity(value)
   );
-  const applied = (
-    value.detection_status === 'apple_log'
-    && value.requested_preset_id === 'generated-apple-log-rec709'
-    && value.applied_preset_id === 'generated-apple-log-rec709'
-    && value.transform_kind === 'lut'
-    && value.color_transform_status === 'applied'
-    && value.color_transform_error_code == null
-    && safeText(value.applied_preset_display_name, 128)
-    && safeText(value.preset_version, 64)
-    && SHA256_PATTERN.test(String(value.manifest_sha256 ?? ''))
-    && SHA256_PATTERN.test(String(value.lut_sha256 ?? ''))
-  );
-  return fallback || ordinary || applied;
+  return fallback || ordinary;
 }
 
 function validNullableText(value, maximum) {

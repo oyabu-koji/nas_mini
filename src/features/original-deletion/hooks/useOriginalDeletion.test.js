@@ -240,6 +240,25 @@ describe('useOriginalDeletion', () => {
     expect(media.deleteOriginalAsset).not.toHaveBeenCalled();
   });
 
+  it('stops local deletion when the versioned asset refresh is rejected with 409', async () => {
+    refreshAsset.mockRejectedValue(createAppError(
+      'incompatible_client',
+      messageForErrorCode('incompatible_client'),
+    ));
+    await render(<Harness />);
+    await waitFor(() => expect(global.latestOriginalDeletion.canDelete).toBe(true));
+
+    await act(async () => {
+      await global.latestOriginalDeletion.requestDeletion();
+    });
+
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Deletion no longer available',
+      expect.any(String),
+    );
+    expect(media.deleteOriginalAsset).not.toHaveBeenCalled();
+  });
+
   it('rejects a refreshed asset or local mapping with a different backend identity', async () => {
     refreshAsset.mockResolvedValue({ ...readyAsset, id: 43 });
     await render(<Harness />);

@@ -47,7 +47,7 @@ graph LR
 | Backend | Python, FastAPI | private endpoint APIとjob登録を担当 |
 | Private network | Tailscale, LAN | Phase 1のiPhone-backend到達経路 |
 | Backend dependency manager | uv | `pyproject.toml`と`uv.lock`で依存を固定 |
-| DB | SQLite | 個人利用MVPに十分。migration方針は実装時に確定 |
+| DB | SQLite | 通常startup migrationとoffline one-shot 008/009/010をschema identityで分離 |
 | Preview | ffmpeg | originalを読み取り入力としてderived fileを生成 |
 | Deployment | Docker on Mac mini | ホストNodeへ依存しない |
 | Storage | External SSD | `MEDIA_ROOT`配下に保存 |
@@ -63,6 +63,7 @@ graph LR
 - upload進捗、asset状態、要求・適用presetと色変換状態を含むpreview表示、確認操作。
 - Asset Detailでactive processed resultを明示downloadし、temporary fileのresponse identity、size、native streaming SHA-256を検証してから`expo-media-library`へ保存する。
 - eligibleな通常videoではversioned catalogのpresetだけを選択し、client request IDをPOST前にasset単位で永続化してrendition phaseをpollする。新しいselection後の古いPOST/poll結果はcurrent UIを上書きしない。
+- formal preview responseはstatus/profile/requested preset/transform tupleをclosed sanitizerで検証する。Apple Log 1/2はshared presentation helperでexact `(unconverted)` labelを表示し、invalid claimではasset authorityを破棄してpreview、confirmation、result save、local deletionへ進まない。
 - 処理済みcopyの保存状態は`processedResultSaveStore`で管理し、source originalの`localAssetMappingStore`やBackend review/delete stateを変更しない。
 - 自動削除は実行しない。
 - preview確認後にユーザーが明示操作した場合のみ、iPhone写真ライブラリ上のoriginal削除を端末service経由で実行する。
@@ -80,16 +81,16 @@ graph LR
 ### Job Service
 
 - job状態を`queued`, `running`, `done`, `failed`で管理する。
-- Phase 1はpreviewと安全ゲート中のlut_previewを処理する。Phase 2Aはsessionごとに一意な`upload_finalize` jobをlease/reclaim可能にし、managed requestごとの`rendition` jobを専用processorへ明示dispatchする。Phase 2Bではoriginal確定後のApple Log自動判定、server presetのsnapshot、formal preview provenance付き生成を追加する。未登録または無効化済みpresetは`compress-only` previewを`done`にし、登録済みLUTの検証・適用失敗だけをterminal failureにする。session由来video preview jobはassetと同じ`preview_generation`を持ち、claim/commit時に一致しない場合はattemptを`superseded`、jobを`failed` + `preview_generation_superseded`へlease clear付きで収束させ、assetを書き換えない。
+- Phase 1はpreviewと安全ゲート中のlut_previewを処理する。Phase 2Aはsessionごとに一意な`upload_finalize` jobをlease/reclaim可能にし、managed requestごとの`rendition` jobを専用processorへ明示dispatchする。Phase 2B detector-v2ではoriginal確定後にsame-fd parser/FFprobe判定を行い、Apple Log 1/2のprofile別formal preview provenanceを保存する。0.4.0では両予約presetをabsent/disabledに限定し、`compress-only` previewだけを`done`にする。session由来video preview jobはassetと同じ`preview_generation`を持ち、claim/commit時に一致しない場合はattemptを`superseded`、jobを`failed` + `preview_generation_superseded`へlease clear付きで収束させ、assetを書き換えない。
 - Phase 3+でAI解析jobを追加可能にする。
 
 ### Preview Adapter
 
 - originalを改変しない。
 - H.264 MP4、AAC音声、1080p上限でpreviewを生成する。
-- Apple Log対応feature導入後、利用可能な`generated-apple-log-rec709` presetを適用する。要求presetが未登録または無効化済みなら、未変換表示用のprovenanceを持つ`compress-only` previewを生成する。登録済みLUTの検証・適用失敗はpreviewを生成・配信しない。
-- Phase 2Bのdetector ruleはrepository ownerが根拠/source reference付きcanonical inputとして人手承認する。認証scriptはruleを生成せず、repo外のユーザー所有Apple Log/通常動画をno-follow descriptorからowner-only temporary snapshotへbounded copyしてwhole-file SHA-256を固定し、そのsnapshotだけをversion/resource limit固定のDocker ffprobeで検証してdetector manifestを作る。manifestのfixture digestと分類対象bytesは同じsnapshotを正本とし、検証後にexternal pathを再openしない。Docker processは`Popen`とshellなしの固定argvで起動し、stdout/stderrを別々にbounded captureする。timeout又は各1 MiB超過ではprocess groupを停止し、一意な検証済みcontainer名で残存containerを強制回収してから失敗を返す。rule input、manifest、ffprobe version、Phase 2B migration markerの全てが有効になるまでcapabilityをfalseにし、migrationとprofile-aware jobを開始しない。
-- 初期formal previewは自動presetだけを解決する。Apple Logは`generated-apple-log-rec709`を要求し、非Log/判定不能は`compress-only`を要求する。identity/test/customの選択はmanaged renditionに閉じ、formal previewへ昇格しない。
+- Preview Adapterは色変換を行わず、Apple Log 1/2とも`lut_path = None`のH.264/AAC `compress-only` commandを構築する。Apple Log 1は`generated-apple-log-rec709`、Apple Log 2は`generated-apple-log2-rec709`をrequested presetとしてのみ記録する。
+- detector-v2 ruleはrepository ownerがApple公式identifier source URL、確認日時、承認role付きcanonical inputとして人手承認する。認証scriptはruleを生成せず、repo外のユーザー所有Apple Log 2/ordinary動画とproject-owned synthetic Apple Log 1 containerをowner-only snapshotとして検証し、path-free artifactだけを生成する。
+- identity/test/customの選択はmanaged renditionに閉じ、reserved automatic preset IDsはselectable catalogへ出さず、formal previewへ昇格しない。
 - 写真はJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映でpreviewを生成する。
 - repository-owned HEIC/JPEG/PNG fixtureとstrict manifestを
   `image-codec-validation` Compose profileでproduction imageへmountし、
@@ -104,6 +105,13 @@ graph LR
 - `assets.rendition_selection_generation`がselection順序の正本である。current generationのfinalizerだけがderived fileとready result、provenance、rendition `ready`、active pointer、job `done`の順で一transactionに確定する。pointer切替ではmigration/delivery用steady-state classifierとは別のtransition validatorを使い、OLDが完全なformal又はmanaged relation、NEWがcurrent selectionの一意なready managed relationの場合だけ許可する。kind-aware triggerは直前のcurrent managed resultだけをsupersedeし、current formal resultを維持する。失敗時は直前の成功済みactive resultを維持する。stale generationは同じ監査証跡を持つsuperseded resultにするがpointerとpreview/review stateを変更しない。
 - managed resultの`preview_generation`はPhase 2A、Phase 2Bともnull、`formal_preview_id`は未設定とし、`rendition_selection_generation`をordering authorityにする。Phase 2BだけがApple Log検出とnon-null formal preview generation、preview/review state移行を所有する。
 
+### Detector-v2 same-fd boundary
+
+- `detector_source`がverified originalを`O_RDONLY`と利用可能な`O_NOFOLLOW`で1回だけ開き、regular file、stored size、descriptor/path identityを検証する。parserとFFprobeは`/proc/self/fd/<n>`または`/dev/fd/<n>`を共有し、判定中にsource pathを再openしない。
+- project-owned bounded parserはtop-level `ftyp`と単一`moov`から、video `trak`の`stsd` visual sample entry直下にある`logs`だけをparseする。`mdat`、`hoov`、unknown payloadはseekし、全ファイルbyte searchを行わない。
+- FFprobe `stream.id`をtrack IDへexact対応し、parser identifierとallowlist済みcolor fieldsをclosed tableで統合する。`apple-log-1`、`apple-log-2`以外をApple Log profileへ昇格しない。
+- detector artifactsはrule schema v2、parser contract version、resource limits、exact identifier/profile/preset mapping、FFprobe version、external fixture SHA-256を固定する。runtime artifact identity又はsuccessor schema identityが不正ならcapabilityをfail closedにする。
+
 ## データ管理
 
 ### SQLite
@@ -113,9 +121,10 @@ graph LR
 - upload_sessions、upload_chunksはPhase 2で追加する。sessionはclient idempotency key、immutable metadata、expected hash、failure/retry、expiry、lease、asset/job参照を持ち、chunkは`UNIQUE(session_id, chunk_index)`とverified hashを持つ。
 - processed_resultsはPhase 2Aのdeliverable video identityである。assetsのdeferred active pointerはsame-assetの`ready` resultだけを指し、result/derived file/size/SHA-256/pointer/job完了は一つのtransactionで確定する。
 - renditionsはglobal uniqueなclient request ID、job、asset、selection generation、immutable preset snapshot、phase、nullable resultを持つ。rendition_provenanceはrendition/result/derived fileと一対一で、要求・適用presetとmanifest/LUT digest、transform outcomeを不変に保持する。
-- Phase 2Bではcertified detector manifest、generation単位の`formal_preview_attempts`、完成したderived/resultと一対一のpreview provenanceを追加する。attemptはdetector/preset snapshot、provenanceは要求・適用preset、version、SHA-256、色変換状態・未適用理由を記録し、Apple Log fallbackを含む`transform_kind = none`も扱う。rendition provenanceとは相互変換しない。
+- Phase 2Bではcertified detector manifest、generation単位の`formal_preview_attempts`、完成したderived/resultと一対一のpreview provenanceを追加する。attempt/provenance/assetのstatus/profile/requested preset relationをclosed schema/triggerで保護し、Apple Log 1/2はprofile別`compress-only` unavailable tupleだけを0.4.0 authorityにする。rendition provenanceとは相互変換しない。
 - Phase 2Cでは`safe_to_delete_candidate`をstored projectionとして扱い、session/chunk/whole-file identityとcurrent formal relationを共通evaluatorで再導出する。candidate単独を削除権限にせず、Mobile local mappingと明示確認を別authorityとして維持する。
 - `009_safe_delete_candidate`はstartup migrationに含めない。offline one-shot migratorがPhase 2B identity、runtime、drain、upload hard boundsをread/locked preflightし、assets table rebuild、metadata、backfill、foreign key/candidate integrityを一transactionで確定する。
+- `010_apple_log_container_signaling`もstartup migrationに含めない。successor migratorは008/009 object identityとrow compatibility、parser/rule/manifest/summary、0.4.0 release readiness、両reserved preset namespace identityをread/locked preflightし、schema rebuild、marker、最終identityを一transactionで確定する。preflight-onlyはoperator DBをread-onlyで扱い、dry-run/apply/rollbackはisolated DBだけで行う。
 - completed session/chunk、file-verified original identity、current formal derived identityはSQLite triggerで不変にし、preview generation、formal pointer、review、detection authorityを変える正規更新はcandidateを同一statement又は同一transactionで降格する。
 - statusは一つの列へ集約せず、役割ごとに分離する。
 
@@ -165,7 +174,7 @@ ${MEDIA_ROOT}/
 3. Mobileのpure predicateは`preview_ready`、`preview_confirmed`、local mapping available、
    未削除、非busyを共通条件として評価する。
 4. `server_hash_recorded`のPhase 1 direct image/videoはformal capabilityを要求しない。
-   `video + file_verified`のPhase 2 session videoだけcompatible capabilityとready formal previewを追加要求する。
+   `video + file_verified`のPhase 2 session videoだけ0.4.0 header付きdetail、compatible capabilityとready formal previewを追加要求する。
 5. ユーザーが対象情報を確認し、削除を明示実行する。
 6. Mobileは`expo-media-library` service経由でiPhone写真ライブラリ上のlocal original削除を要求する。
 7. native削除成功は不可逆なterminal状態として直ちにMobile memoryへ反映し、その後のlocal state永続化失敗で削除actionを再表示しない。Backend側originalは保持する。
@@ -185,7 +194,7 @@ ${MEDIA_ROOT}/
 - iPhoneから接続するbackendは`127.0.0.1`ではなく、Tailscale IP、MagicDNS名、またはLAN IPで指定する。
 - URL policyはcredential、query、fragment、non-root path、public HTTP、
   `localhost`、qualified `.ts.net` HTTPをAuthorization header生成前に拒否する。
-- checked-in Expo/plistは表示名`MediaVault`、version `0.3.0`、
+- checked-in Expo/plistは表示名`MediaVault`、version `0.4.0`、
   `NSAllowsArbitraryLoads = false`、`NSAllowsLocalNetworking = true`で同期し、
   application URL policyをATSより上位のauthorityとする。
 - iPhone側original削除はユーザー確認を必須とし、background jobや自動同期で実行しない。
@@ -204,7 +213,7 @@ ${MEDIA_ROOT}/
 - iPhone側original削除の失敗、権限拒否、ユーザーキャンセルはBackend側保存済みassetの状態を壊さない。
 - upload timeoutでMobileがrequestを中断した場合、backend保存結果は不明として扱う。Mobileは同一素材を自動再送せず、asset一覧で結果を確認する。
 - identity LUTで生成済みのLOG previewはRec.709変換済みとして扱わず、要求・適用presetと色変換状態を持つformal provenanceがなければpreview配信と確認を拒否する。derived fileは自動削除しない。
-- Phase 2Bではtemporary LOG safety triggerを、`type = video AND verification_status = file_verified`のassetで`formal_preview_id`と`log_detection_status`に応じたformal preview provenanceがない場合に`preview_ready`を拒否するSQLite triggerへmigrationで置換する。Apple Logの未登録または無効化済みpresetは`transform_kind = none`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を持つprovenanceで許可する。登録済みLUTのhash不一致・形式不備・FFmpeg適用失敗だけはterminal failureにする。
+- detector-v2 schema triggerは`detection_status/source_profile/requested_preset_id`のprofile relationを強制し、Apple Log 1/2の未登録またはdisabled presetは`transform_kind = none`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`、null LUT identityでのみ`preview_ready`を許可する。future applied/LUT identityはschema互換性があってもruntime authorityにしない。
 - preview jobのterminal failureでは、jobと存在するassetのstatusを同一SQLite transactionで更新し、部分更新を残さない。
 - Phase 2B preview migrationは旧`api`を先に停止して新規writeを遮断し、旧workerが`preview`/`lut_preview`/`rendition`とnonterminal renditionを全てdrainした後に旧`worker`も停止する。host wrapperが両serviceの非稼働を確認し、DB volumeを持つoffline one-shot migratorだけを起動する。preflight成功後も`BEGIN IMMEDIATE`内でschema/marker、queued/running job、nonterminal rendition、`preview_generating`を再検証し、競合変更又は残件があればschema/data/markerを無変更rollbackする。`phase2b-profile-preview:{asset_id}`の新規insertとasset generation/state更新を同一transactionにし、active resultをpersist済みprovenanceのsteady-state classifierで分類する。current managed resultは保持し、legacy Phase 2A previewだけをsupersedeし、ambiguous relationは全transactionをrollbackする。migration成功又はrollback完了までAPI/workerを再起動しないため、旧jobのlate commitがformal/managed preview又はreview stateを巻き戻さない。
 - Phase 2C confirmationはfilesystem size/SHA-256 preflightをwrite transaction外で完了し、`BEGIN IMMEDIATE`内ではmedia I/Oを行わない。preflight snapshotとformal relationを再読込してからreviewとcandidateを原子的に更新する。runtime停止時は新規昇格せず、relationally validな既存safeを保持し、不正なsafeだけを降格する。
@@ -217,6 +226,7 @@ ${MEDIA_ROOT}/
 - Node 24、Python、ffmpegのバージョンはDocker側で固定する。
 - Backend Python依存は`uv.lock`を使ってDocker内で再現可能にinstallする。
 - Backend imageへ`backend/assets/`をcopyし、workerが管理済みpresetとmanifestを読めるようにする。custom LUTはimageへcopyせず、`USER_LUT_ROOT`をread-only volume mountして参照する。
+- repository rootの`data/`はDocker build contextと通常imageから除外する。detector certifierへはowner-only local fixtureをread-onlyで明示mountし、networkなし、read-only root filesystem、capability drop、no-new-privilegesを維持する。
 - ローカル`node_modules`をDockerへコピーしない。
 - 外部SSDはcontainerへvolume mountし、container内の`MEDIA_ROOT`へ割り当てる。
 - host上の`/Volumes/MediaVault`などのパス差分はcompose環境変数で吸収する。

@@ -22,6 +22,7 @@ class Phase2RolloutSnapshot:
     formal_apple_log_preview: bool
     safe_delete_candidate: bool
     runtime_blocked_reason: str | None
+    detector_v2_schema_enabled: bool = False
 
 
 def resolve_phase2_rollout(
@@ -47,10 +48,15 @@ def resolve_phase2_rollout(
             supplied=client_version,
             minimum=schema.minimum_client_version,
         )
+        from app.services.initial_release_guard import (
+            assert_generated_apple_log_conversion_disabled,
+        )
+
+        assert_generated_apple_log_conversion_disabled(settings)
 
     runtime = evaluate_detector_runtime(settings)
     formal_enabled = bool(
-        schema.phase2b_valid
+        schema.detector_v2_valid
         and runtime.detector_certified
         and runtime.formal_apple_log_preview
     )
@@ -63,6 +69,7 @@ def resolve_phase2_rollout(
         formal_apple_log_preview=formal_enabled,
         safe_delete_candidate=bool(schema.phase2c_valid and formal_enabled),
         runtime_blocked_reason=runtime.blocked_reason,
+        detector_v2_schema_enabled=schema.detector_v2_valid,
     )
 
 

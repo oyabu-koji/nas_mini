@@ -3,7 +3,6 @@ import json
 from dataclasses import replace
 
 import pytest
-
 from app.core.settings import Settings
 from app.db.connection import connect
 from app.db.migrations import run_migrations
@@ -14,18 +13,22 @@ from app.repositories.formal_previews import (
 )
 from app.repositories.jobs import claim_next_job, insert_or_return_job
 from app.services.apple_log_detector import DetectionResult
+from app.services.bounded_subprocess import BoundedProcessError
 from app.services.canonical_json import canonical_json_bytes
+from app.services.detector_v2_migration import apply_detector_v2_migration
 from app.services.formal_preview_processing import (
     FormalPreviewProcessingError,
+    _resolve_preset,
     parse_formal_preview_payload,
     prepare_formal_preview_attempt,
     process_formal_preview_job,
-    _resolve_preset,
 )
 from app.services.phase2b_migration import apply_phase2b_migration
+from app.services.phase2c_migration import apply_phase2c_migration
+from app.workers.worker import run_once
 from tests.detector_test_support import write_detector_artifacts
 from tests.test_phase2b_schema import _insert_session_asset
-from app.workers.worker import run_once
+from tests.test_preset_registry import write_custom
 
 
 def _settings(tmp_path):
@@ -94,17 +97,24 @@ def _prepare_verified_original(settings, *, content=b"video-source"):
     return original_path
 
 
-def _detection(status):
+def _detection(status, source_profile="apple-log-1"):
     evidence = canonical_json_bytes({"classification": status, "values": []})
     return DetectionResult(
         status=status,
-        source_profile=None,
+        source_profile=source_profile if status == "apple_log" else None,
         evidence_sha256=hashlib.sha256(evidence).hexdigest(),
         evidence_json=evidence,
     )
 
 
-def _run_formal_success(settings, job, *, status, monkeypatch):
+def _run_formal_success(
+    settings,
+    job,
+    *,
+    status,
+    monkeypatch,
+    source_profile="apple-log-1",
+):
     write_detector_artifacts(settings.detector_root)
     monkeypatch.setattr(
         "app.services.formal_preview_processing.read_ffprobe_version",
@@ -120,7 +130,7 @@ def _run_formal_success(settings, job, *, status, monkeypatch):
     assert process_formal_preview_job(
         settings=settings,
         job=job,
-        probe_runner=lambda _path, _manifest: _detection(status),
+        probe_runner=lambda _path, _manifest: _detection(status, source_profile),
         render_runner=render,
     )
     return commands
@@ -352,7 +362,52 @@ def test_formal_processor_uses_detector_not_legacy_hints_and_finalizes(
     assert "min(1080,ih)" in command[command.index("-vf") + 1]
 
 
-def test_apple_log_registered_invalid_fails_without_rendering(tmp_path, monkeypatch):
+def test_formal_processor_passes_verified_database_size_to_default_detector(
+    tmp_path, monkeypatch
+):
+    settings = _settings(tmp_path)
+    job = _claimed_formal_job(
+        settings,
+        payload={
+            "asset_id": 1,
+            "preview_generation": 1,
+            "detection_required": True,
+        },
+    )
+    source_path = _prepare_verified_original(settings, content=b"database-sized")
+    write_detector_artifacts(settings.detector_root)
+    monkeypatch.setattr(
+        "app.services.formal_preview_processing.read_ffprobe_version",
+        lambda **_kwargs: "ffprobe test pinned",
+    )
+    captured = {}
+
+    def detect(**kwargs):
+        captured.update(kwargs)
+        return _detection("not_log")
+
+    def render(command):
+        __import__("pathlib").Path(command[-1]).write_bytes(b"encoded-preview")
+
+    monkeypatch.setattr(
+        "app.services.formal_preview_processing.detect_path_same_fd",
+        detect,
+    )
+
+    assert process_formal_preview_job(
+        settings=settings,
+        job=job,
+        render_runner=render,
+    )
+
+    assert captured["path"] == source_path
+    assert captured["expected_size"] == len(b"database-sized")
+
+
+def test_apple_log_registered_invalid_guard_stops_before_processing(
+    tmp_path,
+    monkeypatch,
+):
     base = _settings(tmp_path)
     user_lut_root = tmp_path / "user-luts"
     (user_lut_root / "generated-apple-log-rec709").mkdir(parents=True)
@@ -372,12 +427,15 @@ def test_apple_log_registered_invalid_fails_without_rendering(tmp_path, monkeypa
         lambda **_kwargs: "ffprobe test pinned",
     )
 
-    assert process_formal_preview_job(
-        settings=settings,
-        job=job,
-        probe_runner=lambda _path, _manifest: _detection("apple_log"),
-        render_runner=lambda _command: pytest.fail("render must not run"),
-    )
+    from app.services.initial_release_guard import InitialReleaseConfigurationError
+
+    with pytest.raises(InitialReleaseConfigurationError):
+        process_formal_preview_job(
+            settings=settings,
+            job=job,
+            probe_runner=lambda _path, _manifest: pytest.fail("probe must not run"),
+            render_runner=lambda _command: pytest.fail("render must not run"),
+        )
 
     with connect(settings.database_path, 5000) as conn:
         attempt = conn.execute("SELECT * FROM formal_preview_attempts").fetchone()
@@ -386,12 +444,170 @@ def test_apple_log_registered_invalid_fails_without_rendering(tmp_path, monkeypa
             "SELECT * FROM jobs WHERE id = ?", (job["id"],)
         ).fetchone()
         derived_count = conn.execute("SELECT COUNT(*) FROM derived_files").fetchone()[0]
+    assert attempt is None
+    assert asset["preview_status"] == "preview_generating"
+    assert asset["formal_preview_id"] is None
+    assert current_job["status"] == "running"
+    assert derived_count == 0
+
+
+def test_apple_log2_falls_back_to_profile_specific_requested_preset(
+    tmp_path,
+    monkeypatch,
+):
+    base_settings = _settings(tmp_path)
+    built_in = tmp_path / "built-in"
+    user = tmp_path / "user"
+    built_in.mkdir()
+    user.mkdir()
+    settings = replace(
+        base_settings,
+        built_in_preset_root=built_in,
+        user_lut_root=user,
+    )
+    content = b"video-source"
+    digest = hashlib.sha256(content).hexdigest()
+    relative_path = "originals/sessions/session-one.mov"
+    original_path = settings.media_root / relative_path
+    original_path.parent.mkdir(parents=True, exist_ok=True)
+    original_path.write_bytes(content)
+    with connect(settings.database_path, 5000) as conn:
+        _insert_session_asset(conn, asset_id=1, session_id="session-one")
+        conn.execute(
+            """
+            UPDATE assets
+            SET original_path = ?, size_bytes = ?, server_sha256 = ?,
+                preview_status = 'not_started'
+            WHERE id = 1
+            """,
+            (relative_path, len(content), digest),
+        )
+        conn.execute(
+            """
+            UPDATE upload_sessions
+            SET original_relative_path = ?, size_bytes = ?,
+                expected_file_sha256 = ?
+            WHERE asset_id = 1
+            """,
+            (relative_path, len(content), digest),
+        )
+        conn.commit()
+    apply_phase2c_migration(
+        settings=settings,
+        offline_maintenance_confirmed=True,
+        runtime_check=lambda _settings: True,
+    )
+    apply_detector_v2_migration(
+        settings=settings,
+        mode="apply",
+        offline_maintenance_confirmed=True,
+        api_stopped_confirmed=True,
+        release_040_ready_confirmed=True,
+        release_readiness_check=lambda _settings: True,
+    )
+    payload = {
+            "asset_id": 1,
+            "preview_generation": 1,
+            "detection_required": True,
+    }
+    with connect(settings.database_path, 5000) as conn:
+        conn.execute(
+            """
+            UPDATE assets
+            SET preview_generation = 1, preview_status = 'preview_generating'
+            WHERE id = 1
+            """
+        )
+        queued, _ = insert_or_return_job(
+            conn,
+            job_type="preview",
+            asset_id=1,
+            payload_json=json.dumps(payload, separators=(",", ":")),
+            dedup_key="formal-preview",
+            preview_generation=1,
+        )
+        conn.commit()
+        job = claim_next_job(conn, 300, {"preview"})
+    assert job is not None and job["id"] == queued["id"]
+
+    commands = _run_formal_success(
+        settings,
+        job,
+        status="apple_log",
+        source_profile="apple-log-2",
+        monkeypatch=monkeypatch,
+    )
+
+    with connect(settings.database_path, 5000) as conn:
+        attempt = dict(conn.execute("SELECT * FROM formal_preview_attempts").fetchone())
+        provenance = dict(conn.execute("SELECT * FROM preview_provenance").fetchone())
+        asset = dict(conn.execute("SELECT * FROM assets WHERE id = 1").fetchone())
+    for values in (attempt, provenance):
+        assert values["source_profile"] == "apple-log-2"
+        assert values["requested_preset_id"] == "generated-apple-log2-rec709"
+        assert values["applied_preset_id"] == "compress-only"
+        assert values["transform_kind"] == "none"
+        assert values["color_transform_status"] == "unavailable"
+        assert values["color_transform_error_code"] == "lut_preset_unavailable"
+    assert asset["source_profile"] == "apple-log-2"
+    assert asset["preview_status"] == "preview_ready"
+    assert "lut3d" not in commands[0][commands[0].index("-vf") + 1]
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "log_container_invalid",
+        "log_container_resource_limit",
+        "log_container_source_changed",
+    ],
+)
+def test_container_detection_failure_is_terminal_without_derived_output(
+    tmp_path,
+    monkeypatch,
+    error_code,
+):
+    settings = _settings(tmp_path)
+    job = _claimed_formal_job(
+        settings,
+        payload={
+            "asset_id": 1,
+            "preview_generation": 1,
+            "detection_required": True,
+        },
+    )
+    _prepare_verified_original(settings)
+    write_detector_artifacts(settings.detector_root)
+    monkeypatch.setattr(
+        "app.services.formal_preview_processing.read_ffprobe_version",
+        lambda **_kwargs: "ffprobe test pinned",
+    )
+
+    assert process_formal_preview_job(
+        settings=settings,
+        job=job,
+        probe_runner=lambda _path, _manifest: (_ for _ in ()).throw(
+            BoundedProcessError(error_code)
+        ),
+        render_runner=lambda _command: pytest.fail("render must not run"),
+    )
+
+    with connect(settings.database_path, 5000) as conn:
+        attempt = dict(conn.execute("SELECT * FROM formal_preview_attempts").fetchone())
+        asset = dict(conn.execute("SELECT * FROM assets WHERE id = 1").fetchone())
+        current_job = dict(
+            conn.execute("SELECT * FROM jobs WHERE id = ?", (job["id"],)).fetchone()
+        )
+        derived_count = conn.execute("SELECT COUNT(*) FROM derived_files").fetchone()[0]
+        result_count = conn.execute("SELECT COUNT(*) FROM processed_results").fetchone()[0]
     assert attempt["state"] == "failed"
-    assert attempt["failure_code"] == "lut_preset_registered_invalid"
+    assert attempt["failure_code"] == error_code
+    assert current_job["status"] == "failed"
+    assert current_job["error_message"] == error_code
     assert asset["preview_status"] == "failed"
     assert asset["formal_preview_id"] is None
-    assert current_job["status"] == "failed"
     assert derived_count == 0
+    assert result_count == 0
 
 
 def test_render_failure_is_terminal_and_removes_candidate(tmp_path, monkeypatch):
@@ -457,13 +673,14 @@ def test_rendering_recovery_uses_persisted_snapshot_without_registry_resolution(
     snapshot, transform_status, transform_error = _resolve_preset(
         settings=settings,
         detection_status="apple_log",
+        source_profile="apple-log-1",
     )
     with connect(settings.database_path, 5000) as conn:
         attempt = save_detection_snapshot(
             conn,
             attempt_id=attempt["id"],
             detection_status="apple_log",
-            source_profile=None,
+            source_profile="apple-log-1",
             detector_rule_version="test-v1",
             detector_manifest_sha256="a" * 64,
             detector_evidence_sha256=detection.evidence_sha256,
@@ -481,7 +698,12 @@ def test_rendering_recovery_uses_persisted_snapshot_without_registry_resolution(
     assert attempt["state"] == "rendering"
 
     user_lut_root = tmp_path / "late-registry"
-    (user_lut_root / "generated-apple-log-rec709").mkdir(parents=True)
+    user_lut_root.mkdir()
+    write_custom(
+        user_lut_root,
+        "generated-apple-log-rec709",
+        enabled=False,
+    )
     recovered_settings = replace(settings, user_lut_root=user_lut_root)
 
     def render(command):

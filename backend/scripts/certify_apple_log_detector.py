@@ -10,7 +10,7 @@ from app.services.detector_manifest import DetectorValidationError
 
 
 EXPECTED_RULE_INPUT = Path(
-    "assets/detectors/apple-log-v1/detector-rule-input-v1.json"
+    "assets/detectors/apple-log-v2/detector-rule-input-v2.json"
 )
 
 

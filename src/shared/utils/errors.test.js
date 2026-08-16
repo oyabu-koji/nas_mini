@@ -32,6 +32,14 @@ describe('errors', () => {
     });
   });
 
+  it.each([
+    ['log_container_invalid', 'The video container signaling is invalid.'],
+    ['log_container_resource_limit', 'The video container is too complex to inspect safely.'],
+    ['log_container_source_changed', 'The video changed during profile detection.'],
+  ])('maps %s to a closed safe message', (code, message) => {
+    expect(messageForErrorCode(code)).toBe(message);
+  });
+
   it('preserves AppError identity for processed and managed server codes', () => {
     const processed = createHttpError(409, 'processed_result_superseded', false);
     const managed = createHttpError(409, 'rendition_precondition_changed', true);

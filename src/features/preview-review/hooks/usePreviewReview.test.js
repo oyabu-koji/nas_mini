@@ -85,13 +85,14 @@ describe('usePreviewReview', () => {
       formal_preview: {
         state: 'ready',
         detection_status: 'apple_log',
+        source_profile: 'apple-log-1',
         color_transform_status: 'unavailable',
       },
     });
     await view.rerender(<HookHarness />);
 
     expect(global.latestPreviewReview.canReview).toBe(true);
-    expect(global.latestPreviewReview.profileLabel).toBe('Apple Log (unconverted)');
+    expect(global.latestPreviewReview.profileLabel).toBe('Apple Log 1 (unconverted)');
     expect(global.latestPreviewReview.transformLabel).toBe('Color transform unavailable');
     expect(global.latestPreviewReview.videoSource).not.toBeNull();
 
@@ -109,8 +110,21 @@ describe('usePreviewReview', () => {
     );
   });
 
-  it('uses fixed ordinary, unknown, and future applied labels', async () => {
+  it('uses fixed Apple Log 2, ordinary, and unknown labels without an applied branch', async () => {
     const view = await render(<HookHarness />);
+    mockAsset({
+      ...readyVideo,
+      formal_preview: {
+        state: 'ready',
+        detection_status: 'apple_log',
+        source_profile: 'apple-log-2',
+        color_transform_status: 'unavailable',
+      },
+    });
+    await view.rerender(<HookHarness />);
+    expect(global.latestPreviewReview.profileLabel).toBe('Apple Log 2 (unconverted)');
+    expect(global.latestPreviewReview.transformLabel).toBe('Color transform unavailable');
+
     mockAsset({
       ...readyVideo,
       formal_preview: {
@@ -135,20 +149,8 @@ describe('usePreviewReview', () => {
       'Video profile unknown (unconverted)',
     );
 
-    mockAsset({
-      ...readyVideo,
-      formal_preview: {
-        state: 'ready',
-        detection_status: 'apple_log',
-        color_transform_status: 'applied',
-        applied_preset_display_name: 'Approved Rec.709 transform',
-      },
-    });
-    await view.rerender(<HookHarness />);
-    expect(global.latestPreviewReview.profileLabel).toBe(
-      'Approved Rec.709 transform',
-    );
-    expect(global.latestPreviewReview.transformLabel).toBe('Color transform applied');
+    expect(global.latestPreviewReview.profileLabel).not.toContain('Apple Log (unconverted)');
+    expect(global.latestPreviewReview.transformLabel).toBeNull();
   });
 
   it('builds remote video and image sources and switches to cached source', async () => {

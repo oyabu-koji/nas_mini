@@ -382,6 +382,7 @@ def _set_formal_claim(conn, variant):
         },
         "apple_log_fallback": {
             "detection": "apple_log",
+            "profile": "apple-log-1",
             "requested": "generated-apple-log-rec709",
             "applied": "compress-only",
             "version": None,
@@ -393,6 +394,7 @@ def _set_formal_claim(conn, variant):
         },
         "future_lut": {
             "detection": "apple_log",
+            "profile": "apple-log-1",
             "requested": "generated-apple-log-rec709",
             "applied": "generated-apple-log-rec709",
             "version": "2026.1",
@@ -426,6 +428,7 @@ def _set_formal_claim(conn, variant):
         """
         UPDATE formal_preview_attempts
         SET detection_status = ?,
+            source_profile = ?,
             requested_preset_id = ?,
             applied_preset_id = ?,
             preset_version = ?,
@@ -438,6 +441,7 @@ def _set_formal_claim(conn, variant):
         """,
         (
             claim["detection"],
+            claim.get("profile"),
             claim["requested"],
             claim["applied"],
             claim["version"],
@@ -452,6 +456,7 @@ def _set_formal_claim(conn, variant):
         """
         UPDATE preview_provenance
         SET detection_status = ?,
+            source_profile = ?,
             requested_preset_id = ?,
             applied_preset_id = ?,
             preset_version = ?,
@@ -464,6 +469,7 @@ def _set_formal_claim(conn, variant):
         """,
         (
             claim["detection"],
+            claim.get("profile"),
             claim["requested"],
             claim["applied"],
             claim["version"],
@@ -477,14 +483,14 @@ def _set_formal_claim(conn, variant):
     for sql in trigger_sql:
         conn.execute(sql)
     conn.execute(
-        "UPDATE assets SET log_detection_status = ? WHERE id = 1",
-        (claim["detection"],),
+        "UPDATE assets SET log_detection_status = ?, source_profile = ? WHERE id = 1",
+        (claim["detection"], claim.get("profile")),
     )
 
 
 @pytest.mark.parametrize(
     "variant",
-    ["ordinary", "unknown", "apple_log_fallback", "future_lut"],
+    ["ordinary", "unknown", "apple_log_fallback"],
 )
 def test_candidate_trigger_and_evaluator_accept_allowed_formal_matrix(
     tmp_path,
@@ -506,6 +512,25 @@ def test_candidate_trigger_and_evaluator_accept_allowed_formal_matrix(
         ).fetchone()[0]
     assert evaluation.eligible is True
     assert status == SAFE_TO_DELETE_CANDIDATE
+
+
+def test_candidate_evaluator_rejects_future_apple_log_applied_claim(tmp_path):
+    settings = _settings(tmp_path)
+    initialize_phase2b(settings)
+    with connect(settings.database_path, 5000) as conn:
+        insert_eligible_confirmed_asset(conn)
+        _set_formal_claim(conn, "future_lut")
+        conn.commit()
+
+    _apply(settings)
+
+    with connect(settings.database_path, 5000) as conn:
+        evaluation = evaluate_safe_delete_candidate(conn, asset_id=1)
+        status = conn.execute(
+            "SELECT delete_candidate_status FROM assets WHERE id = 1"
+        ).fetchone()[0]
+    assert evaluation.reason == "formal_preview_provenance_invalid"
+    assert status == NOT_CANDIDATE
 
 
 def test_candidate_trigger_and_evaluator_reject_same_mixed_formal_claim(

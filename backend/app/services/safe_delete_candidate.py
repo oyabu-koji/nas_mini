@@ -242,6 +242,7 @@ def evaluate_safe_delete_candidate(
                 preview_provenance.result_id AS provenance_result_id,
                 preview_provenance.derived_file_id AS provenance_derived_file_id,
                 preview_provenance.detection_status,
+                preview_provenance.source_profile,
                 preview_provenance.source_profile AS provenance_source_profile,
                 preview_provenance.detector_rule_version AS provenance_rule_version,
                 preview_provenance.detector_manifest_sha256 AS provenance_manifest_identity,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 DEFAULT_BUILT_IN_PRESET_ROOT = Path(__file__).parents[2] / "assets/lut/presets"
-DEFAULT_DETECTOR_ROOT = Path(__file__).parents[2] / "assets/detectors/apple-log-v1"
+DEFAULT_DETECTOR_ROOT = Path(__file__).parents[2] / "assets/detectors/apple-log-v2"
 MAX_UPLOAD_SESSION_SIZE_BYTES = 1_099_511_627_776
 MAX_UPLOAD_CHUNK_SIZE_BYTES = 8_388_608
 MAX_UPLOAD_CHUNKS = 131_072

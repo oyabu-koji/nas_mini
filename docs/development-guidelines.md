@@ -81,6 +81,8 @@
   asset/local mappingの変化、capability取得失敗・停止、candidate降格はPhase 2だけをfail closedにし、
   native削除を呼ばない。Phase 1 direct assetはasset再取得に成功して既存条件を満たす限り、
   capability取得失敗の影響を受けない。
+- successor schema上のPhase 2 asset-specific APIは0.4.0 client version headerを必須にする。formal preview sanitizerは`apple-log-1`/`apple-log-2`とprofile別requested preset、`compress-only` unavailable tupleだけを受理し、cross-profile、unknown profile/error、Apple Log applied/LUT identityをauthorityとして扱わない。
+- Apple Log表示は`formalPreviewPresentation.js`のpure helperをAsset DetailとPreview Reviewで共有し、versionなしのgeneric label又は変換済みlabelを画面側で合成しない。
 - eligibilityはpure serviceへ置き、native削除成功をlocal outcome保存より先にterminal確定する。
 - Backend側originalやderived fileをMobileの削除操作で削除しない。
 
@@ -97,15 +99,20 @@
 - ffmpegはoriginalを読み取り入力とし、derived fileを別パスへ生成する。
 - processed resultはready video derived fileのimmutable identityとして扱う。active pointerはsame-assetのready resultだけを指し、new result、old result supersede、pointer、asset preview state、preview job完了は同一transactionで確定する。
 - result delivery endpointはasset/resultを同時に検索し、shared deliverability serviceでfile integrityとPhase 2A/2B gateを検証する。inactive resultを新active resultのbytesに置換して返さない。
-- Apple Log判定とLUT適用はoriginal確定後のworkerだけが行う。要求presetが未登録または無効化済みなら、`compress-only` previewを成功として生成し、`color_transform_status = unavailable`と`color_transform_error_code = lut_preset_unavailable`をprovenanceへ保存する。登録済みLUTのmanifest/hash/形式/FFmpeg適用失敗だけはpreviewをfailedにする。
-- 初期Phase 2B formal previewは自動preset解決だけを使う。Apple Logは`generated-apple-log-rec709`、非Log/判定不能は`compress-only`を要求し、identity/test/customのMobile選択は別のmanaged renditionとしてformal preview/review stateを変更しない。
+- Apple Log判定はoriginal確定後のworkerだけが行う。Apple Log 1は`generated-apple-log-rec709`、Apple Log 2は`generated-apple-log2-rec709`をrequested presetとして記録するが、0.4.0では両方をabsent/disabledに固定し、`compress-only` unavailable previewだけを成功として生成する。LUT file、manifest、変換artifactを生成・登録・適用しない。
+- 初期Phase 2B formal previewは自動preset解決だけを使う。非Log/判定不能は`compress-only`を要求し、identity/test/customのMobile選択は別のmanaged renditionとしてformal preview/review stateを変更しない。Apple Log applied/LUT tupleはDB互換性があってもworker、finalizer、API、delivery、confirmation、safe-deleteで拒否する。
 - LUTは管理manifestを持つserver presetだけを使い、Mobileまたはasset単位の任意file uploadを受け付けない。custom LUTはrepo外の`USER_LUT_ROOT`で管理し、workerは要求・適用preset、version、SHA-256、色変換状態をrendition provenanceへ保存する。Apple Log fallbackと非Logはformal `transform_kind = none`、将来の承認済みApple Log変換だけをformal `transform_kind = lut`とする。
 - schema v1 manifestはUTF-8/BOMなし/64 KiB以下、duplicate/unknown fieldなし、厳密な型としてparseし、top-level `manifest_sha256`だけを除いたRFC 8785 JCS bytesをhashする。`.cube`は16 MiB以下、3D grid 17/33/65、finite RGB、exact row count/hashだけを受理する。
 - LUT sourceはrequest pathから選ばず、renditionへ保存した`source_root_kind`とrelative componentsを使う。各componentを`O_NOFOLLOW`相当でdescriptor openし、regular file/size/hashを検証しながらowner-only job-private snapshotへcopyする。FFmpegには`MEDIA_ROOT`内のbackend-generated pathだけを渡す。
 - missing/disabled presetだけを`compress-only`へfallbackする。registered-invalid、snapshot source変更、FFmpeg LUT適用失敗をfallbackで隠さず、stable terminal errorにする。
 - routine log/API errorへtoken、host path、raw manifest、LUT content、complete media metadata、FFmpeg stderrを出さない。外部errorは固定codeとretryable flagへ変換する。
 - ffprobe/certifier subprocessは`Popen(..., shell=False, start_new_session=True)`と固定argvを使い、stdout/stderrを並行して各1 MiB以内へbounded captureする。timeout、output超過、reader failureではprocess groupをTERM/KILLし、certifierは一意な検証済みcontainer名を`docker rm -f`で回収する。cleanup完了前にartifactを公開せず、raw stderrやcontainer/pathを通常logへ出さない。
-- detector certificationのexternal recordingはno-follow descriptorから初期sizeを上限にowner-only temporary snapshotへcopyし、copy中のidentity不変とexpected SHA-256を検証する。Dockerへはsnapshotだけをread-only mountし、manifest digest確定後にexternal pathを再openしない。
+- runtime detectorはverified originalを`O_RDONLY`と利用可能な`O_NOFOLLOW`で一度だけ開く。regular file、DB size、open前後と検出前後のdescriptor/path identityを検証し、bounded parserとFFprobeへ同じinherited read-only fdを渡す。判定中にsource pathを再openしない。
+- ISO BMFF parserはproject-owned standard-library実装とし、32/64-bit box size、top-level zero-size、parent boundary、header/depth/track/sample-description/metadata/identifier limitをmaximum-inclusiveで検証する。許可path外のbox、`mdat`、`hoov`、unknown payloadを読み込まず、whole-file byte search、filename、codec、legacy `is_log`をApple Log根拠にしない。
+- `logs`は選択video trackのsupported VisualSampleEntry direct childだけから1..128 byteのNULなしASCIIとして読む。unknown text、raw atom、track ID、pathをcanonical evidence/API/logへ残さず、構造破損とresource limitはstable terminal error、bounded authority不足は`unknown`へ分ける。
+- detector certificationのexternal recordingはroot `data/`の固定descriptorからだけ解決し、root 0700、descriptor 0600、owner、regular/no-symlink、relative confinement、known SHA-256をsnapshot作成前に検証する。no-follow descriptorからowner-only temporary snapshotへcopyし、copy中のidentity不変も確認する。Dockerへはsnapshotだけをread-only mountし、manifest digest確定後にexternal pathを再openしない。
+- snapshot stale cleanupはfixed namespace、TMPDIR 4096 entry、namespace 64件、depth 8、tree 64 entry、age 300秒、0700/0400/0600 modeのclosed contractで行う。ambiguous、symlink、special file、owner/mode/identity変化は削除せずcertificationを停止する。
+- 実動画、absolute/relative local filename、raw metadata、fixture-derived blob OIDをGit、artifact、Docker image/build context、routine outputへ含めない。Git混入監査はfixture hash確認後、reachable pathとobject databaseをrecord/stdout/timeout上限付きでfail closedに検査する。
 - `file_verified`動画の`preview_ready`、stream、confirmationは`formal_preview_id`とそのprovenanceを検証する。Phase 1 direct image/videoはこのPhase 2B triggerの対象外とする。
 - `safe_to_delete_candidate`はPhase 2C evaluatorから導出したstored projectionとし、request payload、
   filename、path、legacy `is_log`、managed rendition、Mobile local stateを判定根拠にしない。
@@ -148,7 +155,7 @@
 - job種別は`preview`, `lut_preview`から始め、Phase 2Aで`upload_finalize`と`rendition`を追加し、将来AI jobを追加する。
 - workerは既知job typeを専用processorへ明示dispatchする。`rendition`は`renditions.job_id`をrelation authorityとし、payload IDは一致確認だけに使い、generic preview processorへfallbackしない。
 - managed rendition finalizerはcurrent selection generationの成功時だけ、derived fileとready processed result作成、provenance insert、rendition `ready`、`active_processed_result_id`更新、job `done`の順で同一transactionに確定し、各write境界の失敗では全変更をrollbackする。managed resultの`preview_generation`は全Phaseでnullとする。pointer更新ではsteady-state authority classifierとは別のtransition validatorを使い、OLDが完全なformal又はmanaged relation、NEWがcurrent selectionの一意なready managed relationの場合だけ許可する。失敗時は直前の成功済みactive resultを維持する。stale completionはsuperseded auditとして確定する。Phase 2Bではpointer切替時にcurrent formal resultをsupersedeせず、直前のcurrent managed resultだけをsupersedeする。いずれもformal preview、preview/review/delete-candidate stateを変更しない。
-- Phase 2Aではoriginal確定後にpreview jobを登録し、Phase 2BではApple Log判定とLUT変換をそのjob境界の後に置く。Phase 2Bの新規動画はprofile-awareな`preview` jobを使い、historical `lut_preview`はaudit-onlyとする。
+- Phase 2Aではoriginal確定後にpreview jobを登録し、Phase 2B detector-v2ではApple Log判定とprofile別unconverted formal previewをそのjob境界の後に置く。新規動画はprofile-awareな`preview` jobを使い、historical `lut_preview`はaudit-onlyとする。
 - Phase 2B migrationは旧`api`停止、旧workerによるdrain、旧`worker`停止の順でwriterを遮断し、host wrapperが両serviceの非稼働を確認した後、DB volumeを持つoffline one-shot migratorだけで実行する。preflightのread結果を信用してそのままwriteせず、`BEGIN IMMEDIATE`取得後にschema/marker、旧`preview`/`lut_preview`/`rendition`のqueued/running件数、nonterminal rendition、`preview_generating` assetを再検証する。残件又は競合変更があればmigrationは修復せずschema/data/markerを無変更rollbackし、完了までAPI/workerを再起動しない。active resultはpersist済みprovenanceのsteady-state classifierで分類し、current managedを保持、legacy Phase 2A previewだけをsupersede、ambiguous relationを全rollbackする。session由来video preview jobはassetと同じ`preview_generation`をpayload/columnに持ち、workerはclaim/commit時に両者が一致する場合だけasset、formal preview、review stateを更新する。世代不一致jobはattemptを`superseded`、jobを`failed` + `preview_generation_superseded`へlease clear付きで収束させ、assetを書き換えない。
 - Phase 2C migrationは通常startup migrationへ追加しない。host wrapperがAPI停止、Phase 2B work drain、
   worker停止、両service非稼働を確認した後、network無効・read-only root・DB volumeだけRWの
@@ -158,6 +165,9 @@
 - Phase 2C reconciliationはnetwork無効の`phase2c-reconciler`を使い、runtime snapshotをwrite lock前に
   取得する。lock内でschema identityを再確認し、confirmed Phase 2 assetと既存safe candidateだけを
   shared evaluatorでpromote/demote/no-opへ分類する。dry-run/applyを必ず明示する。
+- detector-v2 `010_apple_log_container_signaling`は008/009を変更せず、通常startup migrationへ追加しない。default `--preflight-only`はPRAGMAを変更しないread-only処理、`--dry-run`はisolated DB限定のfull DDL/marker後rollback、`--apply`はoffline/release 0.4.0確認付きに分離する。
+- detector-v2 migrationはtransaction外で`foreign_keys=ON`、`legacy_alter_table=OFF`をread backし、切替後にだけ`BEGIN IMMEDIATE`へ進む。read/locked preflight、全row compatibility、schema/object identity、foreign key、両reserved preset namespace identityを確認し、commit直前の再分類差異を完全rollbackする。success、dry-run、faultの全経路でPRAGMA既定値を復元し、復元失敗時はserviceを停止したままにする。
+- `implement-feature`と`validate-implementation`ではmigration mutationを`/private/tmp`等の明示したisolated database copyだけへ実行する。operator databaseではread-only preflightまでとし、host apply wrapper `scripts.run_detector_v2_migration`を実行しない。operator applyは別の明示release operationとする。
 - job失敗時は`error_message`へ運用に必要な情報を保存する。
 - 固定APIトークン、filename、host/media path、complete hash、raw SQL row、不要な個人情報を
   routine error/log又はmigration/reconciliation summaryへ含めない。operator出力はaggregate件数と
@@ -171,7 +181,7 @@
 - unit test: status表示変換、`104857600 bytes`制限、metadata nullable処理。
 - unit test: upload timeout後の結果不明状態と再送抑止、EXIF `taken_at` 正規化、local mapping失敗後のupload成功状態。
 - unit test: `result_unknown`の再起動後の復元、一覧確認済みの明示操作による解除、local asset idなしのglobal pending marker。
-- component/実機 test: 未登録または無効化済みLUTのApple Log assetで、未変換表示付き`preview_ready`、再生、confirmation、削除導線を確認する。登録済みだが不正なLUTの`failed` assetには同導線を出さない。mapping未取得時に削除導線を出さないことも確認する。
+- component/実機 test: absent/disabled reserved presetのApple Log 1/2 assetで、version別未変換表示付き`preview_ready`、再生、confirmation、削除導線を確認する。registered-invalid/valid/collisionのblocked stateには同導線を出さない。mapping未取得時に削除導線を出さないことも確認する。
 - component test: Settings、Asset Picker、Asset Detail、Preview Review。
 - unit test: endpoint accept/reject matrix、rejected URLのheader/network 0 call、
   Phase 1/2 original deletion eligibility。
@@ -181,6 +191,7 @@
   0 callにすること。Phase 1 direct assetはPhase 2C条件を参照しないこと。
 - unit/component test: canonical processed-result URL以外へtokenを送らないこと、header/size/digest mismatchで写真ライブラリへ保存しないこと、unknown write-ahead/save cleanup順序、source-original mappingとの非参照を確認する。
 - unit/component test: malformed/unknown catalog、secure request ID、write-before-POST、same-ID retry、restart polling、A/B response guard、全rendition phase、fallback/terminal error、ineligible/legacy LOG非表示を確認する。
+- unit/component test: Apple Log 1/2のprofile別fallback sanitizer、cross-profile/unknown/applied claim拒否、shared exact label、0.4.0 client guard、Asset Detail refresh失敗時のpreview/confirmation/result/local deletion 0 callを確認する。
 - 実機確認: Development Buildでprocessed resultのdownload、permission denial、network interruption、無進捗timeout、cancel、supersession、unknown outcome、restart cleanupを確認する。
 - 実機確認: Development Buildで権限許可/拒否、iCloud-only素材、metadata欠落、ライブラリアクセス、TailscaleまたはLAN経由の通信、preview再生、削除キャンセルを確認する。
 
@@ -190,7 +201,7 @@
 - API test: upload、一覧、詳細、preview、確認。
 - API/worker test: `taken_at` の厳密な受理形式、malformed preview payloadのterminal failure、identity LUT preview失効migration。
 - API/worker test: terminal failure時のjob/asset status updateが同一transactionでrollbackされること。
-- API/worker test: Apple Logの高信頼判定、未登録presetの`compress-only` fallback、登録済みLUTのhash検証、provenance付きready、temporary safety triggerの置換を確認する。
+- API/worker test: Apple Log 1/2のsame-fd container判定、profile別`compress-only` fallback、provenance付きready、Apple Log applied/LUT claim拒否、successor triggerを確認する。
 - API/worker test: session create/chunk/finalizeのidempotency、concurrent finalize、lease reclaim、promote後DB失敗、commit後timeout、expiry/cancel、`upload_finalize`の復旧を確認する。
 - API/worker test: Apple Logと非Logのformal provenance、`preview_ready`を拒否するSQLite trigger、stream/confirmationのprovenance gateを確認する。
 - migration/API test: processed resultのFK、active pointer trigger、transaction rollback/backfill、inactive/cross-asset result、`200`/`206`/`416` Range delivery、descriptor open前後のpointer切替を確認する。
@@ -200,6 +211,9 @@
 - Phase 2C unit/migration/API test: 10 reasonの固定順、131072 chunkでのindexed aggregate、
   4 SQL上限、trigger/evaluator parity、009全fault境界rollback、confirmation race、
   reconciliation dry-run/apply、0.3.0 rollout matrixを確認する。
+- detector-v2 parser test: 全closed result、32/64/zero-size boundary、track/handler/stsd authority、VisualSampleEntry 86-byte boundary、decoy、全resource limitのexact/limit+1、seed固定mutation、metadata read/retention上限を確認する。
+- detector-v2 certification test: same-fd identity、descriptor permission/path confinement、snapshot cleanup/stale sweep、strict rule/manifest/summary、synthetic Apple Log 1とlocal-only real Apple Log 2/ordinary fixtureを確認する。
+- detector-v2 migration test: read-only preflight、isolated dry-run/apply/rollback、PRAGMA lifecycle、reserved preset state/race matrix、全fault rollback、0.4.0 compatibility、operator DB非変更を確認する。
 - 実機 test: Apple Log、通常動画、判定不能動画でのpreview表示と、Phase 2Aのchunk完了後だけpreview jobが登録されることを確認する。
 - integration test: tmp保存、original確定保存、ffmpeg成功/失敗、SSD未接続、容量不足。
 
@@ -226,13 +240,12 @@ npx expo start
 - coverage scopeを変更する場合はfeature specをreviewし、旧新glob、除外、matched production-file数、suite/test数、4指標とhit/total、理由、承認を記録する。既存numeratorの流用、silent exclusion、floor引下げは禁止する。
 - Jest coverageはphysical-device validationを代替しない。端末固有の権限、Tailscale/LAN、media再生・保存・削除は上記の実機確認を別途行う。
 
-Backendのlint/test commandは実装時に確定する。
-
-Backend test commandの標準形:
+Backendのlint/test commandの標準形:
 
 ```bash
-cd backend
-uv run pytest
+uv run --directory backend pytest
+uv run --directory backend ruff check .
+uv run --directory backend ruff format --check .
 ```
 
 release contractの追加固定command:
@@ -260,6 +273,11 @@ uv run python -m scripts.run_safe_delete_candidate_reconciliation --apply
 host wrapperは固定argvでCompose one-shot serviceを呼び、migration failure時はAPI/workerを
 再起動しない。reconciliationはschema migrationの代替ではなく、valid 009 schema上のstored
 projectionだけを修復する。
+
+detector-v2の実装・検証中は`backend/tests/test_detector_v2_migration.py`と
+`backend/tests/test_detector_v2_operator_paths.py`を正本に、temporary isolated databaseで
+preflight/dry-run/apply/rollbackを検証する。operator DBに接続するhost apply wrapperはrelease operationまで
+実行せず、検証結果へ「operator databaseへ010を適用していない」と明記する。
 
 ### Backend ローカル疎通確認
 

@@ -103,6 +103,13 @@ def get_asset_read(settings: Settings, *, asset_id: int) -> AssetDetailResponse:
             conn=conn,
             asset=asset,
         )
+        if (
+            "formal_preview_id" in asset
+            and asset.get("preview_status") == PREVIEW_STATUS_PREVIEW_READY
+            and asset.get("formal_preview_id") is not None
+            and (formal_preview is None or formal_preview.state != "ready")
+        ):
+            raise PreviewProvenanceInvalidError()
     return build_asset_detail_response(
         asset=asset,
         preview=preview,

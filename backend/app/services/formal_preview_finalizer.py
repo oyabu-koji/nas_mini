@@ -299,8 +299,17 @@ def finalize_formal_preview_output(
 
 def _validate_attempt_evidence(attempt: dict) -> None:
     detection_status = attempt.get("detection_status")
+    source_profile = attempt.get("source_profile")
+    requested_by_profile = {
+        "apple-log-1": "generated-apple-log-rec709",
+        "apple-log-2": "generated-apple-log2-rec709",
+    }
     common_valid = (
         detection_status in {"apple_log", "not_log", "unknown"}
+        and (
+            (detection_status == "apple_log" and source_profile in requested_by_profile)
+            or (detection_status in {"not_log", "unknown"} and source_profile is None)
+        )
         and _is_sha256(attempt.get("detector_manifest_sha256"))
         and _is_sha256(attempt.get("detector_evidence_sha256"))
         and isinstance(attempt.get("detector_rule_version"), str)
@@ -308,7 +317,8 @@ def _validate_attempt_evidence(attempt: dict) -> None:
     )
     apple_fallback = (
         detection_status == "apple_log"
-        and attempt.get("requested_preset_id") == "generated-apple-log-rec709"
+        and attempt.get("requested_preset_id")
+        == requested_by_profile.get(source_profile)
         and attempt.get("registry_classification") in {"absent", "disabled"}
         and attempt.get("applied_preset_id") == "compress-only"
         and attempt.get("transform_kind") == "none"

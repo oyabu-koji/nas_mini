@@ -26,7 +26,7 @@ const xcodeProject = readFileSync(
 
 const expected = {
   displayName: 'MediaVault',
-  version: '0.3.0',
+  version: '0.4.0',
   allowsArbitraryLoads: false,
   allowsLocalNetworking: true,
 };

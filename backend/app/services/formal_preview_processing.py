@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from typing import Callable
 
 from app.core.settings import Settings
 from app.db.connection import connect
@@ -18,10 +18,10 @@ from app.repositories.formal_previews import (
 )
 from app.services.apple_log_detector import (
     DetectionResult,
-    probe_and_classify,
     read_ffprobe_version,
 )
 from app.services.bounded_subprocess import BoundedProcessError
+from app.services.detector_inspection import detect_path_same_fd
 from app.services.detector_manifest import (
     DetectorManifest,
     DetectorValidationError,
@@ -36,15 +36,19 @@ from app.services.ffmpeg import (
 )
 from app.services.formal_preview_finalizer import (
     FormalPreviewFinalizationError,
+    VerifiedOriginal,
     finalize_formal_preview_output,
     inspect_formal_preview_candidate,
     resolve_verified_original,
 )
 from app.services.initial_release_guard import (
-    GENERATED_APPLE_LOG_PRESET_ID,
+    assert_generated_apple_log_conversion_disabled,
 )
 from app.services.preset_manifest import PresetSnapshot, compress_only_snapshot
-from app.services.preset_registry import classify_preset
+from app.services.preset_registry import (
+    classify_preset,
+    reserved_profile_preset_mapping,
+)
 from app.services.storage import (
     StorageError,
     cleanup_formal_preview_candidate,
@@ -219,20 +223,23 @@ def process_formal_preview_job(
     probe_runner: ProbeRunner | None = None,
     render_runner: RenderRunner = run_ffmpeg,
 ) -> bool:
+    assert_generated_apple_log_conversion_disabled(settings)
     attempt = prepare_formal_preview_attempt(settings=settings, job=job)
     if attempt is None:
         return True
     candidate_path: Path | None = None
     try:
-        source_path = _verified_original_path(
+        verified_original = _verified_original(
             settings=settings, asset_id=int(attempt["asset_id"])
         )
+        source_path = verified_original.path
         if attempt["state"] == "probing":
             manifest = _load_runtime_manifest(settings)
             detector = probe_runner or (
-                lambda path, loaded_manifest: probe_and_classify(
+                lambda path, loaded_manifest: detect_path_same_fd(
                     ffprobe_binary=settings.ffprobe_binary,
-                    source_path=path,
+                    path=path,
+                    expected_size=verified_original.size_bytes,
                     manifest=loaded_manifest,
                 )
             )
@@ -247,6 +254,7 @@ def process_formal_preview_job(
             snapshot, transform_status, transform_error = _resolve_preset(
                 settings=settings,
                 detection_status=str(attempt["detection_status"]),
+                source_profile=attempt["source_profile"],
             )
             attempt = _persist_preset_resolution(
                 settings=settings,
@@ -348,16 +356,16 @@ def process_formal_preview_job(
     return True
 
 
-def _verified_original_path(*, settings: Settings, asset_id: int) -> Path:
+def _verified_original(*, settings: Settings, asset_id: int) -> VerifiedOriginal:
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         return resolve_verified_original(
             settings=settings, conn=conn, asset_id=asset_id
-        ).path
+        )
 
 
 def _load_runtime_manifest(settings: Settings) -> DetectorManifest:
     rule_input = load_rule_input(
-        settings.detector_root / "detector-rule-input-v1.json"
+        settings.detector_root / "detector-rule-input-v2.json"
     )
     manifest = load_detector_manifest(
         settings.detector_root / "manifest.json", rule_input=rule_input
@@ -411,10 +419,18 @@ def _persist_detection(
 
 
 def _resolve_preset(
-    *, settings: Settings, detection_status: str
+    *,
+    settings: Settings,
+    detection_status: str,
+    source_profile: str | None = None,
 ) -> tuple[PresetSnapshot, str, str | None]:
     if detection_status == "apple_log":
-        classified = classify_preset(settings, GENERATED_APPLE_LOG_PRESET_ID)
+        requested_preset_id = reserved_profile_preset_mapping().get(
+            source_profile or ""
+        )
+        if requested_preset_id is None:
+            raise FormalPreviewProcessingError("formal_preview_relation_invalid")
+        classified = classify_preset(settings, requested_preset_id)
         if classified.registry_classification == "registered_invalid":
             raise FormalPreviewProcessingError("lut_preset_registered_invalid")
         if classified.registry_classification == "valid":
@@ -424,7 +440,7 @@ def _resolve_preset(
         fallback = compress_only_snapshot()
         return (
             PresetSnapshot(
-                requested_preset_id=GENERATED_APPLE_LOG_PRESET_ID,
+                requested_preset_id=requested_preset_id,
                 registry_classification=classified.registry_classification,
                 applied_preset_id=fallback.applied_preset_id,
                 display_name=fallback.display_name,

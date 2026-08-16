@@ -8,7 +8,7 @@
 - iPhoneからbackendへのPhase 1接続は、LANまたはTailscale private network上のHTTP endpointと固定APIトークンを使う。
 - 将来必須: Phase 2Aで大容量素材向け安全転送、Phase 2BでApple Log preview、Phase 2Cで削除候補判定を追加する。
 - Phase 2Aでは、通常video向けmanaged preset renditionをPhase 2Bの前段として提供する。これはApple Log自動判定又はformal previewではなく、preview確認・review・削除候補状態を変更しない。
-- Phase 2Bでは、`file_verified` originalだけを入力にApple Logを自動判定する。要求LUTが未登録または無効化済みなら、未変換を明示した`compress-only` previewを成功として返す。
+- Phase 2B detector-v2では、`file_verified` originalだけをsame-fd bounded parserとFFprobeで検査し、Apple Log 1/2をclosed `source_profile`として判定する。0.4.0では両profileを未変換と明示した`compress-only` previewとして返し、LUTを生成・登録・適用しない。
 - Mobileはサーバーが返す有効なプリセットだけを選択する。custom LUTのファイルをMobileからuploadしない。
 
 ## システム構成
@@ -73,17 +73,18 @@ graph LR
 1. preview jobを`queued`から`running`にする。
 2. ffmpegはoriginalを読み取り入力としてpreviewを生成する。
 3. 通常動画はH.264 MP4、音声があればAAC、1080p上限で生成する。
-4. Phase 2B以降、`file_verified` originalに対してBackendがApple Logを自動判定する。初期formal previewは自動preset解決だけを使い、Apple Logには`generated-apple-log-rec709`を要求する。identity/test/customの明示選択は別のmanaged renditionとして維持し、formal previewへ昇格しない。
-5. 要求プリセットが未登録または無効化済みなら、Backendは`compress-only`で軽量化したpreviewを生成する。jobは`done`、`preview_status = preview_ready`とし、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`、要求・適用プリセットを記録する。MobileはApple Log未変換であることを表示する。
-6. 登録済みLUTのmanifest検証、SHA-256、形式、FFmpeg適用に失敗した場合は、jobと`preview_status`を`failed`にし、previewを配信しない。
-7. 写真はJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映で生成する。
-8. 成功時は`derived_files`とformal preview provenanceを記録し、`preview_status = preview_ready`とする。
-9. 失敗時はjobと`preview_status`を`failed`にし、errorを記録する。
+4. Phase 2B detector-v2以降、Backendはverified originalをno-followで1回だけopenする。同じdescriptorをbounded ISO BMFF parserとFFprobeへ渡し、選択video trackのsample description直下にある`logs`だけを識別根拠にする。
+5. `com.apple.rec2020.apple-log`は`apple-log-1`、`com.apple.apple-wide-gamut.apple-log`は`apple-log-2`へ分類する。前者は`generated-apple-log-rec709`、後者は`generated-apple-log2-rec709`をrequested presetとして記録する。
+6. 0.4.0では両予約presetをabsentまたはdisabledに限定し、Backendは`compress-only`で軽量化したpreviewを生成する。jobは`done`、`preview_status = preview_ready`とし、profile別requested preset、`applied_preset_id = compress-only`、`transform_kind = none`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を記録する。
+7. parserのstable container errorはattempt/job/assetをterminal failureへ収束させ、derived file/resultを公開しない。将来のApple Log applied/LUT tupleも0.4.0ではformal authorityとして拒否する。
+8. 写真はJPEG、長辺2048px上限、縦横比維持、EXIF orientation反映で生成する。
+9. 成功時は`derived_files`とformal preview provenanceを記録し、`preview_status = preview_ready`とする。
+10. 失敗時はjobと`preview_status`を`failed`にし、errorを記録する。
 
 ### UC-04: preview確認
 
 1. アプリは`GET /assets/{asset_id}/preview`でpreviewを取得する。
-2. アプリは要求・適用プリセットと色変換状態を表示する。未変換Apple LogはRec.709変換済みと表示しない。
+2. アプリは`Apple Log 1 (unconverted)`または`Apple Log 2 (unconverted)`をshared pure helperで表示する。generic Apple Log labelやapplied transform labelを合成せず、Rec.709変換済みと表示しない。
 3. ユーザーがpreviewを再生する。
 4. ユーザーが確認操作を行う。
 5. アプリは`POST /assets/{asset_id}/preview-confirmation`を呼ぶ。
@@ -96,8 +97,8 @@ graph LR
    `review_status = preview_confirmed`、local mapping available、未削除、非busyを要求する。
 3. Phase 1 direct assetは`verification_status = server_hash_recorded`を追加条件とし、
    formal capabilityを要求しない。Phase 2 session videoは`type = video`かつ
-   `verification_status = file_verified`に加え、compatible capabilityと
-   `formal_preview.state = ready`を要求する。
+   `verification_status = file_verified`に加え、0.4.0 header付きAsset Detail、compatible capability、
+   `formal_preview.state = ready`を要求する。detail/capability refresh失敗、409、sanitizer拒否、candidate不一致ではnative削除へ進まない。
 4. アプリは対象asset、filename、撮影日時などを表示し、ユーザーの明示確認を求める。
 5. アプリはupload時に保持したiPhone写真ライブラリのlocal asset identifierを使い、`expo-media-library` service経由で削除を要求する。
 6. iOS側確認、権限拒否、ユーザーキャンセル、local asset不在をそれぞれ扱う。
@@ -144,10 +145,17 @@ Backendのjobs table、claim/lease/statusは内部実行modelとして維持す�
 ### Phase 2B API契約
 
 - 動画の入力経路はPhase 2Aのupload sessionで確定した`file_verified` assetだけとし、変換用にoriginalを別経路で再uploadしない。
-- `GET /api/v1/capabilities`はdetector認証、formal preview有効化、schema versionを返す。008だけが有効なPhase 2Bでは`minimum_client_version = 0.2.0`、009も有効なPhase 2Cではruntime停止中を含め`minimum_client_version = 0.3.0`とする。Mobileはstream/confirmation/resultへstrict SemVerの`X-MediaVault-Client-Version`を送り、minimum未満のclientはPhase 2操作を`409 incompatible_client`で拒否する。
+- `GET /api/v1/capabilities`はdetector認証、formal preview有効化、schema versionを返す。successor marker `010_apple_log_container_signaling`が有効ならruntime停止中でも`minimum_client_version = 0.4.0`とする。`0.3.0`以前もSettings/capabilities、asset list、upload、managed renditionを利用できるが、Phase 2 Asset Detail、preview、exact result、confirmationは共通guardでauthority read/action前に`409 incompatible_client`とする。
 - Asset Detailは`schema_version`、`generating | ready | failed`、generation、nullableな検出・detector・preset・transform情報、ready時だけのpreview/result、failed時だけのstable failure codeをnullable `formal_preview`として返す。状態別の必須/nullable fieldはfeature specのwire schemaを正本とし、path、raw probe値、rule input、manifest/LUT内容は返さない。
 - preview streamとconfirmationはsession origin、`formal_preview_id`、non-null generation、formal provenance、storage integrityを同じvalidatorで検証する。exact result deliveryはresult kindを先に解決し、current formalはformal relationと一致するnon-null `preview_generation`、current managedは`active_processed_result_id`が指す最新成功ready result/rendition、rendition provenance、`preview_generation = null`を検証する。assetのより新しいselection generationがfailed/supersededでも旧成功resultをcurrentとして維持する。どちらでもないstale又は不正relationはstable `409`で拒否する。
-- 初期formal previewはApple Logで`generated-apple-log-rec709`、非Log/判定不能で`compress-only`を自動要求する。preset catalogとidentity/test/custom選択はmanaged rendition専用であり、formal preview/review stateへ影響しない。
+- 初期formal previewはApple Log 1で`generated-apple-log-rec709`、Apple Log 2で`generated-apple-log2-rec709`、非Log/判定不能で`compress-only`を自動要求する。両Apple Log profileは0.4.0で`compress-only` unavailableだけを許可する。preset catalogとidentity/test/custom選択はmanaged rendition専用であり、予約IDをcatalogへ出さず、formal preview/review stateへ影響しない。
+
+### Detector-v2 parser / classification契約
+
+- parserは32/64-bit box size、top-level `ftyp`、単一`moov`、`trak/tkhd`、`mdia/hdlr`、`minf/stbl/stsd`、選択visual sample entryとdirect child `logs`だけをboundedにparseする。`mdat`、`hoov`、unknown top-level boxはpayloadを読まずseekする。
+- FFprobe `stream.id`のcanonical `0x...`をnonzero `track_ID`へexact対応し、parserとFFprobeの前後でdescriptor/path identityが同じことを確認する。parser metadata retentionは1 MiB以下、診断はfixtureごとに1000 ms未満を目標とする。
+- classificationは`apple_log / apple-log-1`、`apple_log / apple-log-2`、`not_log / null`、`unknown / null`のclosed relationだけを返す。未知・競合identifierやcolor field不一致はApple Logへ推測昇格しない。
+- Mobile sanitizerも同じstatus/profile/requested preset/fallback invariantを強制する。unknown profile/error、cross-profile、Apple Log applied/LUT identityは`formal_preview_invalid`としてAsset Detail全体を破棄し、preview、confirmation、result download、local Photos削除を呼ばない。
 
 ### `POST /assets/upload`
 
@@ -310,8 +318,9 @@ stateDiagram-v2
 | 外部SSD未接続 | 保存開始前に失敗 | retry可能として表示する |
 | 容量不足 | 保存失敗、error記録 | retry前に環境確認を促す |
 | ffmpeg失敗 | jobと`preview_status`を`failed` | preview生成失敗を表示する |
-| 要求LUTが未登録または無効化済み | `compress-only` previewを`done`かつ`preview_ready`で記録し、`lut_preset_unavailable`をprovenanceへ保存 | 未変換Apple Logまたは未適用LUTとして表示し、再生・confirmationを許可する |
-| 登録済みLUTのmanifest、hash、形式、FFmpeg適用失敗 | `preview_status`を`failed` | preview再生・confirmationを表示しない |
+| Apple Log 1/2予約presetがabsent/disabled | profile別requested presetと`compress-only` unavailable tupleを記録し、`preview_ready`にする | exact profileの`(unconverted)`表示で再生・confirmationを許可する |
+| 予約presetがregistered-invalid/valid/namespace collision | startup、capabilities/Phase 2 API、worker process前を`generated_apple_log_conversion_not_approved`で停止 | preview/result/confirmation/削除へ進まない |
+| container invalid/resource limit/source changed | stable container errorでattempt/job/assetをfailedにし、derived/resultを作らない | safe errorだけを表示し、再生・保存へ進まない |
 | upload timeout | backend結果は不明 | `result_unknown`を再起動後も復元し、一覧確認済みの明示操作まで再送しない |
 | metadata欠落 | nullで保存 | uploadを妨げない |
 | iPhone側削除権限拒否 | 変更なし | 削除未実行として表示する |
@@ -336,7 +345,7 @@ stateDiagram-v2
 - retryable finalization failureは同一jobを`failed -> queued`へ戻して`failed -> assembling`へ再遷移できる。attempt countを記録し、terminal failureは再queueしない。
 - 結合後にMac mini側`server_sha256`を計算し、期待値と一致した場合のみ`file_verified`にする。
 - `upload_sessions.status = completed`、全`upload_chunks.status = verified`、assetの`file_verified`, provenance付き`preview_ready`, `preview_confirmed`を満たす場合のみ削除候補とする。
-- Apple Logの未変換fallbackも、`transform_kind = none`、`color_transform_status = unavailable`、未変換表示用情報を持つformal provenanceなら削除候補のpreview条件を満たす。
+- Apple Log 1/2の未変換fallbackも、profile別requested preset、`transform_kind = none`、`color_transform_status = unavailable`、`lut_preset_unavailable`、null LUT identityを持つformal provenanceなら削除候補のpreview条件を満たす。applied tupleは候補にしない。
 - 必須条件をすべて満たす場合のみ`safe_to_delete_candidate`にする。
 - `safe_to_delete_candidate`は削除操作の自動実行ではなく、ユーザーへ削除候補として提示できる状態を表す。
 - 実削除はPhase 2以降も自動化しない。
@@ -348,8 +357,8 @@ stateDiagram-v2
   candidate promotion/demotionは同じtransactionで行う。
 - `009_safe_delete_candidate`は通常startup migration外のoffline migrationである。Phase 2B identity、
   runtime、job drain、1 TiB/8 MiB/131072 boundsをread preflightとlocked preflightの両方で確認し、
-  schema、metadata、backfill、integrity checkを一括commit又はrollbackする。valid 009 schemaの
-  minimum client versionはruntime状態に関係なく`0.3.0`とする。
+  schema、metadata、backfill、integrity checkを一括commit又はrollbackする。successor 010 markerの
+  minimum client versionはruntime状態に関係なく`0.4.0`とする。010はstartupで自動適用せず、isolated DBでread-only preflight、dry-run、明示release readiness付きapply/rollbackを行う。
 - Mobileはsanitized `formal_apple_log_preview`と`safe_delete_candidate` capability、ready formal preview、
   Backendの`safe_to_delete_candidate`をPhase 2削除条件に含める。削除直前にもasset/capabilityを
   refreshし、Phase 1 direct assetはこれらPhase 2C条件を参照しない。native削除成功は
@@ -375,7 +384,7 @@ stateDiagram-v2
 - `104857600 bytes`超過を拒否する。
 - Tokenなし要求を拒否する。
 - metadata欠落を許容する。
-- Apple Logを自動判定し、利用可能なRec.709 presetでは変換済みpreviewを生成する。未登録または無効化済みpresetでは、未変換表示付き`compress-only` previewを生成する。
+- Apple Log 1/2をauthoritative `logs` identifierとallowlist済みFFprobe color fieldsから分類し、両profileで未変換表示付き`compress-only` previewを生成する。本featureではRec.709 LUTを生成・登録・適用しない。
 - Phase 2 session由来の`file_verified` LOG videoでは、identity LUTで生成済みのpreviewを
   Rec.709変換済みとして扱わず、要求・適用presetと色変換状態がないpreviewは確認・削除導線に使えない。
 - upload timeout後に同一素材を自動または即時に再送しない。

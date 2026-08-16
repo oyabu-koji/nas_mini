@@ -97,11 +97,13 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 
 ### Phase 2B: Apple Log preview
 
-- original確定保存後に、動画metadataからApple Logを高信頼で自動判定する。
-- Apple Logを検出した素材は、利用可能なら`generated-apple-log-rec709`を既定プリセットとして要求する。自前生成変換または利用条件を確認済みの公式LUTだけを、このプリセットに登録する。
-- 要求プリセットが未登録または無効化済みの場合は、`compress-only`で軽量化した未変換previewを`done`かつ`preview_ready`として返す。画面はApple Log未変換であることを表示し、Rec.709変換済みとは表示しない。
-- 登録済みLUTのmanifest検証、SHA-256、形式、FFmpeg適用が失敗した場合だけ、jobと`preview_status`を`failed`にする。判定不能または未対応profileも、色変換を要求せず`compress-only`で内容確認可能なpreviewを生成する。
-- 初期Phase 2Bのformal previewは自動preset解決だけを使う。Apple Logの将来Rec.709変換または未変換fallbackは、要求プリセット、適用プリセット、version、SHA-256、`color_transform_status`、必要時のerror codeをpreview provenanceとして記録する。未変換Apple Logは`transform_kind = none`とし、`color_transform_error_code = lut_preset_unavailable`を使う。identity/test/customの明示選択はmanaged renditionのまま維持し、formal previewへ昇格しない。
+- original確定保存後に、bounded ISO BMFF parserとFFprobeを同じopened file descriptorへ適用し、video sample description直下の`logs` identifierとallowlist済みcolor fieldsからApple Logを高信頼で自動判定する。`mdat`、`hoov`、unknown boxのpayloadやファイル全体のbyte列検索を判定根拠にしない。
+- Apple Logを`source_profile = apple-log-1 | apple-log-2`として区別する。Apple Log 1は`com.apple.rec2020.apple-log`、Apple Log 2は`com.apple.apple-wide-gamut.apple-log`のexact identifierを要求し、`not_log`と`unknown`では`source_profile = null`を要求する。
+- Apple Log 1は`generated-apple-log-rec709`、Apple Log 2は`generated-apple-log2-rec709`をrequested presetとして記録する。0.4.0初期リリースでは両予約IDを未登録またはdisabledに固定し、LUT、manifest、変換artifactを生成・登録・適用しない。
+- 両profileは`compress-only`で軽量化した未変換previewを`done`かつ`preview_ready`として返す。provenanceは`applied_preset_id = compress-only`、`transform_kind = none`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`、applied LUT identity nullのexact tupleとする。
+- Mobileは`Apple Log 1 (unconverted)`または`Apple Log 2 (unconverted)`を表示し、Rec.709変換済みとは表示しない。`not_log`と`unknown`は`compress-only`、`not_requested`、null profileを維持する。
+- parserの`log_container_invalid`、`log_container_resource_limit`、`log_container_source_changed`はattempt/job/assetのterminal failureへ収束し、derived fileやprocessed resultを公開しない。
+- 将来のApple Log LUT applied tupleはDB互換性のため表現可能でも、0.4.0のworker、finalizer、API response、result delivery、confirmation、safe-delete authority、Mobile sanitizerでは拒否する。identity/test/customの明示選択はmanaged renditionのまま維持し、formal previewへ昇格しない。
 - Phase 2B rolloutでは、Phase 2A session由来で`file_verified`の動画だけを一意なprofile-aware preview jobへ移行する。新jobのdedup insertに成功したときだけasset preview generationとformal preview/review stateを更新する。既存active resultがcurrent managed renditionならpointer/result/provenanceを保持し、legacy Phase 2A previewだけをsupersedeする。旧generation jobはattemptを`superseded`、jobを`failed` + `preview_generation_superseded`へlease clear付きで収束させ、assetを書き換えない。Phase 1 direct assetは対象外とする。
 - managed pointerの更新では、migration/delivery用steady-state判定とは別のtransition判定を使う。current selectionの一意なready managed resultへだけ切替を許可し、旧managed resultだけをsupersedeしてcurrent formal resultを維持する。
 - Apple Log detector ruleはfixture比較とは独立にrepository ownerが根拠/source reference付きで人手承認する。認証scriptはその不変ruleをrepo外fixtureで検証するだけとし、rule input、manifest、runtime ffprobe、移行markerが揃うまでPhase 2B capabilityを無効にする。
@@ -110,11 +112,11 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 
 ### Phase 2C: 安全削除候補
 
-- `upload_sessions.status = completed`、全`upload_chunks.status = verified`、`assets.verification_status = file_verified`、`transform_kind = lut`または`none`の正式provenance付き`assets.preview_status = preview_ready`、`assets.review_status = preview_confirmed`をすべて満たす場合のみ`safe_to_delete_candidate`にする。Apple Logの`compress-only` fallbackも、未変換表示と`none` provenanceを持つ場合はこの条件に含める。
+- `upload_sessions.status = completed`、全`upload_chunks.status = verified`、`assets.verification_status = file_verified`、0.4.0で許可されたformal provenance付き`assets.preview_status = preview_ready`、`assets.review_status = preview_confirmed`をすべて満たす場合のみ`safe_to_delete_candidate`にする。Apple Log 1/2はprofile別`compress-only` unavailable tupleだけを認め、applied/LUT identity claimは候補にしない。
 - Backendの共通evaluatorはsession/chunk/whole-file identity、current formal result・attempt・provenance、preview確認を固定順で検証し、confirmation、offline backfill、operator reconciliationから再利用する。
 - `preview-confirmation`はformal file integrityをwrite transaction外で確認し、`BEGIN IMMEDIATE`後に同じsnapshotを再検証してからreview更新とcandidate projectionを原子的に確定する。
 - `009_safe_delete_candidate`は通常startup migrationへ追加せず、Phase 2B runtimeとdrainを確認したoffline one-shot migrationで適用する。completed upload ledger、finalized original identity、current formal derived identityはSQLite triggerで保護する。
-- Phase 2C有効時のminimum client versionはruntime停止中も`0.3.0`とする。Mobileはformal capability、safe candidate capability、ready formal preview、Backend candidate status、local mappingをすべて満たすPhase 2 videoだけに明示削除操作を表示する。
+- detector-v2 successor schema有効時のminimum client versionはruntime停止中も`0.4.0`とする。`0.3.0`以前はasset list、Settings/capabilities、uploadを継続できるが、Phase 2 Asset Detail、preview、processed result、confirmationは`409 incompatible_client`とする。Mobileは0.4.0で再取得したdetailとcapability、ready formal preview、Backend candidate status、local mappingをすべて満たすPhase 2 videoだけに明示削除操作を表示する。
 - candidateは自動削除命令ではない。iPhone側originalは削除直前にasset/capabilityを再取得し、既存のnative確認後にだけ削除する。Backend original、derived file、asset recordは削除しない。
 
 ## Phase 3+ Backlog
@@ -150,7 +152,7 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - ffmpegでH.264 MP4 previewを生成できる。
 - previewは縦横比を維持し、1080pを上限とする。
 - 音声がある場合はAAC音声を含む。
-- Phase 2B以降、Apple Logと高信頼で判定された素材は、利用可能なら正式なRec.709変換を適用できる。要求LUTが未登録または無効化済みなら、未変換であることを表示した`compress-only` previewを確認できる。登録済みLUTの検証・適用失敗だけはpreviewをfailedにする。
+- Phase 2B detector-v2以降、Apple Log 1/2をclosed profileとして判定し、0.4.0では両方を未変換と明示した`compress-only` previewとして確認できる。Apple Log LUT変換済みとは表示せず、将来のapplied claimが混入した場合はpreview authorityとして扱わない。
 - 写真previewはJPEG、長辺2048px上限、EXIF orientation反映で生成できる。
 - 確認後に`review_status = preview_confirmed`となる。
 
@@ -246,14 +248,16 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - ローカル`node_modules`をDockerへ持ち込まない。
 - 開発中のiPhone実運用はDevelopment Buildを使う。配布はApp StoreまたはUnlisted Appを目標とし、審査時は独立したHTTPS backendを用意する。
 - 開発中はMBA上のbackendをTailscale経由でiPhoneから確認し、Mac mini移行後はBackend URLをMac miniのTailscale IPまたはMagicDNS名へ差し替える。
+- detector-v2のreal Apple Log 2/ordinary fixtureはGit管理外の`data/`にowner-only modeで置き、path、filename、raw metadata、動画本体をartifact、Docker image、ログへ含めない。
+- schema `010_apple_log_container_signaling`は通常startupで自動適用せず、0.4.0 release readiness、停止・drain、read-only preflightを確認したisolated databaseだけでdry-run/apply/rollbackする。
 
 ## 未決事項
 
 - preview bitrate。
-- Apple公式LUTの配布元・利用条件、自前生成変換の入力仕様・metadata検出根拠・品質閾値・SHA-256の確定値。
+- Apple Log 1/2からRec.709への将来変換方式、品質閾値、LUTの配布条件、generator/version/SHA-256。0.4.0では未実装とする。
 - Docker Compose上のworker service詳細設定。
 - 将来のLAN/Tailscale endpoint discovery。
-- checked-in iOS設定は`MediaVault`、version `0.3.0`、
+- checked-in iOS設定は`MediaVault`、version `0.4.0`、
   `NSAllowsArbitraryLoads = false`、`NSAllowsLocalNetworking = true`を正とする。
 - `expo-media-library` で取得可能なEXIF/location項目。
 - thumbnail/proxy生成はPhase 1では本番対象外とし、将来候補として扱う。

@@ -5,7 +5,8 @@
 - MobileはExpo managed workflow + JavaScriptのfeature-first構成とする。
 - BackendはFastAPIのlayered構成とする。
 - originalとderived fileはrepository外の`MEDIA_ROOT`へ保存する。
-- Docker関連ファイルはMac mini移行時に追加する。
+- detector certification用の実動画はGit管理外のroot `data/`だけに置き、Docker build contextへ含めない。
+- Docker関連ファイルはrootのDockerfile/Composeで管理する。
 
 ## プロジェクト構造
 
@@ -46,13 +47,14 @@ project-root/
 │   │   ├── api/
 │   │   ├── core/
 │   │   ├── db/
+│   │   │   └── detector_v2/
 │   │   ├── models/
 │   │   ├── repositories/
 │   │   ├── schemas/
 │   │   ├── services/
 │   │   └── workers/
 │   ├── assets/
-│   │   ├── detectors/apple-log-v1/
+│   │   ├── detectors/apple-log-v2/
 │   │   └── lut/presets/
 │   ├── scripts/
 │   ├── tests/
@@ -69,6 +71,9 @@ project-root/
 ├── .steering/
 └── .devcontainer/
 ```
+
+root `data/`はlocal-only inputであり、tracked treeには含めない。固定descriptor
+`data/detector-certification-v2.json`と実動画2本はowner-only permissionで管理する。
 
 ## Mobile構造
 
@@ -110,6 +115,13 @@ project-root/
   rejected URLではheader構築とnetwork adapter呼び出しを行わない。
 - Tokenをログ出力しない。
 - processed result metadataをsanitizeし、validated asset/result IDからcanonical relative delivery pathを再構築する。response URLをそのまま認証付きrequestへ渡さない。
+- formal preview responseは`mediaVaultApi.js`でstatus/profile/requested preset/transform tupleをclosed sanitizeし、Phase 2 asset-specific requestへ0.4.0 client version headerを付ける。
+
+### `src/shared/utils/` と `src/shared/constants/`
+
+- `formalPreviewPresentation.js`はApple Log 1/2のunconverted label、ordinary、unknownを返すpure helperとし、Asset DetailとPreview Reviewから共有する。
+- `errors.js`はcontainer detector errorをpath-freeなsafe messageへmapし、unknown codeはgeneric failureへ閉じる。
+- `clientVersion.js`をMobile API contract versionの正本とし、`package.json`、`app.json`、checked-in iOS versionとの同期testを置く。
 
 ### `src/shared/services/`
 
@@ -158,6 +170,7 @@ project-root/
 - `phase_schema_identity.py`はPhase 2B/2Cのmarker、metadata、column、index、trigger SQL identityを
   closed signalで検証する。`phase2c/009_safe_delete_candidate.sql`はstartup migration外のtrusted
   assets rebuildと11個のauthority保護triggerを所有する。
+- `detector_v2/schema.py`はstartup migration外の`010_apple_log_container_signaling` schema、object/trigger digest、profile-aware invariantを所有する。既存008/009は変更せず、successor migratorだけが3 tableを再構築する。
 
 ### `backend/app/models/`, `schemas/`
 
@@ -181,6 +194,8 @@ project-root/
 - `run_safe_delete_candidate_reconciliation.py`とcontainer内
   `reconcile_safe_delete_candidates.py`はnetwork-disabled one-shot serviceでcandidate projectionを
   dry-run/applyする。
+- `run_detector_v2_migration.py`はAPI停止、worker drain、release 0.4.0 readinessを確認するhost wrapper、`migrate_detector_v2.py`はdefault read-only preflightとisolated DB限定dry-run/applyを所有する。再起動後は`check_detector_v2_api_capability.py`がminimum client 0.4.0とdetector/formal preview/safe-delete capabilityを確認し、operator databaseへ自動applyしない。
+- `inspect_detector_fixture.py`はsnapshotを一度だけno-follow openし、同じinherited fdをbounded parserとpinned FFprobeへ渡す。`audit_external_fixture_git_history.py`はlocal fixture hash確認後にGit history/path/object DBをbounded auditするthin CLIとする。
 - `renditions.py`と`rendition_provenance.py`はrequest/job/result/provenance relationを扱い、finalizerのtransactionを内側でcommitしない。
 - formal preview repositoryとrendition repositoryはresult kindを共有flagから推測せず、
   各provenance relationでcurrent authorityを解決する。
@@ -194,9 +209,13 @@ project-root/
   managed finalizerのpointer切替は別のtransition validatorを使い、current selectionの一意なready targetだけを許可する。
 - original非改変ルールを守る。
 - managed presetはmanifest/JCS/`.cube`検証、registry分類、no-follow LUT snapshot、rendition作成、専用処理、原子的finalizeをそれぞれ`preset_manifest.py`、`preset_registry.py`、`lut_snapshot.py`、`rendition_creation.py`、`rendition_processing.py`、`rendition_finalizer.py`へ分離する。
-- `phase2_rollout.py`はschema、client version、runtimeの評価順と0.2.0/0.3.0 floorを共有する。
+- `phase2_rollout.py`はschema、client version、runtimeの評価順と0.2.0/0.3.0/0.4.0 floorを共有する。
   `safe_delete_candidate.py`は4 SQL以下の純粋なrelational evaluator/projection、
   `safe_delete_reconciliation.py`はoperator再評価transactionを所有する。
+- `detector_source.py`はverified originalのno-follow openと前後identity検証、`iso_bmff_log_parser.py`はbounded ISO BMFF traversal、`apple_log_detector.py`はFFprobe stream ID相関とclosed classifierを所有する。
+- `detector_fixture_descriptor.py`、`detector_snapshot_cleanup.py`、`detector_inspection.py`、`detector_certification.py`は、local descriptor検証、owner-only snapshot lifecycle、same-fd container inspection、path-free artifact publishを分担する。
+- `detector_v2_migration.py`と`detector_v2_host_migration.py`はsuccessor schemaのread/locked preflight、reserved preset identity snapshot、transaction/PRAGMA lifecycle、operator stop/drain/restartを分離する。
+- `external_fixture_git_audit.py`は実動画を保存せず、verified fixtureから導出したblob identityとreachable path/object databaseだけを上限付きで検査する。
 
 ### `modules/streaming-sha256/`
 
@@ -217,14 +236,16 @@ project-root/
 
 ### `backend/assets/detectors/`
 
-- `apple-log-v1/detector-rule-input-v1.json`へrepository ownerが人手で作成・承認した判定predicate、根拠、source reference、approval情報を置き、隣接する`.sha256` sidecarへJCS SHA-256を置く。fixture差分又はscriptから判定ruleを生成しない。
-- `apple-log-v1/manifest.json`と`certificate-summary.json`へ、rule-input digest、exact ffprobe version/entries、resource limit、fixture SHA-256/期待分類、canonical digestを持つ認証結果を置く。動画本体、local path、raw ffprobe outputは置かない。
+- `apple-log-v2/detector-rule-input-v2.json`へrepository ownerが人手で承認したexact identifier/profile/preset mapping、color allowlist、parser contract/resource limits、Apple公式source URL、確認日時、承認roleを置き、隣接する`.sha256` sidecarへJCS SHA-256を置く。fixture差分又はscriptから判定ruleを生成しない。
+- certificationで生成する`manifest.json`と`certificate-summary.json`はrule/parser/FFprobe/fixture evidence identityだけを持つpath-free strict schema v2とする。動画本体、local path、filename、raw box/FFprobe outputは置かない。
+- `generated-apple-log2-rec709`用LUT/manifestは置かない。Apple Log 1/2のreserved automatic presetはselectable LUT catalogから分離する。
 
 ### `backend/scripts/`
 
 - `generate_test_luts.py`は17-point identityとred/blue swap test LUT、schema v1 manifestをdeterministicに再生成する。
 - generated LUT/manifestはcommitし、generator再実行後の差分とSHA-256をtestで検証する。実user LUTは生成・commitしない。
 - `certify_apple_log_detector.py`は人手承認済みrule inputを変更せず、repo外fixtureをpinned Docker ffprobeで検査し、sanitized candidate manifestとpath-free certificate summaryを決定的に生成・再検証する。fixture差分からpredicateを推論せず、認証前のmanifestを有効化せず、media/pathを出力又はcommitしない。
+- `inspect_detector_fixture.py`、`audit_external_fixture_git_history.py`、`migrate_detector_v2.py`、`run_detector_v2_migration.py`、`check_detector_v2_api_capability.py`はそれぞれcontainer inspection、Git混入監査、container migration、host operator orchestration、post-start capability確認に限定し、責務を相互に混在させない。
 - `validate_image_codecs.py`は`tests/fixtures/image-codecs/`のprovenance/hash/dimensionsを
   strictに検証し、production adapterでHEIC/JPEG/PNGをJPEGへ実decodeする。
 
@@ -232,7 +253,7 @@ project-root/
 
 - `ios/LatestTemplate/Info.plist`はrelease inputであり、`app.json`と表示名、version、ATSを同期する。
 - `scripts/verify-ios-native-config.mjs`は`plutil`でplistをstructured parseし、
-  `MediaVault`、Expo/npm/plist/Xcodeの`0.3.0`、ATS `false/true`を固定commandで検証する。
+  `MediaVault`、Expo/npm/plist/Xcodeの`0.4.0`、ATS `false/true`を固定commandで検証する。
 
 ### `backend/pyproject.toml`, `backend/uv.lock`
 
@@ -241,6 +262,12 @@ project-root/
 - `uv.lock`は再現性のためcommitする。
 - `.venv/`はlocal generated stateとしてcommitしない。
 - Backendのtestや起動は原則`uv run ...`で実行する。
+
+### `backend/tests/`
+
+- detector-v2はparser、source identity、classifier/manifest、descriptor/snapshot/certification、schema/migration/operatorを対象別の`test_*.py`へ分離する。
+- real fixture testは`data/`が安全に存在する明示環境だけで実行し、通常pytestはsynthetic containerで完結させる。
+- Mobileは対象module近傍の`*.test.js(x)`にsanitizer、shared label、0.4.0 compatibility、local deletion fail-closed integrationを置く。
 
 ## MEDIA_ROOT構造
 
@@ -295,6 +322,7 @@ backend workers -> services -> repositories -> db
 - Mac miniのSSD host pathは環境変数でcomposeへ渡す。
 - container内`MEDIA_ROOT`へvolume mountする。
 - optionalなhost `USER_LUT_ROOT`はcontainerへread-only volume mountし、未設定時はcustom LUT capabilityをfalseにする。
+- root `data/`は`.dockerignore`で通常build contextから除外する。detector certifierだけが明示したowner-only fixture root/snapshotをread-only mountし、networkなし、read-only filesystem、capability drop、no-new-privilegesで実行する。
 - `node_modules`はcontainer内で作成する。
 - Backend Python依存はcontainer内で`uv sync --frozen`相当の手順で解決する。
 

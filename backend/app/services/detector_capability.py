@@ -45,18 +45,18 @@ def evaluate_detector_capability(settings: Settings) -> DetectorCapability:
             schema = resolve_managed_phase_schema(conn)
     except PhaseSchemaIdentityError as exc:
         return _blocked(exc.code)
-    if not schema.phase2b_valid:
+    if not schema.detector_v2_valid:
         return DetectorCapability(
             mode="phase2a_compatibility",
             detector_certified=True,
             formal_apple_log_preview=False,
-            blocked_reason="phase2b_migration_not_applied",
+            blocked_reason="detector_v2_migration_not_applied",
         )
     return runtime
 
 
 def evaluate_detector_runtime(settings: Settings) -> DetectorCapability:
-    rule_path = settings.detector_root / "detector-rule-input-v1.json"
+    rule_path = settings.detector_root / "detector-rule-input-v2.json"
     manifest_path = settings.detector_root / "manifest.json"
     summary_path = settings.detector_root / "certificate-summary.json"
     if not (rule_path.is_file() and manifest_path.is_file() and summary_path.is_file()):

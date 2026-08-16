@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { buildPreviewSource, buildPreviewVideoSource, confirmPreview } from '../../../shared/api/mediaVaultApi';
 import { ASSET_TYPE, PREVIEW_STATUS } from '../../../shared/constants/assetStatuses';
 import { messageForErrorCode, toDisplayError } from '../../../shared/utils/errors';
+import { formalPreviewProfileLabel } from '../../../shared/utils/formalPreviewPresentation';
 import { useAssetDetail } from '../../assets/hooks/useAssets';
 import { downloadPreviewToCache } from '../services/previewCacheService';
 
@@ -126,36 +127,14 @@ export function formalPreviewPresentation(formalPreview) {
       stateMessage: messageForErrorCode(formalPreview.failure_code),
     };
   }
-  if (
-    formalPreview.detection_status === 'apple_log'
-    && formalPreview.color_transform_status === 'unavailable'
-  ) {
-    return {
-      profileLabel: 'Apple Log (unconverted)',
-      transformLabel: 'Color transform unavailable',
-      stateMessage: null,
-    };
-  }
-  if (
-    formalPreview.detection_status === 'apple_log'
-    && formalPreview.color_transform_status === 'applied'
-  ) {
-    return {
-      profileLabel: formalPreview.applied_preset_display_name,
-      transformLabel: 'Color transform applied',
-      stateMessage: null,
-    };
-  }
-  if (formalPreview.detection_status === 'not_log') {
-    return {
-      profileLabel: 'Ordinary video',
-      transformLabel: null,
-      stateMessage: null,
-    };
-  }
   return {
-    profileLabel: 'Video profile unknown (unconverted)',
-    transformLabel: null,
+    profileLabel: formalPreviewProfileLabel(formalPreview),
+    transformLabel: (
+      formalPreview.detection_status === 'apple_log'
+      && formalPreview.color_transform_status === 'unavailable'
+    )
+      ? 'Color transform unavailable'
+      : null,
     stateMessage: null,
   };
 }

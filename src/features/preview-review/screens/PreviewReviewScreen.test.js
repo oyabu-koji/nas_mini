@@ -117,4 +117,21 @@ describe('PreviewReviewScreen', () => {
     expect(screen.getByText('Preview is not ready.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Confirm preview' })).toBeNull();
   });
+
+  it.each([
+    ['Apple Log 1 (unconverted)', 'Apple Log 2 (unconverted)'],
+    ['Apple Log 2 (unconverted)', 'Apple Log 1 (unconverted)'],
+  ])('renders %s without generic or applied labels', async (label, otherLabel) => {
+    usePreviewReview.mockReturnValue(reviewState({
+      profileLabel: label,
+      transformLabel: 'Color transform unavailable',
+    }));
+
+    await render(<PreviewReviewScreen settings={{}} canUseApi assetId={42} onBack={jest.fn()} />);
+
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(screen.queryByText(otherLabel)).toBeNull();
+    expect(screen.queryByText('Apple Log (unconverted)')).toBeNull();
+    expect(screen.queryByText('Color transform applied')).toBeNull();
+  });
 });

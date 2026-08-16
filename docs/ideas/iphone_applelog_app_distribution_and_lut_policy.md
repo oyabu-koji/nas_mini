@@ -1,7 +1,7 @@
 # iPhone Apple Log動画変換アプリ
 ## LUT・Tailscale・App Store審査・バックエンド運用方針
 
-最終更新: 2026-07-18
+最終更新: 2026-08-15
 
 ---
 
@@ -111,18 +111,23 @@ Mac miniで動作確認済みのバックエンドを、審査用環境へ展開
 
 ### 2.5 LUT未登録時のフォールバック
 
-Apple Logまたはユーザーが選択したLUTプリセットが未登録、無効化済み、または利用不可の場合は、ジョブ全体を`failed`にしない。
+Apple Logのreserved automatic preset、またはmanaged renditionでユーザーが選択したLUTプリセットが未登録、無効化済み、または利用不可の場合は、ジョブ全体を`failed`にしない。ただしformal previewとmanaged renditionのpreset intentは混在させない。
 
-1. originalが`file_verified`になった後にBackendがApple Logを自動判定する。初期formal previewは自動preset解決だけを使い、Apple Logを検出した場合は`generated-apple-log-rec709`を要求する。ユーザーのidentity/test/custom選択は別のmanaged renditionとして維持し、formal preview、確認、削除条件へ昇格しない。
-2. 要求プリセットが未登録または無効化済みの場合は、LUTを適用しない軽量化previewを生成し、iPhoneへ返却する。ジョブは`done`とする。
+1. originalが`file_verified`になった後にBackendがsame-fd bounded container detectorでApple Logを自動判定する。`apple-log-1`は`generated-apple-log-rec709`、`apple-log-2`は`generated-apple-log2-rec709`を要求する。ユーザーのidentity/test/custom選択は別のmanaged renditionとして維持し、formal preview、確認、削除条件へ昇格しない。
+2. 0.4.0では両reserved presetをabsentまたは明示disabledに固定する。この場合はLUTを適用しない軽量化previewを生成し、iPhoneへ返却する。ジョブは`done`とする。
 3. レスポンスと画面に、`requested_preset_id`、`applied_preset_id = compress-only`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`を明示する。
-4. Apple Logの場合は、このpreviewを「Apple Logのままの未変換preview」と表示し、Rec.709変換済みとは表示しない。
+4. Apple Logの場合は、`Apple Log 1 (unconverted)`又は`Apple Log 2 (unconverted)`とprofile別に表示し、Rec.709変換済みとは表示しない。
 5. Backend側originalのimmutable保持と`file_verified`を前提に、未変換previewでも`preview_ready`、内容確認、iPhone側originalの手動削除導線を提供できるものとする。Phase 2Cの他のhash検証条件と`preview_confirmed`を満たす場合は、`safe_to_delete_candidate`にもできる。判定根拠は「退避したoriginalの完全性と内容確認」であり、色変換の品質評価ではない。provenanceには`transform_kind = none`、要求・適用プリセット、色変換未適用の理由を記録する。
-6. 後日LUTが有効化されたら、既存ジョブの結果を書き換えず、同じimmutable originalから新しいプリセット版ジョブを実行する。
+6. 後日profile別LUTを有効化する場合は、real fixture、legal/source evidence、quality review、artifact/schema/runtime version更新を行う別featureとする。既存ジョブの結果を書き換えず、同じimmutable originalから新しいプリセット版ジョブを実行する。
 
-LUTファイルが登録済みでも、manifest検証、SHA-256、形式、FFmpeg適用のいずれかが失敗した場合は、設定不備を隠さないためにジョブを`failed`にする。「未登録」と「破損・改ざん・適用失敗」は分けて扱う。
+0.4.0のreserved automatic presetが`registered_invalid`、`valid`、又はnamespace collisionになった場合は、設定不備をfallbackで隠さず、migration、startup、API、workerをfail closedにする。managed renditionのLUTでmanifest検証、SHA-256、形式、FFmpeg適用のいずれかが失敗した場合は、そのrenditionを`failed`にする。「未登録/disabled」と「破損・改ざん・意図しない有効化・適用失敗」は分けて扱う。
 
-この方針を実装仕様へ昇格する際は、既存Phase 2Bの「Apple LogはLUT provenanceだけが`preview_ready`になれる」という制約を、上記の未変換`transform_kind = none`を許可する契約へ更新する。未変換previewは色評価用ではないことをMobileに常に表示する。
+この方針の実装仕様は`20260802_1-apple-log-container-signaling-detection`とする。successor schemaは上記の未変換`transform_kind = none`だけを0.4.0 runtime authorityとして許可する。未変換previewは色評価用ではないことをMobileに常に表示する。
+
+| `source_profile` | exact container identifier | requested preset | 0.4.0 applied preset / 表示 |
+|---|---|---|---|
+| `apple-log-1` | `com.apple.rec2020.apple-log` | `generated-apple-log-rec709` | `compress-only` / `Apple Log 1 (unconverted)` |
+| `apple-log-2` | `com.apple.apple-wide-gamut.apple-log` | `generated-apple-log2-rec709` | `compress-only` / `Apple Log 2 (unconverted)` |
 
 ---
 
@@ -339,7 +344,7 @@ Docker imageやGitリポジトリには、ユーザーが個別に取得したLU
 
 アプリはMac側の`capabilities`または`presets` APIから利用可能なプリセット一覧を取得する。`compress-only`は常に返す。ユーザーLUTを選択した場合は、サーバーは実際に適用したプリセットID、version、SHA-256を結果に含める。
 
-選択したユーザーLUTが未登録または無効な場合は、第2.5節に従い`compress-only`へフォールバックする。有効なユーザーLUTの結果も、Apple Log → Rec.709と明示するのは、その目的と証跡を満たす`generated-apple-log-rec709`プリセットだけとする。
+選択したユーザーLUTが未登録または無効な場合は、第2.5節に従い`compress-only`へフォールバックする。有効なユーザーLUTもApple Log → Rec.709とは表示しない。Apple Log 1/2のreserved automatic presetは0.4.0のselectable managed catalogへ掲載せず、将来のprofile別transform featureで目的、fixture、品質、証跡を審査する。
 
 例:
 
@@ -350,11 +355,6 @@ Docker imageやGitリポジトリには、ユーザーが個別に取得したLU
       "id": "compress-only",
       "name": "軽量化のみ",
       "type": "transcode"
-    },
-    {
-      "id": "generated-apple-log-rec709",
-      "name": "Apple Log → Rec.709",
-      "type": "color-transform"
     },
     {
       "id": "user-lut-001",
@@ -668,6 +668,39 @@ Mac mini版の処理が完成してから着手する。
 - [ ] Final Cut Pro出力との目視比較を行う
 - [ ] 白飛び、黒つぶれ、色転びのテスト動画を用意する
 - [ ] Rec.709のcolor primaries、transfer、matrixタグを確認する
+
+#### App Store提出前のApple identifier source record（blocking）
+
+各提出releaseは、detector rule inputに保存された承認だけを流用せず、次のrecordを提出checklist又は
+release evidenceへ残す。3項目のいずれかが空なら提出しない。
+
+- [ ] Apple公式LogTransferFunction source URLを記録する:
+  `https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_logtransferfunction`
+- [ ] 上記URLでApple Log 1/2のexact identifierを再確認した日時を、timezone付きISO 8601で記録する
+- [ ] 確認・承認したroleとstable approval referenceを記録する
+- [ ] 記録したURL、日時、role/referenceが`detector-rule-input-v2.json`のofficial sourceとapproval record、reviewed sidecar digestに対応することを確認する
+
+現在のrepository baselineは`approved_at = 2026-08-12T00:00:00+08:00`、
+`approving_role = repository-owner`、approval referenceは
+`docs/ideas/20260802_1-apple-log-container-signaling-detection.md`である。これは実装時の承認記録であり、
+各App Store提出時の再確認recordを省略する根拠にはしない。
+
+#### Identifier変更時の提出blockとversion review
+
+次のいずれかに該当するreleaseはApp Storeへ提出しない。
+
+- Apple公式sourceがBeta/pre-release扱い、又はstable contractか確認できない
+- Apple Log 1/2のexact identifierがreviewed rule inputから変更・追加・削除されている
+- 公式sourceへ到達できない、内容を確認できない、又は提出releaseの再確認recordがない
+- source URL、identifier、box serialization/placement observationのいずれかがfixture/artifactと矛盾する
+
+blockを解除するには、変更影響をreviewし、必要に応じて`rule_version`、
+`parser_contract_version`、artifact schema/mapping、Backend/Mobile closed contract、successor migrationを
+version upする。synthetic/real fixture、canonical rule sidecar、manifest/certificate summary、full validationを
+再実行し、repository owner又は明示された承認roleが新しいstable referenceを承認するまで提出不可とする。
+
+- [ ] 上記block conditionがすべてfalseであることを提出release recordへ明記する
+- [ ] 変更があった場合はrule/parser version reviewと再認証の承認referenceを記録する
 
 ---
 

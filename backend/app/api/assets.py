@@ -52,6 +52,7 @@ from app.services.client_compatibility import (
     require_compatible_client_for_asset,
 )
 from app.services.phase2_rollout import resolve_phase2_rollout
+from app.services.initial_release_guard import InitialReleaseConfigurationError
 from app.services.upload import UploadTooLargeError, create_upload_asset
 
 
@@ -142,6 +143,8 @@ def stream_processed_result(
         )
     except IncompatibleClientError:
         return _conflict("incompatible_client")
+    except InitialReleaseConfigurationError as exc:
+        return _service_unavailable(exc.code)
     except PhaseSchemaIdentityError as exc:
         return _service_unavailable(exc.code)
     try:
@@ -177,14 +180,34 @@ def stream_processed_result(
 
 
 @router.get("/{asset_id}", response_model=AssetDetailResponse)
-def get_asset_detail(asset_id: int) -> AssetDetailResponse:
+def get_asset_detail(
+    asset_id: int,
+    client_version: Annotated[
+        str | None, Header(alias="X-MediaVault-Client-Version")
+    ] = None,
+) -> AssetDetailResponse | JSONResponse:
+    settings = load_settings()
     try:
-        return get_asset_read(settings=load_settings(), asset_id=asset_id)
+        require_compatible_client_for_asset(
+            settings=settings,
+            asset_id=asset_id,
+            client_version=client_version,
+        )
+    except IncompatibleClientError:
+        return _conflict("incompatible_client")
+    except InitialReleaseConfigurationError as exc:
+        return _service_unavailable(exc.code)
+    except PhaseSchemaIdentityError as exc:
+        return _service_unavailable(exc.code)
+    try:
+        return get_asset_read(settings=settings, asset_id=asset_id)
     except AssetNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Asset not found",
         ) from exc
+    except PreviewProvenanceInvalidError:
+        return _conflict("formal_preview_provenance_invalid")
 
 
 @router.get("/{asset_id}/preview")
@@ -206,6 +229,8 @@ def stream_asset_preview(
         phase2b_asset = rollout.phase2_asset
     except IncompatibleClientError:
         return _conflict("incompatible_client")
+    except InitialReleaseConfigurationError as exc:
+        return _service_unavailable(exc.code)
     except PhaseSchemaIdentityError as exc:
         return _service_unavailable(exc.code)
     try:
@@ -261,6 +286,8 @@ def confirm_asset_preview(
         phase2b_asset = rollout.phase2_asset
     except IncompatibleClientError:
         return _conflict("incompatible_client")
+    except InitialReleaseConfigurationError as exc:
+        return _service_unavailable(exc.code)
     except PhaseSchemaIdentityError as exc:
         return _service_unavailable(exc.code)
     try:

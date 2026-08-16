@@ -4,7 +4,10 @@
 
 - Date: 2026-07-11
 - Feature name: Apple Log detection and formal preview provenance
-- Status: draft; detector fixture certification pending
+- Status: implemented as the Phase 2B baseline; detector/classifier, schema gate, and
+  Mobile contract superseded by `20260802_1-apple-log-container-signaling-detection`
+- Successor validation status: detector-v2 fixture certification and full release validation
+  are tracked in the successor `.steering/` tasklist
 - Initial release decision: formal preview uses automatic preset resolution only;
   identity, test, and custom selections remain separate managed renditions
 - Related files:
@@ -17,6 +20,7 @@
   - `docs/ideas/20260711_3-resumable-original-finalization.md` (Phase 2A prerequisite)
   - `docs/ideas/20260718_1-processed-video-delivery.md` (result-delivery prerequisite)
   - `docs/ideas/20260718_2-managed-preview-presets.md` (managed-preset prerequisite)
+  - `docs/ideas/20260802_1-apple-log-container-signaling-detection.md` (current successor contract)
   - `docs/ideas/iphone_applelog_app_distribution_and_lut_policy.md`
 
 ## Background
@@ -32,6 +36,27 @@ defined first, and managed preset discovery, validation, and generic LUT renderi
 defined second. This stage adds high-confidence Apple Log detection and the provenance
 gate that makes an Apple Log fallback safe to play, confirm, and deliver without claiming
 Rec.709 conversion.
+
+## Successor Relationship (2026-08-15)
+
+This document remains the decision history and baseline for Phase 2B formal preview,
+generation fencing, provenance, delivery, confirmation, and unconverted fallback. The
+following contracts are replaced by
+`docs/ideas/20260802_1-apple-log-container-signaling-detection.md`:
+
+- schema-v1 tag/color-metadata detection is replaced by detector-v2 same-fd bounded ISO
+  BMFF `logs` parsing plus FFprobe track/color correlation;
+- the single Apple Log profile is replaced by closed `apple-log-1` and `apple-log-2`
+  profiles with separate requested preset IDs;
+- detector rule/manifest/certificate schema v1 is replaced by strict schema v2 artifacts;
+- the Phase 2B/2C schema authority is extended by offline successor
+  `010_apple_log_container_signaling` without modifying migrations 008 or 009;
+- the relevant Phase 2 asset-specific client floor is raised to Mobile 0.4.0.
+
+Where this document conflicts with the successor, the successor is authoritative. In
+0.4.0 both Apple Log profiles remain explicitly unconverted `compress-only` previews.
+Neither document implements, registers, enables, or applies an Apple Log-to-Rec.709 LUT;
+that remains a future separately reviewed feature.
 
 ## Implementation Gate
 

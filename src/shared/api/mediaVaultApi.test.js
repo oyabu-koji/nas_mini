@@ -4,6 +4,7 @@ import {
   buildPreviewSource,
   buildProcessedResultPath,
   buildProcessedResultSource,
+  getAsset,
   requestJson,
   sanitizeAsset,
   sanitizeFormalPreview,
@@ -281,9 +282,28 @@ describe('mediaVaultApi timeouts', () => {
       uri: `http://mediavault/assets/42/results/${resultId}`,
       headers: {
         Authorization: 'Bearer secret-token',
-        'X-MediaVault-Client-Version': '0.3.0',
+        'X-MediaVault-Client-Version': '0.4.0',
       },
     });
+  });
+
+  it('adds the 0.4.0 client header only to Phase 2 asset detail reads', async () => {
+    const fetchImpl = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: jest.fn().mockResolvedValue(JSON.stringify({ id: 42 })),
+    });
+
+    await getAsset({ backendUrl: 'http://mediavault', apiToken: 'secret-token' }, 42);
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://mediavault/assets/42',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-MediaVault-Client-Version': '0.4.0',
+        }),
+      }),
+    );
   });
 
   it('rejects an invalid processed-result endpoint before token coercion', () => {
@@ -313,8 +333,8 @@ describe('mediaVaultApi timeouts', () => {
     const previewId = 'b'.repeat(32);
     const detector = {
       detection_status: 'apple_log',
-      source_profile: null,
-      detector_rule_version: 'rule-v1',
+      source_profile: 'apple-log-1',
+      detector_rule_version: 'rule-v2',
       detector_manifest_sha256: 'c'.repeat(64),
       detector_evidence_sha256: 'd'.repeat(64),
     };
@@ -347,6 +367,7 @@ describe('mediaVaultApi timeouts', () => {
     expect(fallback).toMatchObject({
       state: 'ready',
       detection_status: 'apple_log',
+      source_profile: 'apple-log-1',
       requested_preset_id: 'generated-apple-log-rec709',
       applied_preset_id: 'compress-only',
       color_transform_status: 'unavailable',
@@ -356,6 +377,7 @@ describe('mediaVaultApi timeouts', () => {
     expect(sanitizeFormalPreview({
       ...fallback,
       detection_status: 'unknown',
+      source_profile: null,
       requested_preset_id: 'compress-only',
       applied_preset_id: 'compress-only',
       color_transform_status: 'not_requested',
@@ -366,15 +388,99 @@ describe('mediaVaultApi timeouts', () => {
     });
   });
 
-  it('requires complete future LUT identity and fixed formal failure codes', () => {
+  it('accepts the exact Apple Log 2 compress-only fallback tuple', () => {
+    const resultId = '2'.repeat(32);
+    const preview = sanitizeFormalPreview({
+      schema_version: 1,
+      state: 'ready',
+      generation: 1,
+      detection_status: 'apple_log',
+      source_profile: 'apple-log-2',
+      detector_rule_version: 'rule-v2',
+      detector_manifest_sha256: '3'.repeat(64),
+      detector_evidence_sha256: '4'.repeat(64),
+      requested_preset_id: 'generated-apple-log2-rec709',
+      applied_preset_id: 'compress-only',
+      applied_preset_display_name: null,
+      preset_version: null,
+      manifest_sha256: null,
+      lut_sha256: null,
+      transform_kind: 'none',
+      color_transform_status: 'unavailable',
+      color_transform_error_code: 'lut_preset_unavailable',
+      preview_id: '5'.repeat(32),
+      result: {
+        result_id: resultId,
+        mime_type: 'video/mp4',
+        size_bytes: 12,
+        sha256: '6'.repeat(64),
+        created_at: '2026-08-14T00:00:00Z',
+        url: `/assets/42/results/${resultId}`,
+      },
+      failure_code: null,
+    }, 42);
+
+    expect(preview).toMatchObject({
+      source_profile: 'apple-log-2',
+      requested_preset_id: 'generated-apple-log2-rec709',
+      applied_preset_id: 'compress-only',
+      color_transform_status: 'unavailable',
+    });
+  });
+
+  it.each([
+    ['cross-profile preset', { requested_preset_id: 'generated-apple-log2-rec709' }],
+    ['unknown profile', { source_profile: 'apple-log-3' }],
+    ['missing profile', { source_profile: null }],
+    ['reserved applied preset', { applied_preset_id: 'generated-apple-log-rec709' }],
+    ['LUT transform', { transform_kind: 'lut' }],
+    ['applied LUT identity', { lut_sha256: '9'.repeat(64) }],
+  ])('rejects an Apple Log fallback with %s', (_name, mutation) => {
+    const resultId = 'a'.repeat(32);
+    const fallback = {
+      schema_version: 1,
+      state: 'ready',
+      generation: 1,
+      detection_status: 'apple_log',
+      source_profile: 'apple-log-1',
+      detector_rule_version: 'rule-v2',
+      detector_manifest_sha256: 'b'.repeat(64),
+      detector_evidence_sha256: 'c'.repeat(64),
+      requested_preset_id: 'generated-apple-log-rec709',
+      applied_preset_id: 'compress-only',
+      applied_preset_display_name: null,
+      preset_version: null,
+      manifest_sha256: null,
+      lut_sha256: null,
+      transform_kind: 'none',
+      color_transform_status: 'unavailable',
+      color_transform_error_code: 'lut_preset_unavailable',
+      preview_id: 'd'.repeat(32),
+      result: {
+        result_id: resultId,
+        mime_type: 'video/mp4',
+        size_bytes: 12,
+        sha256: 'e'.repeat(64),
+        created_at: '2026-08-14T00:00:00Z',
+        url: `/assets/42/results/${resultId}`,
+      },
+      failure_code: null,
+    };
+
+    expect(() => sanitizeFormalPreview({ ...fallback, ...mutation }, 42)).toThrow(
+      'formal preview response',
+    );
+  });
+
+  it('rejects future Apple Log applied claims and unknown failure codes', () => {
     const resultId = 'a'.repeat(32);
     const applied = {
       schema_version: 1,
       state: 'ready',
       generation: 1,
       detection_status: 'apple_log',
-      source_profile: null,
-      detector_rule_version: 'rule-v1',
+      source_profile: 'apple-log-1',
+      detector_rule_version: 'rule-v2',
       detector_manifest_sha256: 'b'.repeat(64),
       detector_evidence_sha256: 'c'.repeat(64),
       requested_preset_id: 'generated-apple-log-rec709',
@@ -397,8 +503,7 @@ describe('mediaVaultApi timeouts', () => {
       },
       failure_code: null,
     };
-    expect(sanitizeFormalPreview(applied, 42).color_transform_status).toBe('applied');
-    expect(() => sanitizeFormalPreview({ ...applied, lut_sha256: null }, 42)).toThrow(
+    expect(() => sanitizeFormalPreview(applied, 42)).toThrow(
       'formal preview response',
     );
     expect(() => sanitizeFormalPreview({

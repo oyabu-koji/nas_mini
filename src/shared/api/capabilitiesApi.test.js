@@ -89,7 +89,7 @@ describe('capabilitiesApi', () => {
 
   it('rejects a server minimum newer than this client', () => {
     expect(() => sanitizeCapabilities(payload({
-      minimum_client_version: '0.3.1',
+      minimum_client_version: '0.4.1',
     }))).toThrow('compatible');
   });
 

@@ -3,6 +3,7 @@ import pytest
 from app.core.settings import Settings
 from app.db.connection import connect
 from app.services.detector_capability import DetectorCapability
+from app.services.detector_v2_migration import apply_detector_v2_migration
 from app.services.phase2c_migration import apply_phase2c_migration
 from app.services.safe_delete_reconciliation import (
     reconcile_safe_delete_candidates,
@@ -11,14 +12,21 @@ from tests.phase2c_test_support import (
     initialize_phase2b,
     insert_eligible_confirmed_asset,
 )
+from tests.test_safe_delete_candidate import _set_formal_claim
 
 
 def _settings(tmp_path):
+    built_in = tmp_path / "built-in"
+    user = tmp_path / "user"
+    built_in.mkdir()
+    user.mkdir()
     return Settings(
         media_root=tmp_path / "media",
         api_token="test-token",
         database_path=tmp_path / "db.sqlite3",
         detector_root=tmp_path / "detector",
+        built_in_preset_root=built_in,
+        user_lut_root=user,
     )
 
 
@@ -43,6 +51,14 @@ def test_reconciliation_dry_run_and_apply_share_candidate_evaluator(
         settings=settings,
         offline_maintenance_confirmed=True,
         runtime_check=lambda _settings: True,
+    )
+    apply_detector_v2_migration(
+        settings=settings,
+        mode="apply",
+        offline_maintenance_confirmed=True,
+        api_stopped_confirmed=True,
+        release_040_ready_confirmed=True,
+        release_readiness_check=lambda _settings: True,
     )
     with connect(settings.database_path, 5000) as conn:
         conn.execute(
@@ -205,6 +221,43 @@ def test_reconciliation_runtime_unavailable_still_demotes_invalid_safe(
 
     assert result.promoted == 0
     assert result.demoted == 1
+
+
+def test_reconciliation_demotes_future_apple_log_applied_claim(
+    tmp_path,
+    monkeypatch,
+):
+    settings = _settings(tmp_path)
+    initialize_phase2b(settings)
+    with connect(settings.database_path, 5000) as conn:
+        insert_eligible_confirmed_asset(conn)
+        conn.commit()
+    apply_phase2c_migration(
+        settings=settings,
+        offline_maintenance_confirmed=True,
+        runtime_check=lambda _settings: True,
+    )
+    with connect(settings.database_path, 5000) as conn:
+        _set_formal_claim(conn, "future_lut")
+        conn.commit()
+    monkeypatch.setattr(
+        "app.services.phase2_rollout.evaluate_detector_runtime",
+        lambda _settings: _runtime(True),
+    )
+
+    result = reconcile_safe_delete_candidates(
+        settings=settings,
+        apply_changes=True,
+    )
+
+    with connect(settings.database_path, 5000) as conn:
+        status = conn.execute(
+            "SELECT delete_candidate_status FROM assets WHERE id = 1"
+        ).fetchone()[0]
+    assert result.demoted == 1
+    assert result.promoted == 0
+    assert result.reasons == {"formal_preview_provenance_invalid": 1}
+    assert status == "not_candidate"
 
 
 def test_reconciliation_keeps_valid_safe_candidate_unchanged(

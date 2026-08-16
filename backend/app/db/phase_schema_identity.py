@@ -4,6 +4,16 @@ import hashlib
 import sqlite3
 from dataclasses import dataclass
 
+from app.db.detector_v2 import (
+    DETECTOR_V2_MIGRATION_VERSION,
+    EXPECTED_PREVIOUS_SCHEMA_SHA256,
+)
+from app.db.detector_v2.schema import (
+    DETECTOR_V2_METADATA_TABLE_SQL_SHA256,
+    DETECTOR_V2_OBJECT_SQL_SHA256,
+    DETECTOR_V2_TRIGGER_SQL_SHA256,
+    detector_v2_schema_identity_sha256,
+)
 from app.db.phase2b import PHASE2B_MIGRATION_VERSION
 from app.db.phase2b import schema_sql_sha256 as phase2b_schema_sql_sha256
 from app.db.phase2c import (
@@ -139,6 +149,8 @@ class ManagedPhaseSchemaState:
     phase2b_valid: bool
     phase2c_present: bool
     phase2c_valid: bool
+    detector_v2_present: bool
+    detector_v2_valid: bool
     minimum_client_version: str | None
 
 
@@ -149,6 +161,22 @@ def resolve_managed_phase_schema(
     asset_columns = _columns(conn, "assets")
     job_columns = _columns(conn, "jobs")
     markers = _migration_markers(conn)
+    detector_v2_present = _detector_v2_present(
+        objects=objects,
+        markers=markers,
+    )
+    if detector_v2_present:
+        _validate_detector_v2(conn, objects=objects, markers=markers)
+        return ManagedPhaseSchemaState(
+            phase2b_present=True,
+            phase2b_valid=True,
+            phase2c_present=True,
+            phase2c_valid=True,
+            detector_v2_present=True,
+            detector_v2_valid=True,
+            minimum_client_version="0.4.0",
+        )
+
     phase2b_present = _phase2b_present(
         objects=objects,
         asset_columns=asset_columns,
@@ -178,8 +206,86 @@ def resolve_managed_phase_schema(
         phase2b_valid=phase2b_present,
         phase2c_present=phase2c_present,
         phase2c_valid=phase2c_present,
+        detector_v2_present=False,
+        detector_v2_valid=False,
         minimum_client_version=minimum,
     )
+
+
+def _detector_v2_present(*, objects, markers) -> bool:
+    names = {name for _, name in objects}
+    assets_sql = objects.get(("table", "assets"), "")
+    attempt_sql = objects.get(("table", "formal_preview_attempts"), "")
+    provenance_sql = objects.get(("table", "preview_provenance"), "")
+    return bool(
+        DETECTOR_V2_MIGRATION_VERSION in markers
+        or "detector_v2_schema_metadata" in names
+        or "ck_assets_detection_profile" in assets_sql
+        or "ck_formal_attempt_detection_profile" in attempt_sql
+        or "ck_preview_provenance_profile_preset" in provenance_sql
+    )
+
+
+def _validate_detector_v2(conn, *, objects, markers) -> None:
+    try:
+        if not {
+            PHASE2B_MIGRATION_VERSION,
+            PHASE2C_MIGRATION_VERSION,
+            DETECTOR_V2_MIGRATION_VERSION,
+        }.issubset(markers):
+            raise ValueError
+        rows = conn.execute(
+            """
+            SELECT version, predecessor_schema_sha256,
+                   schema_identity_sha256
+            FROM detector_v2_schema_metadata
+            """
+        ).fetchall()
+        if (
+            len(rows) != 1
+            or rows[0]["version"] != DETECTOR_V2_MIGRATION_VERSION
+            or rows[0]["predecessor_schema_sha256"]
+            != EXPECTED_PREVIOUS_SCHEMA_SHA256
+            or rows[0]["schema_identity_sha256"]
+            != detector_v2_schema_identity_sha256()
+            or _sha256(objects.get(("table", "detector_v2_schema_metadata")))
+            != DETECTOR_V2_METADATA_TABLE_SQL_SHA256
+        ):
+            raise ValueError
+        expected = {
+            **PHASE2B_OBJECT_SQL_SHA256,
+            **{
+                ("trigger", name): digest
+                for name, digest in PHASE2B_TRIGGER_SQL_SHA256.items()
+            },
+            ("table", "phase2c_schema_metadata"):
+                PHASE2C_METADATA_TABLE_SQL_SHA256,
+            **{
+                ("trigger", name): digest
+                for name, digest in PHASE2C_TRIGGER_SQL_SHA256.items()
+            },
+            **DETECTOR_V2_OBJECT_SQL_SHA256,
+            **{
+                ("trigger", name): digest
+                for name, digest in DETECTOR_V2_TRIGGER_SQL_SHA256.items()
+            },
+        }
+        if not _object_digests_match(objects, expected):
+            raise ValueError
+        if not _reserved_phase2b_objects(objects).issubset(expected):
+            raise ValueError
+        if not _reserved_phase2c_objects(objects).issubset(expected):
+            raise ValueError
+        if any(
+            name.startswith("detector_v2_") and (object_type, name) not in expected
+            for object_type, name in objects
+            if object_type in {"table", "index", "trigger"}
+        ):
+            raise ValueError
+    except (sqlite3.DatabaseError, KeyError, TypeError, ValueError) as exc:
+        raise PhaseSchemaIdentityError(
+            "detector_v2_migration_schema_identity_mismatch"
+        ) from exc
 
 
 def _phase2b_present(*, objects, asset_columns, job_columns, markers) -> bool:

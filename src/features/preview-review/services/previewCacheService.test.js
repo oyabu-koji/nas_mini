@@ -30,7 +30,7 @@ describe('previewCacheService', () => {
       {
         headers: {
           Authorization: 'Bearer secret-token',
-          'X-MediaVault-Client-Version': '0.3.0',
+          'X-MediaVault-Client-Version': '0.4.0',
         },
         cache: true,
         sessionType: 'FOREGROUND',

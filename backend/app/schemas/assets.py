@@ -119,6 +119,9 @@ FormalPreviewFailureCode = Literal[
     "log_probe_timeout",
     "log_probe_failed",
     "log_probe_output_invalid",
+    "log_container_invalid",
+    "log_container_resource_limit",
+    "log_container_source_changed",
     "lut_preset_registered_invalid",
     "lut_preset_source_changed",
     "lut_application_failed",
@@ -129,6 +132,7 @@ FormalPreviewFailureCode = Literal[
     "formal_preview_relation_invalid",
 ]
 DetectionStatus = Literal["apple_log", "not_log", "unknown"]
+SourceProfile = Literal["apple-log-1", "apple-log-2"]
 TransformKind = Literal["none", "lut"]
 ColorTransformStatus = Literal["not_requested", "unavailable", "applied", "failed"]
 PRESET_ID_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
@@ -143,7 +147,7 @@ class FormalPreviewBaseResponse(BaseModel):
 class FormalPreviewGeneratingResponse(FormalPreviewBaseResponse):
     state: Literal["generating"]
     detection_status: DetectionStatus | None = None
-    source_profile: str | None = Field(default=None, min_length=1, max_length=128)
+    source_profile: SourceProfile | None = None
     detector_rule_version: str | None = Field(default=None, min_length=1, max_length=64)
     detector_manifest_sha256: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
@@ -167,13 +171,33 @@ class FormalPreviewGeneratingResponse(FormalPreviewBaseResponse):
     @model_validator(mode="after")
     def validate_partial_groups(self):
         _validate_detector_group(self)
+        _validate_requested_preset_relation(self)
+        values = self.model_dump()
+        transform_empty = all(
+            values.get(field) is None
+            for field in (
+                "applied_preset_id",
+                "applied_preset_display_name",
+                "preset_version",
+                "manifest_sha256",
+                "lut_sha256",
+                "transform_kind",
+                "color_transform_status",
+                "color_transform_error_code",
+            )
+        )
+        if self.requested_preset_id is None:
+            if not transform_empty:
+                raise ValueError("generating transform group is invalid")
+        elif not has_allowed_formal_transform_claim(values):
+            raise ValueError("generating transform claim is invalid")
         return self
 
 
 class FormalPreviewReadyResponse(FormalPreviewBaseResponse):
     state: Literal["ready"]
     detection_status: DetectionStatus
-    source_profile: str | None = Field(default=None, min_length=1, max_length=128)
+    source_profile: SourceProfile | None = None
     detector_rule_version: str = Field(min_length=1, max_length=64)
     detector_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     detector_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -211,7 +235,7 @@ class FormalPreviewReadyResponse(FormalPreviewBaseResponse):
 class FormalPreviewFailedResponse(FormalPreviewBaseResponse):
     state: Literal["failed"]
     detection_status: DetectionStatus | None = None
-    source_profile: str | None = Field(default=None, min_length=1, max_length=128)
+    source_profile: SourceProfile | None = None
     detector_rule_version: str | None = Field(default=None, min_length=1, max_length=64)
     detector_manifest_sha256: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
@@ -235,8 +259,14 @@ class FormalPreviewFailedResponse(FormalPreviewBaseResponse):
     @model_validator(mode="after")
     def validate_partial_groups(self):
         _validate_detector_group(self)
+        _validate_requested_preset_relation(self)
         if (self.transform_kind is None) != (self.color_transform_status is None):
             raise ValueError("failed transform group must be all present or all null")
+        if self.requested_preset_id is None:
+            if self.transform_kind is not None or self.color_transform_error_code is not None:
+                raise ValueError("failed transform group requires requested preset")
+        elif self.transform_kind is None or self.color_transform_status != "failed":
+            raise ValueError("failed requested preset requires transform failure")
         return self
 
 
@@ -300,6 +330,28 @@ def _validate_detector_group(value) -> None:
             raise ValueError("detector group must be all present or all null")
     elif any(item is None for item in identity):
         raise ValueError("detector group must be all present or all null")
+    elif (
+        value.detection_status == "apple_log"
+        and value.source_profile not in {"apple-log-1", "apple-log-2"}
+    ) or (
+        value.detection_status in {"not_log", "unknown"}
+        and value.source_profile is not None
+    ):
+        raise ValueError("detector status/profile relation is invalid")
+
+
+def _validate_requested_preset_relation(value) -> None:
+    requested = value.requested_preset_id
+    if requested is None:
+        return
+    expected = {
+        ("apple_log", "apple-log-1"): "generated-apple-log-rec709",
+        ("apple_log", "apple-log-2"): "generated-apple-log2-rec709",
+        ("not_log", None): "compress-only",
+        ("unknown", None): "compress-only",
+    }.get((value.detection_status, value.source_profile))
+    if requested != expected:
+        raise ValueError("detector profile/requested preset relation is invalid")
 
 
 def parse_upload_metadata(

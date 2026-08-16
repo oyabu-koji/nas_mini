@@ -36,7 +36,12 @@ def build_formal_preview_response(
     ).fetchone()
     attempt = dict(attempt_row) if attempt_row is not None else None
     if attempt is not None and attempt["state"] == "failed":
-        return _failed_response(attempt=attempt, generation=generation)
+        if attempt.get("failure_code") not in FAILURE_CODES:
+            return _relation_failed_response(attempt=None, generation=generation)
+        try:
+            return _failed_response(attempt=attempt, generation=generation)
+        except (KeyError, TypeError, ValueError):
+            return _relation_failed_response(attempt=None, generation=generation)
     if asset.get("preview_status") == "preview_ready":
         ready = _ready_response(
             settings=settings,
@@ -52,7 +57,10 @@ def build_formal_preview_response(
         if attempt is not None and attempt.get("failure_code") in FAILURE_CODES:
             return _failed_response(attempt=attempt, generation=generation)
         return _relation_failed_response(attempt=attempt, generation=generation)
-    return _generating_response(attempt=attempt, generation=generation)
+    try:
+        return _generating_response(attempt=attempt, generation=generation)
+    except (KeyError, TypeError, ValueError):
+        return _relation_failed_response(attempt=None, generation=generation)
 
 
 def _generating_response(
@@ -109,7 +117,7 @@ def _relation_failed_response(
         state="failed",
         generation=generation,
         **_detector_values(attempt),
-        requested_preset_id=_value(attempt, "requested_preset_id"),
+        requested_preset_id=None,
         failure_code="formal_preview_relation_invalid",
     )
 

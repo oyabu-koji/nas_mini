@@ -1,4 +1,4 @@
-export const CLIENT_VERSION = '0.3.0';
+export const CLIENT_VERSION = '0.4.0';
 export const CLIENT_VERSION_HEADER = 'X-MediaVault-Client-Version';
 
 const SEMANTIC_VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;

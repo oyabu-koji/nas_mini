@@ -4,10 +4,12 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import tempfile
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -22,18 +24,31 @@ from app.services.detector_manifest import (
     DetectorValidationError,
     DetectorManifest,
     FFPROBE_PROBE_ARGUMENTS,
-    FixtureInput,
     RuleInput,
     canonical_document,
     document_with_digest,
-    load_fixture_descriptor,
     load_rule_input,
 )
+from app.services.detector_fixture_descriptor import (
+    LocalFixtureInput,
+    confine_fixture_path,
+    load_local_fixture_descriptor,
+    validate_fixture_root,
+)
 from app.services.bounded_subprocess import BoundedProcessResult, run_bounded_process
-from app.services.apple_log_detector import classify_probe_bytes
+from app.services.apple_log_detector import classify_detection
+from app.services.detector_inspection import INSPECTION_MAX_BYTES, parse_inspection
+from app.services.synthetic_detector_fixture import (
+    build_apple_log_1_synthetic_container,
+)
+from app.services.detector_snapshot_cleanup import (
+    SNAPSHOT_NAMESPACE_PATTERN,
+    remove_snapshot_namespace,
+    sweep_stale_snapshot_namespaces,
+)
 
 
-FIXTURE_DESCRIPTOR_NAME = "fixture-input-v1.json"
+FIXTURE_DESCRIPTOR_NAME = "detector-certification-v2.json"
 CONTAINER_NAME_PATTERN = re.compile(r"^mediavault-detector-certifier-[0-9a-f]{32}$")
 CERTIFIER_PROFILE = "detector-certification"
 CERTIFIER_SERVICE = "detector-certifier"
@@ -41,13 +56,13 @@ CERTIFIER_SERVICE = "detector-certifier"
 
 @dataclass(frozen=True)
 class ResolvedFixture:
-    input: FixtureInput
+    input: LocalFixtureInput
     media_path: Path
 
 
 @dataclass(frozen=True)
 class VerifiedFixture:
-    input: FixtureInput
+    input: LocalFixtureInput | "SyntheticFixtureInput"
     media_path: Path
     media_sha256: str
     size_bytes: int
@@ -59,17 +74,32 @@ class CertificationResult:
     rule_input_sha256: str
 
 
+@dataclass(frozen=True)
+class SyntheticFixtureInput:
+    evidence_class: str = "synthetic-container"
+    expected_detection_status: str = "apple_log"
+    expected_sha256: str = ""
+    expected_source_profile: str | None = "apple-log-1"
+    path: str = "synthetic-apple-log-1.mov"
+    provenance: str = "project-owned-synthetic-container"
+    role: str = "apple-log-1"
+
+
 def resolve_certification_fixtures(fixture_root: Path) -> tuple[ResolvedFixture, ...]:
     if not fixture_root.is_absolute():
         raise DetectorValidationError()
-    _require_directory_no_symlink(fixture_root)
+    validate_fixture_root(fixture_root)
     descriptor_path = fixture_root / FIXTURE_DESCRIPTOR_NAME
-    _require_regular_no_symlink(descriptor_path)
-    descriptor = load_fixture_descriptor(descriptor_path)
+    descriptor = load_local_fixture_descriptor(descriptor_path)
     return tuple(
         ResolvedFixture(
             input=fixture,
-            media_path=_resolve_regular_file(fixture_root, fixture.relative_media_path),
+            media_path=_resolve_regular_file(
+                fixture_root,
+                confine_fixture_path(fixture_root, fixture.path)
+                .relative_to(fixture_root)
+                .as_posix(),
+            ),
         )
         for fixture in descriptor.fixtures
     )
@@ -108,7 +138,7 @@ def verify_fixture_media(fixture: ResolvedFixture) -> VerifiedFixture:
             os.close(descriptor)
 
     actual = digest.hexdigest()
-    if actual != fixture.input.expected_media_sha256:
+    if actual != fixture.input.expected_sha256:
         raise DetectorValidationError()
     return VerifiedFixture(
         input=fixture.input,
@@ -122,11 +152,18 @@ def run_certifier_probe(
     *, fixture_root: Path, fixture: VerifiedFixture
 ) -> BoundedProcessResult:
     container_name = _new_container_name()
-    container_path = "/fixtures/" + fixture.input.relative_media_path
+    container_path = "/fixtures/" + fixture.input.path
     return _run_certifier(
         fixture_root=fixture_root,
         container_name=container_name,
-        ffprobe_arguments=[*FFPROBE_PROBE_ARGUMENTS, container_path],
+        command_arguments=[
+            "python",
+            "-m",
+            "scripts.inspect_detector_fixture",
+            "--fixture",
+            container_path,
+        ],
+        max_stdout_bytes=INSPECTION_MAX_BYTES,
     )
 
 
@@ -134,21 +171,25 @@ def run_certifier_version(*, fixture_root: Path) -> BoundedProcessResult:
     return _run_certifier(
         fixture_root=fixture_root,
         container_name=_new_container_name(),
-        ffprobe_arguments=["-version"],
+        command_arguments=["ffprobe", "-version"],
     )
 
 
 def certify_detector(*, rule_input_path: Path, fixture_root: Path) -> CertificationResult:
     rule_input = load_rule_input(rule_input_path)
     resolved_fixtures = resolve_certification_fixtures(fixture_root)
-    with tempfile.TemporaryDirectory(
-        prefix="mediavault-detector-fixtures-"
-    ) as snapshot_name:
-        snapshot_root = Path(snapshot_name)
-        os.chmod(snapshot_root, 0o700)
-        fixtures = tuple(
+    sweep_stale_snapshot_namespaces()
+    verified_sources = tuple(
+        verify_fixture_media(fixture) for fixture in resolved_fixtures
+    )
+    with _temporary_snapshot_namespace() as snapshot_root:
+        external_fixtures = tuple(
             _snapshot_fixture_media(fixture, snapshot_root=snapshot_root)
-            for fixture in resolved_fixtures
+            for fixture in verified_sources
+        )
+        fixtures = (
+            _create_synthetic_apple_log_1_fixture(snapshot_root),
+            *external_fixtures,
         )
         return _certify_snapshot(
             rule_input=rule_input,
@@ -168,18 +209,30 @@ def _certify_snapshot(
     version = _read_version(run_certifier_version(fixture_root=fixture_root).stdout)
     ephemeral_manifest = _ephemeral_manifest(rule_input, version)
     for fixture in fixtures:
-        probe = run_certifier_probe(fixture_root=fixture_root, fixture=fixture)
-        result = classify_probe_bytes(probe.stdout, manifest=ephemeral_manifest)
-        if result.status != fixture.input.expected_classification:
+        inspection_process = run_certifier_probe(
+            fixture_root=fixture_root, fixture=fixture
+        )
+        inspection = parse_inspection(inspection_process.stdout)
+        result = classify_detection(
+            container=inspection.container,
+            probe=inspection.probe,
+            manifest=ephemeral_manifest,
+        )
+        if (
+            result.status != fixture.input.expected_detection_status
+            or result.source_profile != fixture.input.expected_source_profile
+        ):
             raise DetectorValidationError()
 
     approved = json.loads(rule_input.canonical_bytes)
     fixture_identity = [
         {
             "role": fixture.input.role,
+            "evidence_class": fixture.input.evidence_class,
             "sha256": fixture.media_sha256,
-            "expected_classification": fixture.input.expected_classification,
-            "source_label": fixture.input.source_label,
+            "expected_detection_status": fixture.input.expected_detection_status,
+            "expected_source_profile": fixture.input.expected_source_profile,
+            "provenance": fixture.input.provenance,
         }
         for fixture in fixtures
     ]
@@ -188,10 +241,13 @@ def _certify_snapshot(
         "detector_id": DETECTOR_ID,
         "rule_version": rule_input.rule_version,
         "rule_input_sha256": rule_input.sha256,
-        "rules": {
-            "apple_log": approved["apple_log"],
-            "not_log": approved["not_log"],
-        },
+        "parser_contract_version": approved["parser_contract_version"],
+        "identifier_mappings": approved["identifier_mappings"],
+        "profile_preset_mappings": approved["profile_preset_mappings"],
+        "color_allowlists": approved["color_allowlists"],
+        "not_log_predicate": approved["not_log_predicate"],
+        "resource_limits": approved["resource_limits"],
+        "official_source_url": approved["official_source_url"],
         "ffprobe_version": version,
         "show_entries": FFPROBE_SHOW_ENTRIES,
         "timeout_ms": DETECTOR_PROBE_TIMEOUT_MS,
@@ -199,18 +255,26 @@ def _certify_snapshot(
         "max_stderr_bytes": DETECTOR_MAX_STDERR_BYTES,
         "max_evidence_bytes": DETECTOR_MAX_EVIDENCE_BYTES,
         "fixtures": fixture_identity,
-        "source_reference": "approved-detector-rule-input",
     }
     manifest_bytes = document_with_digest(manifest_value, "manifest_sha256")
     manifest_sha256 = json.loads(manifest_bytes)["manifest_sha256"]
     summary_bytes = canonical_document(
         {
-            "schema_version": 1,
+            "schema_version": 2,
+            "detector_id": DETECTOR_ID,
             "manifest_sha256": manifest_sha256,
             "rule_input_sha256": rule_input.sha256,
+            "parser_contract_version": rule_input.parser_contract_version,
             "ffprobe_version": version,
+            "future_apple_log_1_transform_allowed": False,
             "fixtures": [
-                {"role": fixture.input.role, "sha256": fixture.media_sha256}
+                {
+                    "role": fixture.input.role,
+                    "evidence_class": fixture.input.evidence_class,
+                    "sha256": fixture.media_sha256,
+                    "expected_detection_status": fixture.input.expected_detection_status,
+                    "expected_source_profile": fixture.input.expected_source_profile,
+                }
                 for fixture in fixtures
             ],
         }
@@ -228,11 +292,54 @@ def _certify_snapshot(
     )
 
 
+@contextmanager
+def _temporary_snapshot_namespace():
+    parent = Path(tempfile.gettempdir())
+    snapshot_root = parent / f"mediavault-detector-fixtures-{uuid.uuid4().hex}"
+    if SNAPSHOT_NAMESPACE_PATTERN.fullmatch(snapshot_root.name) is None:
+        raise DetectorValidationError()
+    try:
+        snapshot_root.mkdir(mode=0o700)
+        os.chmod(snapshot_root, 0o700)
+    except OSError as exc:
+        raise DetectorValidationError() from exc
+    with _catchable_signal_cleanup(snapshot_root):
+        try:
+            yield snapshot_root
+        finally:
+            remove_snapshot_namespace(snapshot_root)
+
+
+@contextmanager
+def _catchable_signal_cleanup(snapshot_root: Path):
+    previous: dict[int, object] = {}
+
+    def handle(signum, _frame):
+        remove_snapshot_namespace(snapshot_root)
+        if signum == signal.SIGINT:
+            raise KeyboardInterrupt()
+        raise SystemExit(128 + signum)
+
+    try:
+        for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+            previous[signum] = signal.getsignal(signum)
+            signal.signal(signum, handle)
+    except ValueError:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+        previous.clear()
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
 def _snapshot_fixture_media(
-    fixture: ResolvedFixture, *, snapshot_root: Path
+    fixture: ResolvedFixture | VerifiedFixture, *, snapshot_root: Path
 ) -> VerifiedFixture:
     destination = snapshot_root.joinpath(
-        *PurePosixPath(fixture.input.relative_media_path).parts
+        *PurePosixPath(fixture.input.path).parts
     )
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     source_descriptor: int | None = None
@@ -291,7 +398,7 @@ def _snapshot_fixture_media(
             os.close(destination_descriptor)
 
     actual = digest.hexdigest()
-    if actual != fixture.input.expected_media_sha256:
+    if actual != fixture.input.expected_sha256:
         raise DetectorValidationError()
     try:
         os.chmod(destination, 0o400)
@@ -305,19 +412,58 @@ def _snapshot_fixture_media(
     )
 
 
+def _create_synthetic_apple_log_1_fixture(snapshot_root: Path) -> VerifiedFixture:
+    content = build_apple_log_1_synthetic_container(track_id=1)
+    destination = snapshot_root / "synthetic-apple-log-1.mov"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as output:
+            descriptor = None
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chmod(destination, 0o400)
+    except OSError as exc:
+        raise DetectorValidationError() from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    digest = hashlib.sha256(content).hexdigest()
+    return VerifiedFixture(
+        input=SyntheticFixtureInput(expected_sha256=digest),
+        media_path=destination,
+        media_sha256=digest,
+        size_bytes=len(content),
+    )
+
+
 def _ephemeral_manifest(rule_input: RuleInput, version: str) -> DetectorManifest:
     return DetectorManifest(
         detector_id=DETECTOR_ID,
         rule_version=rule_input.rule_version,
         rule_input_sha256=rule_input.sha256,
-        apple_log=rule_input.apple_log,
-        not_log=rule_input.not_log,
+        parser_contract_version=rule_input.parser_contract_version,
+        identifier_mappings=rule_input.identifier_mappings,
+        profile_preset_mappings=rule_input.profile_preset_mappings,
+        color_allowlists=rule_input.color_allowlists,
+        not_log_predicate=rule_input.not_log_predicate,
+        resource_limits=rule_input.resource_limits,
+        official_source_url=rule_input.official_source_url,
         ffprobe_version=version,
         show_entries=FFPROBE_SHOW_ENTRIES,
         timeout_ms=DETECTOR_PROBE_TIMEOUT_MS,
         max_stdout_bytes=DETECTOR_MAX_STDOUT_BYTES,
         max_stderr_bytes=DETECTOR_MAX_STDERR_BYTES,
         max_evidence_bytes=DETECTOR_MAX_EVIDENCE_BYTES,
+        fixtures=(),
         manifest_sha256="0" * 64,
         canonical_bytes=b"",
     )
@@ -370,7 +516,8 @@ def _run_certifier(
     *,
     fixture_root: Path,
     container_name: str,
-    ffprobe_arguments: list[str],
+    command_arguments: list[str],
+    max_stdout_bytes: int = DETECTOR_MAX_STDOUT_BYTES,
 ) -> BoundedProcessResult:
     if CONTAINER_NAME_PATTERN.fullmatch(container_name) is None:
         raise DetectorValidationError()
@@ -388,19 +535,17 @@ def _run_certifier(
         "-T",
         "--name",
         container_name,
-        "-v",
-        f"{fixture_root}:/fixtures:ro",
         CERTIFIER_SERVICE,
-        "ffprobe",
-        *ffprobe_arguments,
+        *command_arguments,
     ]
     return run_bounded_process(
         argv,
         timeout_ms=DETECTOR_PROBE_TIMEOUT_MS,
-        max_stdout_bytes=DETECTOR_MAX_STDOUT_BYTES,
+        max_stdout_bytes=max_stdout_bytes,
         max_stderr_bytes=DETECTOR_MAX_STDERR_BYTES,
         cwd=repository_root,
         cleanup=lambda: _remove_certifier_container(container_name),
+        env={**os.environ, "DETECTOR_FIXTURE_ROOT": str(fixture_root)},
     )
 
 

@@ -5,6 +5,7 @@ import { ScreenHeader } from '../../../shared/components/ScreenHeader';
 import { StatusPill } from '../../../shared/components/StatusPill';
 import { PREVIEW_STATUS } from '../../../shared/constants/assetStatuses';
 import { formatBytes } from '../../../shared/utils/fileSize';
+import { formalPreviewProfileLabel } from '../../../shared/utils/formalPreviewPresentation';
 import { useProcessedResultSave } from '../../processed-results/hooks/useProcessedResultSave';
 import { PresetSelector } from '../../managed-renditions/components/PresetSelector';
 import { useManagedRendition } from '../../managed-renditions/hooks/useManagedRendition';
@@ -162,14 +163,7 @@ function formalProfileLabel(formalPreview) {
   if (formalPreview.state === 'failed') {
     return 'Formal preview failed';
   }
-  if (formalPreview.detection_status === 'apple_log') {
-    return formalPreview.color_transform_status === 'applied'
-      ? formalPreview.applied_preset_display_name
-      : 'Apple Log (unconverted)';
-  }
-  return formalPreview.detection_status === 'not_log'
-    ? 'Ordinary video'
-    : 'Video profile unknown (unconverted)';
+  return formalPreviewProfileLabel(formalPreview) ?? 'Formal preview unavailable';
 }
 
 function saveStatusLabel(status) {

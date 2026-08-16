@@ -97,7 +97,7 @@ describe('managedRenditionApi', () => {
       minimum_client_version: '0.2',
     }))).toThrow('capabilities');
     expect(() => sanitizeCapabilities(capabilities({
-      minimum_client_version: '0.3.1',
+      minimum_client_version: '0.4.1',
     }))).toThrow('compatible');
     expect(sanitizeCapabilities(capabilities({
       minimum_client_version: '0.2.0',

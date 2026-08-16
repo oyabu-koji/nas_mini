@@ -25,6 +25,9 @@ logs/
 .DS_Store
 Thumbs.db
 
+# Local detector-certification fixtures
+/data/
+
 # IDE
 .vscode/
 .idea/

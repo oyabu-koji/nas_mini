@@ -22,7 +22,7 @@ def test_certification_cli_accepts_only_fixed_backend_command(tmp_path, monkeypa
     result = certify_apple_log_detector.main(
         [
             "--rule-input",
-            "assets/detectors/apple-log-v1/detector-rule-input-v1.json",
+            "assets/detectors/apple-log-v2/detector-rule-input-v2.json",
             "--fixture-root",
             str(tmp_path),
         ]
@@ -66,7 +66,7 @@ def test_certification_cli_failure_output_contains_only_stable_code(
     result = certify_apple_log_detector.main(
         [
             "--rule-input",
-            "assets/detectors/apple-log-v1/detector-rule-input-v1.json",
+            "assets/detectors/apple-log-v2/detector-rule-input-v2.json",
             "--fixture-root",
             str(tmp_path),
         ]

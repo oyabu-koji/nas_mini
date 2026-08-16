@@ -8,7 +8,7 @@ iPhoneから退避した元の写真・動画ファイル。`MEDIA_ROOT/original
 
 ### preview
 
-iPhoneで内容確認するために生成するderived file。Phase 1の動画previewはH.264 MP4、AAC音声、1080p上限、写真previewはJPEG、長辺2048px上限、EXIF orientation反映とする。Apple LogのLUT未登録時は、未変換であることを表示した`compress-only` previewも含む。
+iPhoneで内容確認するために生成するderived file。Phase 1の動画previewはH.264 MP4、AAC音声、1080p上限、写真previewはJPEG、長辺2048px上限、EXIF orientation反映とする。0.4.0のApple Log 1/2は、未変換であることをversion別に表示した`compress-only` previewを返す。
 
 ### derived file
 
@@ -16,7 +16,27 @@ originalから生成した別ファイル。`preview`, `thumbnail`, `proxy`, `lu
 
 ### LOG素材
 
-動画metadataから、承認済みdetector manifestの完全一致で`apple_log`と高信頼に判定された動画素材。legacyのユーザー指定LOGフラグは判定hintであり、正式な変換根拠にはしない。Phase 2Bでは利用可能なRec.709変換presetを既定で要求するが、未登録または無効化済みなら未変換表示付き`compress-only` previewを返す。登録済みLUTの検証・適用失敗だけをpreview失敗として扱う。
+same-fd bounded container signalとallowlist済みFFprobe color fieldsから、承認済みdetector-v2 ruleの完全一致で`apple_log`と判定された動画素材。`source_profile`は`apple-log-1`又は`apple-log-2`だけを許可する。filename、codec、`bt2020nc`単独、pixel、legacyのユーザー指定LOGフラグは正式な判定根拠にしない。
+
+### Apple Log 1
+
+選択video trackのauthoritative `logs` identifierがexact `com.apple.rec2020.apple-log`で、track IDとprofile別color allowlistも整合したApple Log profile。`source_profile = apple-log-1`、requested presetは`generated-apple-log-rec709`とする。0.4.0では変換LUTを適用しない。
+
+### Apple Log 2
+
+選択video trackのauthoritative `logs` identifierがexact `com.apple.apple-wide-gamut.apple-log`で、track IDとprofile別color allowlistも整合したApple Log profile。`source_profile = apple-log-2`、requested presetは`generated-apple-log2-rec709`とする。0.4.0では変換LUTを適用しない。
+
+### `logs`
+
+本プロジェクトのdetector-v2が、選択video trackのsupported visual sample description直下だけで読むApple Log identifier box。payloadは1..128 byteのNULなしASCIIとする。`mdat`、`hoov`、audio/別track、path外の同名boxやwhole-file byte searchはauthorityにしない。box配置とserializationはreal/synthetic fixtureでversion管理するproject-owned observation contractである。
+
+### container signal
+
+bounded ISO BMFF parserが返すclosed result。recognized/no/unknown/conflicting `logs`、unsupported container、invalid、resource limitを区別し、matched resultだけが内部track IDを一時保持する。track ID、unknown identifier text、raw box/pathはcanonical evidenceとAPIへ出さない。
+
+### unconverted preview
+
+Apple Log 1/2を色変換せずH.264/AAC等のpreview制約へ軽量化した`compress-only` derived file。formal provenanceはprofile別requested presetに対し、`applied_preset_id = compress-only`、`transform_kind = none`、`color_transform_status = unavailable`、`color_transform_error_code = lut_preset_unavailable`、applied LUT identity nullを持つ。Mobile表示は`Apple Log 1 (unconverted)`又は`Apple Log 2 (unconverted)`とし、Rec.709変換済みを意味しない。
 
 ### safe delete candidate
 
@@ -65,7 +85,7 @@ Phase 2以降でchunk hashや結合後ファイルhashを照合し、完全性�
 
 ### Rec.709 LUT
 
-Apple Log previewをRec.709へ変換するためのLook-Up Table。originalには適用しない。`generated-apple-log-rec709`には自前生成変換または利用条件を確認済みの公式sourceだけを登録し、generatorまたはsource、version、SHA-256を記録する。identity LUTをRec.709変換用に使わない。
+将来Apple Log previewをRec.709へ変換するためのLook-Up Table。originalには適用しない。Apple Log 1/2では異なるLUTを前提とし、generator又はsource、version、SHA-256、profile対応を記録する必要がある。identity LUTをRec.709変換用に使わない。0.4.0ではApple Log用LUTを生成・登録・適用しない。
 
 ### LUT registry
 
@@ -81,7 +101,7 @@ preview又はmanaged renditionに対する色変換の結果。`not_requested`�
 
 ### requested preset
 
-Mobileがmanaged renditionへ明示要求した、又はApple Log自動判定がformal previewへ要求したserver preset。Apple Logを検出した場合の将来既定値は`generated-apple-log-rec709`である。実際に適用できなかった場合もprovenanceへ残す。
+Mobileがmanaged renditionへ明示要求した、又はApple Log自動判定がformal previewへ要求したserver preset。Apple Log 1は`generated-apple-log-rec709`、Apple Log 2は`generated-apple-log2-rec709`へ固定する。実際には`compress-only` fallbackとなってもrequested identityはprovenanceへ残す。
 
 ### applied preset
 
@@ -89,11 +109,11 @@ workerがpreview又はrendition生成時に実際に使ったserver preset。要
 
 ### detector manifest
 
-人手承認済みdetector rule inputをrepo外のユーザー所有Apple Log/通常動画とpinned Docker ffprobeで検証して作るstrict JSON。rule-input digest、exact ffprobe version/entries、Apple Log/非Logの完全一致predicate、fixture SHA-256と期待分類、timeout/output/evidence上限、canonical digestを持つ。fixture差分からpredicateを生成しない。manifestとPhase 2B migration markerが有効になるまでApple Log formal preview capabilityを公開しない。
+人手承認済みdetector rule input v2を、repo外のユーザー所有Apple Log 2/ordinary動画とproject-owned synthetic Apple Log 1 container、same-fd bounded parser、pinned Docker FFprobeで検証して作るstrict JSON v2。rule/parser/FFprobe、exact identifier/profile/preset mapping、resource limits、fixture evidence identity、canonical digestを持つ。path、filename、raw metadataは持たない。manifest、certificate summary、successor 010 schema identityが有効になるまでformal preview capabilityを公開しない。
 
 ### detector rule input
 
-repository ownerが判定実装前に人手で作成・承認するcanonical JSON。allowlisted metadata path、完全一致又はpresence operator、期待値、根拠、非fixtureのsource reference、approval情報を持つ。certification scriptはこのruleを検証するだけで、fixture比較から追加・変更しない。
+repository ownerが判定実装前に人手で作成・承認するcanonical JSON v2。parser contract version、exact Apple identifier/profile/preset mapping、profile別FFprobe allowlist、not-log predicate、hard limits、Apple公式source URL、確認日時、承認role/referenceを持つ。certification scriptはこのruleを検証するだけで、fixture比較から追加・変更しない。
 
 ### formal preview attempt
 
@@ -101,7 +121,7 @@ session由来videoの`preview_generation`ごとに一意な処理record。detect
 
 ### preview provenance
 
-derived previewに一対一で紐づくformal record。`transform_kind`、source profile、target profile、detector rule version、evidence digest、生成日時、要求・適用preset、version、SHA-256、`color_transform_status`、nullableな未適用/失敗理由を保存する。初期Phase 2Bでは自動presetだけを扱い、将来の承認済みApple Log変換は`lut` record、非Log/判定不能とApple Logの`compress-only` fallbackは`none` recordを持つ。identity/test/customは別のrendition provenanceを持ち、formal recordへ昇格しない。正式provenanceがあるpreviewだけを`preview_ready`にできる。
+derived previewに一対一で紐づくformal record。`transform_kind`、source profile、target profile、detector rule version、evidence digest、生成日時、要求・適用preset、version、SHA-256、`color_transform_status`、nullableな未適用/失敗理由を保存する。0.4.0はApple Log 1/2のprofile別`compress-only` unavailable tupleと、非Log/判定不能の`compress-only` not-requested tupleだけをruntime authorityにする。DBが将来のapplied tupleを表現できても0.4.0では拒否する。identity/test/customは別のrendition provenanceを持ち、formal recordへ昇格しない。
 
 ### original finalization
 
@@ -249,7 +269,7 @@ Phase 2で導入する個別chunkとhash照合結果。`(session_id, chunk_index
 |----|------|
 | `not_started` | preview生成未開始 |
 | `preview_generating` | preview生成中 |
-| `preview_ready` | provenance付きpreviewが利用可能。Apple LogではRec.709変換済みまたは未変換表示付きfallbackのいずれか |
+| `preview_ready` | provenance付きpreviewが利用可能。0.4.0のApple Log 1/2ではprofile別unconverted fallbackだけを許可する |
 | `failed` | preview生成失敗 |
 
 ### review_status

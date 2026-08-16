@@ -41,7 +41,10 @@ def reconcile_safe_delete_candidates(
         conn.execute("BEGIN IMMEDIATE")
         try:
             locked_schema = resolve_managed_phase_schema(conn)
-            if not locked_schema.phase2c_valid:
+            if not locked_schema.phase2c_valid or (
+                rollout.detector_v2_schema_enabled
+                and not locked_schema.detector_v2_valid
+            ):
                 raise RuntimeError("phase2c_migration_schema_identity_mismatch")
             asset_ids = [
                 int(row["id"])

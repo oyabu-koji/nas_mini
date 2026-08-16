@@ -9,6 +9,8 @@ from app.repositories.formal_previews import (
 )
 from app.services.canonical_json import canonical_json_bytes
 from app.services.formal_preview_finalizer import (
+    FormalPreviewFinalizationError,
+    _validate_attempt_evidence,
     finalize_formal_preview_output,
     inspect_formal_preview_candidate,
 )
@@ -77,6 +79,42 @@ def _finalizing_attempt(settings):
     candidate.write_bytes(b"formal-preview")
     candidate.chmod(0o600)
     return job, attempt, candidate, inspect_formal_preview_candidate(candidate)
+
+
+@pytest.mark.parametrize(
+    ("source_profile", "preset_id"),
+    [
+        ("apple-log-1", "generated-apple-log-rec709"),
+        ("apple-log-2", "generated-apple-log2-rec709"),
+    ],
+)
+def test_finalizer_rejects_future_apple_log_applied_lut_claim(
+    source_profile,
+    preset_id,
+):
+    attempt = {
+        "detection_status": "apple_log",
+        "source_profile": source_profile,
+        "detector_rule_version": "rule-v2",
+        "detector_manifest_sha256": "a" * 64,
+        "detector_evidence_sha256": "b" * 64,
+        "detector_evidence_json": b"{}",
+        "requested_preset_id": preset_id,
+        "registry_classification": "valid",
+        "applied_preset_id": preset_id,
+        "preset_version": "future-1",
+        "manifest_sha256": "c" * 64,
+        "expected_lut_sha256": "d" * 64,
+        "transform_kind": "lut",
+        "color_transform_status": "applied",
+        "color_transform_error_code": None,
+    }
+
+    with pytest.raises(
+        FormalPreviewFinalizationError,
+        match="formal_preview_relation_invalid",
+    ):
+        _validate_attempt_evidence(attempt)
 
 
 @pytest.mark.parametrize(

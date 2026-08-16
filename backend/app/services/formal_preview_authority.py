@@ -7,6 +7,7 @@ from typing import Any
 def has_allowed_formal_transform_claim(values: Mapping[str, Any]) -> bool:
     """Return whether persisted formal-preview transform provenance is authoritative."""
     detection_status = values.get("detection_status")
+    source_profile = values.get("source_profile")
     requested_preset_id = values.get("requested_preset_id")
     applied_preset_id = values.get("applied_preset_id")
     transform_kind = values.get("transform_kind")
@@ -16,9 +17,14 @@ def has_allowed_formal_transform_claim(values: Mapping[str, Any]) -> bool:
     manifest_sha256 = values.get("manifest_sha256")
     lut_sha256 = values.get("lut_sha256")
 
+    requested_by_profile = {
+        "apple-log-1": "generated-apple-log-rec709",
+        "apple-log-2": "generated-apple-log2-rec709",
+    }
     apple_log_fallback = (
         detection_status == "apple_log"
-        and requested_preset_id == "generated-apple-log-rec709"
+        and source_profile in requested_by_profile
+        and requested_preset_id == requested_by_profile.get(source_profile)
         and applied_preset_id == "compress-only"
         and transform_kind == "none"
         and transform_status == "unavailable"
@@ -29,6 +35,7 @@ def has_allowed_formal_transform_claim(values: Mapping[str, Any]) -> bool:
     )
     ordinary = (
         detection_status in {"not_log", "unknown"}
+        and source_profile is None
         and requested_preset_id == "compress-only"
         and applied_preset_id == "compress-only"
         and transform_kind == "none"
@@ -38,19 +45,7 @@ def has_allowed_formal_transform_claim(values: Mapping[str, Any]) -> bool:
         and manifest_sha256 is None
         and lut_sha256 is None
     )
-    future_apple_log = (
-        detection_status == "apple_log"
-        and requested_preset_id == "generated-apple-log-rec709"
-        and applied_preset_id == "generated-apple-log-rec709"
-        and transform_kind == "lut"
-        and transform_status == "applied"
-        and transform_error is None
-        and isinstance(preset_version, str)
-        and bool(preset_version)
-        and _is_sha256(manifest_sha256)
-        and _is_sha256(lut_sha256)
-    )
-    return bool(apple_log_fallback or ordinary or future_apple_log)
+    return bool(apple_log_fallback or ordinary)
 
 
 def _is_sha256(value: Any) -> bool:

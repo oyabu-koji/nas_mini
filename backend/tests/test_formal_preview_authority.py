@@ -8,6 +8,7 @@ from app.services.formal_preview_authority import (
 def _claim(**overrides):
     values = {
         "detection_status": "not_log",
+        "source_profile": None,
         "requested_preset_id": "compress-only",
         "applied_preset_id": "compress-only",
         "preset_version": None,
@@ -28,19 +29,17 @@ def _claim(**overrides):
         _claim(detection_status="unknown"),
         _claim(
             detection_status="apple_log",
+            source_profile="apple-log-1",
             requested_preset_id="generated-apple-log-rec709",
             color_transform_status="unavailable",
             color_transform_error_code="lut_preset_unavailable",
         ),
         _claim(
             detection_status="apple_log",
-            requested_preset_id="generated-apple-log-rec709",
-            applied_preset_id="generated-apple-log-rec709",
-            preset_version="1.0.0",
-            manifest_sha256="a" * 64,
-            lut_sha256="b" * 64,
-            transform_kind="lut",
-            color_transform_status="applied",
+            source_profile="apple-log-2",
+            requested_preset_id="generated-apple-log2-rec709",
+            color_transform_status="unavailable",
+            color_transform_error_code="lut_preset_unavailable",
         ),
     ],
 )
@@ -52,6 +51,17 @@ def test_allowed_formal_transform_claims(values):
     "overrides",
     [
         {"detection_status": "apple_log"},
+        {
+            "detection_status": "apple_log",
+            "source_profile": "apple-log-1",
+            "requested_preset_id": "generated-apple-log-rec709",
+            "applied_preset_id": "generated-apple-log-rec709",
+            "preset_version": "1.0.0",
+            "manifest_sha256": "a" * 64,
+            "lut_sha256": "b" * 64,
+            "transform_kind": "lut",
+            "color_transform_status": "applied",
+        },
         {"applied_preset_id": "identity-v1"},
         {"preset_version": "test"},
         {"manifest_sha256": "a" * 64},

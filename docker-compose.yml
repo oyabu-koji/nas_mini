@@ -12,7 +12,7 @@ services:
       SQLITE_BUSY_TIMEOUT_MS: ${SQLITE_BUSY_TIMEOUT_MS:-5000}
       JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
       LUT_PATH: ${LUT_PATH:-/app/assets/lut/rec709.cube}
-      USER_LUT_ROOT: ${USER_LUT_ROOT:-}
+      USER_LUT_ROOT: /user_luts
     volumes:
       - ${MEDIA_ROOT_HOST_PATH:-/private/tmp/mediavault-media}:/media_root
       - ${USER_LUT_ROOT_HOST_PATH:-/private/tmp/mediavault-user-luts}:/user_luts:ro
@@ -30,7 +30,7 @@ services:
       SQLITE_BUSY_TIMEOUT_MS: ${SQLITE_BUSY_TIMEOUT_MS:-5000}
       JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
       LUT_PATH: ${LUT_PATH:-/app/assets/lut/rec709.cube}
-      USER_LUT_ROOT: ${USER_LUT_ROOT:-}
+      USER_LUT_ROOT: /user_luts
     volumes:
       - ${MEDIA_ROOT_HOST_PATH:-/private/tmp/mediavault-media}:/media_root
       - ${USER_LUT_ROOT_HOST_PATH:-/private/tmp/mediavault-user-luts}:/user_luts:ro
@@ -76,6 +76,8 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - ${DETECTOR_FIXTURE_ROOT:-/private/tmp/mediavault-detector-fixtures-unconfigured}:/fixtures:ro
 
   phase2b-migrator:
     profiles:
@@ -166,6 +168,37 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
     volumes:
+      - backend-db:/data
+
+  detector-v2-migrator:
+    profiles:
+      - detector-v2-migration
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.migrate_detector_v2
+      - --preflight-only
+    environment:
+      API_TOKEN: migration-not-exposed
+      DATABASE_PATH: /data/mediavault.sqlite3
+      MEDIA_ROOT: /unmounted-media
+      USER_LUT_ROOT: /user_luts
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - ${USER_LUT_ROOT_HOST_PATH:-/private/tmp/mediavault-user-luts}:/user_luts:ro
       - backend-db:/data
 
 volumes:

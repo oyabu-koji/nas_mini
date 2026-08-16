@@ -6,6 +6,7 @@ from app.db.migrations import run_migrations
 from app.db.phase_schema_identity import PhaseSchemaIdentityError
 from app.services.client_compatibility import IncompatibleClientError
 from app.services.detector_capability import DetectorCapability
+from app.services.detector_v2_migration import apply_detector_v2_migration
 from app.services.phase2_rollout import resolve_phase2_rollout
 from app.services.phase2c_migration import apply_phase2c_migration
 from tests.phase2c_test_support import (
@@ -51,6 +52,48 @@ def test_valid_phase2c_keeps_030_floor_when_runtime_is_unavailable(
 
     assert snapshot.minimum_client_version == "0.3.0"
     assert snapshot.phase2c_schema_enabled is True
+    assert snapshot.formal_apple_log_preview is False
+    assert snapshot.safe_delete_candidate is False
+
+
+def test_detector_v2_marker_keeps_040_floor_when_runtime_is_unavailable(
+    tmp_path, monkeypatch
+):
+    settings = _settings(tmp_path)
+    built_in_root = tmp_path / "built-in-presets"
+    built_in_root.mkdir()
+    user_root = tmp_path / "user-luts"
+    user_root.mkdir()
+    settings = Settings(
+        **{
+            **settings.__dict__,
+            "built_in_preset_root": built_in_root,
+            "user_lut_root": user_root,
+        }
+    )
+    initialize_phase2b(settings)
+    apply_phase2c_migration(
+        settings=settings,
+        offline_maintenance_confirmed=True,
+        runtime_check=lambda _settings: True,
+    )
+    apply_detector_v2_migration(
+        settings=settings,
+        mode="apply",
+        offline_maintenance_confirmed=True,
+        api_stopped_confirmed=True,
+        release_040_ready_confirmed=True,
+        release_readiness_check=lambda _settings: True,
+    )
+    monkeypatch.setattr(
+        "app.services.phase2_rollout.evaluate_detector_runtime",
+        lambda _settings: _runtime(available=False),
+    )
+
+    snapshot = resolve_phase2_rollout(settings=settings)
+
+    assert snapshot.minimum_client_version == "0.4.0"
+    assert snapshot.detector_v2_schema_enabled is True
     assert snapshot.formal_apple_log_preview is False
     assert snapshot.safe_delete_candidate is False
 
@@ -134,9 +177,9 @@ def test_schema_identity_error_precedes_client_and_runtime(tmp_path, monkeypatch
     [
         ("pre-008", False, None, False, False),
         ("008", False, "0.2.0", False, False),
-        ("008", True, "0.2.0", True, False),
+        ("008", True, "0.2.0", False, False),
         ("009", False, "0.3.0", False, False),
-        ("009", True, "0.3.0", True, True),
+        ("009", True, "0.3.0", False, False),
     ],
 )
 def test_rollout_schema_runtime_matrix(
@@ -226,7 +269,7 @@ def test_phase2c_accepts_client_030_for_phase2_asset(tmp_path, monkeypatch):
     )
 
     assert snapshot.phase2_asset is True
-    assert snapshot.safe_delete_candidate is True
+    assert snapshot.safe_delete_candidate is False
 
 
 def test_phase1_asset_does_not_require_phase2_client_header(tmp_path, monkeypatch):

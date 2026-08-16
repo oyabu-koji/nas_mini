@@ -5,6 +5,7 @@ import pytest
 
 from app.services.detector_manifest import (
     DetectorValidationError,
+    FFPROBE_SHOW_ENTRIES,
     canonical_document,
     load_certificate_summary,
     load_detector_manifest,
@@ -14,25 +15,293 @@ from app.services.detector_manifest import (
 from tests.detector_test_support import write_detector_artifacts
 
 
-def test_rule_manifest_and_summary_validate_as_one_identity(tmp_path):
-    rule_path, _rule, _manifest = write_detector_artifacts(tmp_path)
+def test_rule_input_v2_uses_a_strict_closed_schema(tmp_path):
+    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
 
-    rule_input = load_rule_input(rule_path)
-    manifest = load_detector_manifest(tmp_path / "manifest.json", rule_input=rule_input)
-    summary = load_certificate_summary(
-        tmp_path / "certificate-summary.json",
-        rule_input=rule_input,
-        manifest=manifest,
+    loaded = load_rule_input(rule_path)
+
+    assert loaded.detector_id == "apple-log-v2"
+    assert loaded.parser_contract_version == "iso-bmff-apple-log-v1"
+    assert tuple(item.source_profile for item in loaded.identifier_mappings) == (
+        "apple-log-1",
+        "apple-log-2",
     )
 
-    assert rule_input.detector_id == "apple-log-v1"
-    assert manifest.apple_log == rule_input.apple_log
-    assert summary.manifest_sha256 == manifest.manifest_sha256
+    rule["unexpected"] = True
+    raw = canonical_document(rule)
+    rule_path.write_bytes(raw)
+    rule_path.with_suffix(".sha256").write_text(
+        hashlib.sha256(raw).hexdigest() + "\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_rule_input(rule_path)
+
+
+def test_rule_parser_contract_version_matches_code(tmp_path):
+    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
+
+    assert load_rule_input(rule_path).parser_contract_version == (
+        "iso-bmff-apple-log-v1"
+    )
+
+    rule["parser_contract_version"] = "iso-bmff-apple-log-v0"
+    raw = canonical_document(rule)
+    rule_path.write_bytes(raw)
+    rule_path.with_suffix(".sha256").write_text(
+        hashlib.sha256(raw).hexdigest() + "\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_rule_input(rule_path)
+
+
+@pytest.mark.parametrize("mutation", ["identifier", "profile", "order"])
+def test_rule_identifier_to_profile_mapping_is_exact(tmp_path, mutation):
+    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
+    if mutation == "identifier":
+        rule["identifier_mappings"][0]["identifier"] += ".suffix"
+    elif mutation == "profile":
+        rule["identifier_mappings"][0]["source_profile"] = "apple-log-2"
+    else:
+        rule["identifier_mappings"].reverse()
+    raw = canonical_document(rule)
+    rule_path.write_bytes(raw)
+    rule_path.with_suffix(".sha256").write_text(
+        hashlib.sha256(raw).hexdigest() + "\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_rule_input(rule_path)
+
+
+@pytest.mark.parametrize("mutation", ["preset", "cross_profile", "order"])
+def test_rule_profile_to_requested_preset_mapping_is_exact(tmp_path, mutation):
+    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
+    if mutation == "preset":
+        rule["profile_preset_mappings"][1]["requested_preset_id"] = (
+            "generated-apple-log-rec709"
+        )
+    elif mutation == "cross_profile":
+        rule["profile_preset_mappings"][0]["source_profile"] = "apple-log-2"
+    else:
+        rule["profile_preset_mappings"].reverse()
+    raw = canonical_document(rule)
+    rule_path.write_bytes(raw)
+    rule_path.with_suffix(".sha256").write_text(
+        hashlib.sha256(raw).hexdigest() + "\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_rule_input(rule_path)
+
+
+@pytest.mark.parametrize("mutation", ["extra_value", "profile", "order"])
+def test_rule_profile_color_allowlists_are_exact(tmp_path, mutation):
+    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
+    if mutation == "extra_value":
+        rule["color_allowlists"][1]["color_primaries"].append("bt2020")
+    elif mutation == "profile":
+        rule["color_allowlists"][0]["source_profile"] = "apple-log-2"
+    else:
+        rule["color_allowlists"].reverse()
+    raw = canonical_document(rule)
+    rule_path.write_bytes(raw)
+    rule_path.with_suffix(".sha256").write_text(
+        hashlib.sha256(raw).hexdigest() + "\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_rule_input(rule_path)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["color_primaries", "color_transfer", "color_space"],
+)
+def test_rule_not_log_predicate_requires_exact_triple_bt709(tmp_path, field):
+    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
+    rule["not_log_predicate"][field] = "unknown"
+    raw = canonical_document(rule)
+    rule_path.write_bytes(raw)
+    rule_path.with_suffix(".sha256").write_text(
+        hashlib.sha256(raw).hexdigest() + "\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_rule_input(rule_path)
 
 
 @pytest.mark.parametrize(
     "mutation",
-    ["bom", "noncanonical", "unknown", "bad_path", "unapproved", "digest"],
+    ["official_source", "identifier_source", "role", "time", "reference"],
+)
+def test_rule_requires_official_source_and_complete_approval(tmp_path, mutation):
+    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
+    if mutation == "official_source":
+        rule["official_source_url"] = "https://example.invalid/not-apple"
+    elif mutation == "identifier_source":
+        rule["identifier_mappings"][0]["source_reference"] = (
+            "https://example.invalid/not-apple"
+        )
+    elif mutation == "role":
+        rule["approval"]["approving_role"] = ""
+    elif mutation == "time":
+        rule["approval"]["approved_at"] = "2026-08-12T00:00:00"
+    else:
+        rule["approval"]["approval_reference"] = ""
+    raw = canonical_document(rule)
+    rule_path.write_bytes(raw)
+    rule_path.with_suffix(".sha256").write_text(
+        hashlib.sha256(raw).hexdigest() + "\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_rule_input(rule_path)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "file_size_bytes",
+        "box_headers",
+        "nesting_depth",
+        "video_tracks",
+        "sample_descriptions",
+        "metadata_bytes",
+        "retained_identifiers",
+    ],
+)
+def test_rule_resource_limits_must_match_parser_code(tmp_path, field):
+    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
+    rule["resource_limits"][field] += 1
+    raw = canonical_document(rule)
+    rule_path.write_bytes(raw)
+    rule_path.with_suffix(".sha256").write_text(
+        hashlib.sha256(raw).hexdigest() + "\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_rule_input(rule_path)
+
+
+def test_rule_v2_uses_lowercase_canonical_json_sha256_sidecar(tmp_path):
+    rule_path, _rule, _manifest = write_detector_artifacts(tmp_path)
+    sidecar = rule_path.parent / f"{rule_path.name}.sha256"
+
+    loaded = load_rule_input(rule_path)
+
+    assert sidecar.name == "detector-rule-input-v2.json.sha256"
+    assert sidecar.read_text(encoding="ascii").strip() == loaded.sha256
+
+    sidecar.write_text(loaded.sha256.upper() + "\n", encoding="ascii")
+    with pytest.raises(DetectorValidationError):
+        load_rule_input(rule_path)
+
+
+def test_manifest_v2_uses_strict_data_class_and_validator(tmp_path):
+    rule_path, _rule, _manifest = write_detector_artifacts(tmp_path)
+
+    rule_input = load_rule_input(rule_path)
+    manifest = load_detector_manifest(tmp_path / "manifest.json", rule_input=rule_input)
+
+    assert manifest.detector_id == "apple-log-v2"
+    assert manifest.parser_contract_version == rule_input.parser_contract_version
+    assert manifest.identifier_mappings == rule_input.identifier_mappings
+    assert tuple(item.role for item in manifest.fixtures) == (
+        "apple-log-1",
+        "apple-log-2",
+        "ordinary",
+    )
+
+
+def test_certificate_summary_v2_matches_manifest_and_blocks_future_log1_transform(
+    tmp_path,
+):
+    rule_path, _rule, _manifest = write_detector_artifacts(tmp_path)
+    rule = load_rule_input(rule_path)
+    manifest = load_detector_manifest(tmp_path / "manifest.json", rule_input=rule)
+
+    summary = load_certificate_summary(
+        tmp_path / "certificate-summary.json",
+        rule_input=rule,
+        manifest=manifest,
+    )
+
+    assert summary.parser_contract_version == "iso-bmff-apple-log-v1"
+    assert summary.future_apple_log_1_transform_allowed is False
+    assert tuple(item.role for item in summary.fixtures) == (
+        "apple-log-1",
+        "apple-log-2",
+        "ordinary",
+    )
+
+
+def test_certificate_summary_v2_rejects_future_log1_transform_permission(tmp_path):
+    rule_path, _rule, _manifest = write_detector_artifacts(tmp_path)
+    rule = load_rule_input(rule_path)
+    manifest = load_detector_manifest(tmp_path / "manifest.json", rule_input=rule)
+    summary_path = tmp_path / "certificate-summary.json"
+    value = json.loads(summary_path.read_bytes())
+    value["future_apple_log_1_transform_allowed"] = True
+    summary_path.write_bytes(canonical_document(value))
+
+    with pytest.raises(DetectorValidationError):
+        load_certificate_summary(summary_path, rule_input=rule, manifest=manifest)
+
+
+def test_manifest_pins_parser_contract_version(tmp_path):
+    rule_path, _rule, manifest_value = write_detector_artifacts(tmp_path)
+    rule_input = load_rule_input(rule_path)
+    manifest_value["parser_contract_version"] = "iso-bmff-apple-log-v0"
+    from app.services.detector_manifest import document_with_digest
+
+    (tmp_path / "manifest.json").write_bytes(
+        document_with_digest(manifest_value, "manifest_sha256")
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_detector_manifest(tmp_path / "manifest.json", rule_input=rule_input)
+
+
+@pytest.mark.parametrize("mutation", ["show_entries", "ffprobe_version"])
+def test_manifest_pins_exact_ffprobe_version_and_show_entries(tmp_path, mutation):
+    rule_path, _rule, manifest_value = write_detector_artifacts(tmp_path)
+    rule_input = load_rule_input(rule_path)
+    if mutation == "show_entries":
+        manifest_value["show_entries"] += ":format_tags"
+    else:
+        manifest_value["ffprobe_version"] = ""
+    from app.services.detector_manifest import document_with_digest
+
+    (tmp_path / "manifest.json").write_bytes(
+        document_with_digest(manifest_value, "manifest_sha256")
+    )
+
+    with pytest.raises(DetectorValidationError):
+        load_detector_manifest(tmp_path / "manifest.json", rule_input=rule_input)
+
+
+def test_ffprobe_show_entries_excludes_tags_and_disposition():
+    assert FFPROBE_SHOW_ENTRIES == (
+        "stream=index,id,codec_type,color_space,color_transfer,color_primaries"
+    )
+    assert "tags" not in FFPROBE_SHOW_ENTRIES
+    assert "disposition" not in FFPROBE_SHOW_ENTRIES
+    assert "format" not in FFPROBE_SHOW_ENTRIES
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["bom", "noncanonical", "unknown", "bad_identifier", "unapproved", "digest"],
 )
 def test_rule_input_rejects_noncanonical_or_unapproved_content(tmp_path, mutation):
     rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
@@ -43,14 +312,17 @@ def test_rule_input_rejects_noncanonical_or_unapproved_content(tmp_path, mutatio
     elif mutation == "unknown":
         rule["unknown"] = True
         rule_path.write_bytes(canonical_document(rule))
-    elif mutation == "bad_path":
-        rule["apple_log"][0]["path"] = "format.filename"
+    elif mutation == "bad_identifier":
+        rule["identifier_mappings"][0]["identifier"] = "not-ascii-\u2603"
         rule_path.write_bytes(canonical_document(rule))
     elif mutation == "unapproved":
         rule["approval"]["approved_at"] = "2026-07-24T12:00:00"
         rule_path.write_bytes(canonical_document(rule))
     else:
-        rule_path.with_suffix(".sha256").write_text("0" * 64 + "\n", encoding="ascii")
+        (rule_path.parent / f"{rule_path.name}.sha256").write_text(
+            "0" * 64 + "\n",
+            encoding="ascii",
+        )
 
     with pytest.raises(DetectorValidationError):
         load_rule_input(rule_path)
@@ -58,97 +330,7 @@ def test_rule_input_rejects_noncanonical_or_unapproved_content(tmp_path, mutatio
 
 def test_rule_input_rejects_duplicate_keys(tmp_path):
     rule_path, _rule, _manifest = write_detector_artifacts(tmp_path)
-    rule_path.write_bytes(b'{"schema_version":1,"schema_version":1}')
-
-    with pytest.raises(DetectorValidationError):
-        load_rule_input(rule_path)
-
-
-def test_rule_input_preserves_ordered_all_of_and_present_operator(tmp_path):
-    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
-    present = {
-        "path": "streams.0.tags.transfer_characteristic",
-        "operator": "present",
-        "expected_value": None,
-        "rationale": "presence is required by the approved test rule",
-        "source_reference": "https://example.invalid/technical-reference",
-    }
-    rule["apple_log"].insert(0, present)
-    rule_bytes = canonical_document(rule)
-    rule_path.write_bytes(rule_bytes)
-    rule_path.with_suffix(".sha256").write_text(
-        hashlib.sha256(rule_bytes).hexdigest() + "\n", encoding="ascii"
-    )
-
-    loaded = load_rule_input(rule_path)
-
-    assert [predicate.operator for predicate in loaded.apple_log] == ["present", "equals"]
-
-
-@pytest.mark.parametrize(
-    ("operator", "expected"),
-    [("present", "value"), ("equals", None), ("regex", "Apple.*")],
-)
-def test_rule_input_rejects_unsupported_operator_contract(tmp_path, operator, expected):
-    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
-    rule["apple_log"][0]["operator"] = operator
-    rule["apple_log"][0]["expected_value"] = expected
-    rule_bytes = canonical_document(rule)
-    rule_path.write_bytes(rule_bytes)
-    rule_path.with_suffix(".sha256").write_text(
-        hashlib.sha256(rule_bytes).hexdigest() + "\n", encoding="ascii"
-    )
-
-    with pytest.raises(DetectorValidationError):
-        load_rule_input(rule_path)
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "format.tags.com.apple.quicktime.camera.identifier",
-        "streams.0.tags.transfer_characteristic",
-        "streams.0.disposition.default",
-        "streams.0.color_space",
-        "streams.0.color_transfer",
-        "streams.0.color_primaries",
-        "streams.0.codec_type",
-    ],
-)
-def test_rule_input_accepts_only_allowlisted_probe_metadata_paths(tmp_path, path):
-    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
-    rule["apple_log"][0]["path"] = path
-    rule_bytes = canonical_document(rule)
-    rule_path.write_bytes(rule_bytes)
-    rule_path.with_suffix(".sha256").write_text(
-        hashlib.sha256(rule_bytes).hexdigest() + "\n", encoding="ascii"
-    )
-
-    loaded = load_rule_input(rule_path)
-
-    assert loaded.apple_log[0].path == path
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "streams.*.tags.transfer_characteristic",
-        "streams.[0-9]+.color_transfer",
-        "streams.0.tags[?(@.name)]",
-        "format.filename",
-        "format.is_log",
-        "streams.0.pix_fmt",
-        "streams.1.color_transfer",
-    ],
-)
-def test_rule_input_rejects_wildcard_expression_and_nonmetadata_paths(tmp_path, path):
-    rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
-    rule["apple_log"][0]["path"] = path
-    rule_bytes = canonical_document(rule)
-    rule_path.write_bytes(rule_bytes)
-    rule_path.with_suffix(".sha256").write_text(
-        hashlib.sha256(rule_bytes).hexdigest() + "\n", encoding="ascii"
-    )
+    rule_path.write_bytes(b'{"schema_version":2,"schema_version":2}')
 
     with pytest.raises(DetectorValidationError):
         load_rule_input(rule_path)
@@ -165,11 +347,15 @@ def test_rule_input_rejects_wildcard_expression_and_nonmetadata_paths(tmp_path, 
 )
 def test_rule_input_requires_approval_and_predicate_references(tmp_path, section, field):
     rule_path, rule, _manifest = write_detector_artifacts(tmp_path)
-    target = rule["approval"] if section == "approval" else rule["apple_log"][0]
+    target = (
+        rule["approval"]
+        if section == "approval"
+        else rule["identifier_mappings"][0]
+    )
     target[field] = ""
     rule_bytes = canonical_document(rule)
     rule_path.write_bytes(rule_bytes)
-    rule_path.with_suffix(".sha256").write_text(
+    (rule_path.parent / f"{rule_path.name}.sha256").write_text(
         hashlib.sha256(rule_bytes).hexdigest() + "\n", encoding="ascii"
     )
 
@@ -180,30 +366,7 @@ def test_rule_input_requires_approval_and_predicate_references(tmp_path, section
 def test_manifest_rejects_rule_change(tmp_path):
     rule_path, _rule, manifest_value = write_detector_artifacts(tmp_path)
     rule_input = load_rule_input(rule_path)
-    manifest_value["rules"]["apple_log"][0]["expected_value"] = "changed"
-    from app.services.detector_manifest import document_with_digest
-
-    (tmp_path / "manifest.json").write_bytes(
-        document_with_digest(manifest_value, "manifest_sha256")
-    )
-
-    with pytest.raises(DetectorValidationError):
-        load_detector_manifest(tmp_path / "manifest.json", rule_input=rule_input)
-
-
-def test_manifest_rejects_python_equal_but_byte_different_rule(tmp_path):
-    rule_path, rule, _manifest_value = write_detector_artifacts(tmp_path)
-    rule["apple_log"][0]["expected_value"] = 1
-    rule_bytes = canonical_document(rule)
-    rule_path.write_bytes(rule_bytes)
-    rule_path.with_suffix(".sha256").write_text(
-        hashlib.sha256(rule_bytes).hexdigest() + "\n", encoding="ascii"
-    )
-    rule_input = load_rule_input(rule_path)
-
-    _, _, manifest_value = write_detector_artifacts(tmp_path)
-    manifest_value["rule_input_sha256"] = rule_input.sha256
-    manifest_value["rules"]["apple_log"][0]["expected_value"] = True
+    manifest_value["identifier_mappings"][0]["identifier"] += ".changed"
     from app.services.detector_manifest import document_with_digest
 
     (tmp_path / "manifest.json").write_bytes(
@@ -231,7 +394,7 @@ def test_manifest_rejects_noncanonical_or_untrusted_identity(tmp_path, mutation)
 
         manifest_path.write_bytes(document_with_digest(manifest_value, "manifest_sha256"))
     elif mutation == "duplicate":
-        manifest_path.write_bytes(b'{"schema_version":1,"schema_version":1}')
+        manifest_path.write_bytes(b'{"schema_version":2,"schema_version":2}')
     else:
         decoded = json.loads(manifest_path.read_bytes())
         decoded["manifest_sha256"] = "0" * 64

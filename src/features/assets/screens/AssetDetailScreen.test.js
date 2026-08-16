@@ -271,6 +271,7 @@ describe('AssetDetailScreen LOG safety gate', () => {
         formal_preview: {
           state: 'ready',
           detection_status: 'apple_log',
+          source_profile: 'apple-log-1',
           color_transform_status: 'unavailable',
           result: formalResult,
         },
@@ -301,11 +302,53 @@ describe('AssetDetailScreen LOG safety gate', () => {
 
     await fireEvent.press(view.getByText('Open preview'));
     expect(onPreview).toHaveBeenCalledWith(42);
-    expect(view.getByText('Apple Log (unconverted)')).toBeTruthy();
+    expect(view.getByText('Apple Log 1 (unconverted)')).toBeTruthy();
     expect(view.getByText('Save processed video')).toBeTruthy();
     expect(useProcessedResultSave).toHaveBeenLastCalledWith(
       expect.objectContaining({ result: formalResult }),
     );
+  });
+
+  it('shows the exact Apple Log 2 unconverted profile label', async () => {
+    useAssetDetail.mockReturnValue({
+      asset: {
+        id: 42,
+        type: 'video',
+        filename: 'clip.mov',
+        size_bytes: 10,
+        server_sha256: 'hash',
+        taken_at: null,
+        is_log: true,
+        transfer_status: 'uploaded',
+        verification_status: 'file_verified',
+        preview_status: 'preview_ready',
+        review_status: 'not_reviewed',
+        formal_preview: {
+          state: 'ready',
+          detection_status: 'apple_log',
+          source_profile: 'apple-log-2',
+          color_transform_status: 'unavailable',
+          result: null,
+        },
+      },
+      status: 'ready',
+      error: null,
+      loadAsset: jest.fn(),
+    });
+
+    const view = await render(
+      <AssetDetailScreen
+        assetId={42}
+        canUseApi
+        onBack={jest.fn()}
+        onPreview={jest.fn()}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
+      />,
+    );
+
+    expect(view.getByText('Apple Log 2 (unconverted)')).toBeTruthy();
+    expect(view.queryByText('Apple Log (unconverted)')).toBeNull();
+    expect(view.queryByText('Color transform applied')).toBeNull();
   });
 
   it('renders the server managed preset control for an eligible video', async () => {
