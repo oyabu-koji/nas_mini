@@ -358,7 +358,7 @@ stateDiagram-v2
 - `009_safe_delete_candidate`は通常startup migration外のoffline migrationである。Phase 2B identity、
   runtime、job drain、1 TiB/8 MiB/131072 boundsをread preflightとlocked preflightの両方で確認し、
   schema、metadata、backfill、integrity checkを一括commit又はrollbackする。successor 010 markerの
-  minimum client versionはruntime状態に関係なく`0.4.0`とする。010はstartupで自動適用せず、isolated DBでread-only preflight、dry-run、明示release readiness付きapply/rollbackを行う。
+  minimum client versionはruntime状態に関係なく`0.4.0`とする。010はstartupで自動適用しない。実装・検証中のpreflight、dry-run、apply、rollbackはisolated DBに限定し、operator DBへのapplyは全writer停止・drain、真にread-onlyなpreflight、backup/restore drill、明示release readiness確認後の別release operationに限定する。
 - Mobileはsanitized `formal_apple_log_preview`と`safe_delete_candidate` capability、ready formal preview、
   Backendの`safe_to_delete_candidate`をPhase 2削除条件に含める。削除直前にもasset/capabilityを
   refreshし、Phase 1 direct assetはこれらPhase 2C条件を参照しない。native削除成功は

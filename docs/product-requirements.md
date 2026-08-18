@@ -249,7 +249,7 @@ Phase 2は、削除候補を有効化する前に大容量素材の保存完全�
 - 開発中のiPhone実運用はDevelopment Buildを使う。配布はApp StoreまたはUnlisted Appを目標とし、審査時は独立したHTTPS backendを用意する。
 - 開発中はMBA上のbackendをTailscale経由でiPhoneから確認し、Mac mini移行後はBackend URLをMac miniのTailscale IPまたはMagicDNS名へ差し替える。
 - detector-v2のreal Apple Log 2/ordinary fixtureはGit管理外の`data/`にowner-only modeで置き、path、filename、raw metadata、動画本体をartifact、Docker image、ログへ含めない。
-- schema `010_apple_log_container_signaling`は通常startupで自動適用せず、0.4.0 release readiness、停止・drain、read-only preflightを確認したisolated databaseだけでdry-run/apply/rollbackする。
+- schema `010_apple_log_container_signaling`は通常startupで自動適用しない。実装・検証中のdry-run、apply、rollbackはisolated databaseだけで行う。operator DBへのapplyは、0.4.0 release readiness、全writer停止・drain、真にread-onlyなpreflight、backup/restore drill、明示承認を満たした別のrelease operationだけで行う。
 
 ## 未決事項
 

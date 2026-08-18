@@ -165,7 +165,7 @@
 - Phase 2C reconciliationはnetwork無効の`phase2c-reconciler`を使い、runtime snapshotをwrite lock前に
   取得する。lock内でschema identityを再確認し、confirmed Phase 2 assetと既存safe candidateだけを
   shared evaluatorでpromote/demote/no-opへ分類する。dry-run/applyを必ず明示する。
-- detector-v2 `010_apple_log_container_signaling`は008/009を変更せず、通常startup migrationへ追加しない。default `--preflight-only`はPRAGMAを変更しないread-only処理、`--dry-run`はisolated DB限定のfull DDL/marker後rollback、`--apply`はoffline/release 0.4.0確認付きに分離する。
+- detector-v2 `010_apple_log_container_signaling`は008/009を変更せず、通常startup migrationへ追加しない。default `--preflight-only`はSQLite URI read-only接続とread-only volume mountを併用し、main DB、`-wal`、`-shm`を生成・変更しない処理とする。`--dry-run`はisolated DB限定のfull DDL/marker後rollback、`--apply`はoffline/release 0.4.0確認付きに分離する。
 - detector-v2 migrationはtransaction外で`foreign_keys=ON`、`legacy_alter_table=OFF`をread backし、切替後にだけ`BEGIN IMMEDIATE`へ進む。read/locked preflight、全row compatibility、schema/object identity、foreign key、両reserved preset namespace identityを確認し、commit直前の再分類差異を完全rollbackする。success、dry-run、faultの全経路でPRAGMA既定値を復元し、復元失敗時はserviceを停止したままにする。
 - `implement-feature`と`validate-implementation`ではmigration mutationを`/private/tmp`等の明示したisolated database copyだけへ実行する。operator databaseではread-only preflightまでとし、host apply wrapper `scripts.run_detector_v2_migration`を実行しない。operator applyは別の明示release operationとする。
 - job失敗時は`error_message`へ運用に必要な情報を保存する。

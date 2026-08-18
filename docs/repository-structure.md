@@ -194,7 +194,7 @@ root `data/`はlocal-only inputであり、tracked treeには含めない。固�
 - `run_safe_delete_candidate_reconciliation.py`とcontainer内
   `reconcile_safe_delete_candidates.py`はnetwork-disabled one-shot serviceでcandidate projectionを
   dry-run/applyする。
-- `run_detector_v2_migration.py`はAPI停止、worker drain、release 0.4.0 readinessを確認するhost wrapper、`migrate_detector_v2.py`はdefault read-only preflightとisolated DB限定dry-run/applyを所有する。再起動後は`check_detector_v2_api_capability.py`がminimum client 0.4.0とdetector/formal preview/safe-delete capabilityを確認し、operator databaseへ自動applyしない。
+- `run_detector_v2_migration.py`はAPI/worker停止、worker drain、release 0.4.0 readiness、明示承認後のoperator applyを行うhost wrapperとする。現行wrapper単独では同じDB volumeをmountする他containerを検出しないため、外側のrelease gateが全volume writerの停止を確認してから呼び出す。`migrate_detector_v2.py`は専用read-only接続のpreflight、isolated DB限定dry-run、確認flag付きapplyを分離する。実装・検証中のapplyはisolated DBだけを対象とし、operator applyは別release operationに限定する。再起動後は`check_detector_v2_api_capability.py`がminimum client 0.4.0とdetector/formal preview/safe-delete capabilityを確認し、operator databaseへ自動applyしない。
 - `inspect_detector_fixture.py`はsnapshotを一度だけno-follow openし、同じinherited fdをbounded parserとpinned FFprobeへ渡す。`audit_external_fixture_git_history.py`はlocal fixture hash確認後にGit history/path/object DBをbounded auditするthin CLIとする。
 - `renditions.py`と`rendition_provenance.py`はrequest/job/result/provenance relationを扱い、finalizerのtransactionを内側でcommitしない。
 - formal preview repositoryとrendition repositoryはresult kindを共有flagから推測せず、
