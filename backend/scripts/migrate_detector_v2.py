@@ -9,6 +9,10 @@ from app.services.detector_v2_migration import (
     DetectorV2MigrationError,
     apply_detector_v2_migration,
 )
+from app.services.disposable_database_target import (
+    DisposableDatabaseTargetError,
+    require_disposable_container_database,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,21 +34,27 @@ def main(argv: list[str] | None = None) -> int:
         else "preflight-only"
     )
     try:
+        settings = load_settings()
+        require_disposable_container_database(settings)
         result = apply_detector_v2_migration(
-            settings=load_settings(),
+            settings=settings,
             mode=selected_mode,
             isolated_database_confirmed=arguments.isolated_database_confirmed,
             offline_maintenance_confirmed=arguments.offline_maintenance_confirmed,
             api_stopped_confirmed=arguments.api_stopped_confirmed,
             release_040_ready_confirmed=arguments.release_040_ready_confirmed,
         )
-    except (SettingsError, DetectorV2MigrationError) as exc:
+    except (
+        DetectorV2MigrationError,
+        DisposableDatabaseTargetError,
+        SettingsError,
+    ) as exc:
         print(
             getattr(exc, "code", "detector_v2_migration_configuration_invalid"),
             file=sys.stderr,
         )
         return 1
-    except Exception:
+    except Exception:  # noqa: BLE001 - routine output must remain sanitized.
         print("detector_v2_migration_failed", file=sys.stderr)
         return 1
     print(

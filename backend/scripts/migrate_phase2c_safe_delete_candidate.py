@@ -5,6 +5,10 @@ import json
 import sys
 
 from app.core.settings import SettingsError, load_settings
+from app.services.disposable_database_target import (
+    DisposableDatabaseTargetError,
+    require_disposable_container_database,
+)
 from app.services.phase2c_migration import (
     Phase2CMigrationError,
     apply_phase2c_migration,
@@ -19,12 +23,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--offline-maintenance-confirmed", action="store_true")
     arguments = parser.parse_args(argv)
     try:
+        settings = load_settings()
+        require_disposable_container_database(settings)
         result = apply_phase2c_migration(
-            settings=load_settings(),
+            settings=settings,
             offline_maintenance_confirmed=arguments.offline_maintenance_confirmed,
             dry_run=arguments.dry_run,
         )
-    except (SettingsError, Phase2CMigrationError) as exc:
+    except (
+        DisposableDatabaseTargetError,
+        SettingsError,
+        Phase2CMigrationError,
+    ) as exc:
         print(
             getattr(
                 exc,
@@ -34,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    except Exception:
+    except Exception:  # noqa: BLE001 - routine output must remain sanitized.
         print("phase2c_migration_failed", file=sys.stderr)
         return 1
     print(

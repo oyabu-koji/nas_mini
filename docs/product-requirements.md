@@ -33,6 +33,8 @@
 - 保存先ルートは環境変数 `MEDIA_ROOT` で指定し、ハードコードしない。
 - Phase 1では `safe_to_delete_candidate` を本番運用しない。
 - Phase 2以降でも、安全条件をすべて満たす場合のみ削除候補にする。iPhone側original削除も自動化しない。
+- 0.4.0 operator migrationでは、001から007までをapplication/worker startupなしで適用し、008後だけworker-only drainを許可し、009完了までAPIを停止する。部分commit後は同じDBを自動再開せず、検証済みbackup restoreを要求する。
+- operator migrationのrelease/rollback image IDと環境変数を別々に固定し、operation中のbuild/pullを禁止する。DB restoreはoriginalを削除・上書きせず、operation中に生成したderived orphanだけをcleanupする。
 
 ## Phase 1 MVP
 

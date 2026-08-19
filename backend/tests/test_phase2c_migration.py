@@ -1,7 +1,6 @@
 import sqlite3
 
 import pytest
-
 from app.core.settings import (
     MAX_UPLOAD_CHUNKS,
     MAX_UPLOAD_SESSION_SIZE_BYTES,
@@ -23,7 +22,6 @@ from tests.phase2c_test_support import (
     initialize_phase2b,
     insert_eligible_confirmed_asset,
 )
-
 
 TRUSTED_STATEMENT_FAULTS = [
     f"after_statement_{index}"
@@ -174,9 +172,7 @@ def test_phase2c_preflight_requires_exact_latest_predecessor(tmp_path):
     settings = _settings(tmp_path)
     initialize_phase2b(settings)
     with connect(settings.database_path, 5000) as conn:
-        conn.execute(
-            "INSERT INTO schema_migrations (version) VALUES ('010_future')"
-        )
+        conn.execute("INSERT INTO schema_migrations (version) VALUES ('010_future')")
         conn.commit()
 
     with pytest.raises(
@@ -248,10 +244,13 @@ def test_phase2c_executor_never_uses_executescript():
     conn = sqlite3.connect(":memory:", factory=_GuardedConnection)
     conn.execute("BEGIN IMMEDIATE")
 
-    assert execute_phase2c_sql(
-        conn,
-        sql="CREATE TABLE first_table (id INTEGER);",
-    ) == 1
+    assert (
+        execute_phase2c_sql(
+            conn,
+            sql="CREATE TABLE first_table (id INTEGER);",
+        )
+        == 1
+    )
     assert conn.executescript_calls == 0
     conn.rollback()
 
@@ -267,8 +266,8 @@ def test_phase2c_executor_detects_lost_transaction():
     ):
         execute_phase2c_sql(
             conn,
-                sql=(
-                    "CREATE TABLE first_table (id INTEGER);\n"
-                    "CREATE TABLE second_table (id INTEGER);"
-                ),
+            sql=(
+                "CREATE TABLE first_table (id INTEGER);\n"
+                "CREATE TABLE second_table (id INTEGER);"
+            ),
         )

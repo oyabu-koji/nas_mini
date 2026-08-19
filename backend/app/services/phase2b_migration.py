@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import sqlite3
 import json
+import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from app.core.settings import Settings
 from app.db.connection import connect
@@ -22,9 +22,10 @@ from app.services.processed_result_authority import classify_active_processed_re
 
 
 class Phase2BMigrationError(RuntimeError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, restore_required: bool = False):
         super().__init__(code)
         self.code = code
+        self.restore_required = restore_required
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,9 @@ def apply_phase2b_migration(
     fault_injector: FaultInjector | None = None,
 ) -> Phase2BMigrationResult:
     if not offline_maintenance_confirmed:
-        raise Phase2BMigrationError("phase2b_migration_maintenance_confirmation_required")
+        raise Phase2BMigrationError(
+            "phase2b_migration_maintenance_confirmation_required"
+        )
     check_certification = certification_check or _check_certification
     assert_generated_apple_log_conversion_disabled(settings)
     check_certification(settings)
@@ -66,6 +69,7 @@ def apply_phase2b_migration(
             )
         _inject(fault_injector, "after_read_preflight")
 
+        committed = False
         try:
             conn.execute("BEGIN IMMEDIATE")
             if _validate_schema_state(conn):
@@ -96,9 +100,16 @@ def apply_phase2b_migration(
             if violations:
                 raise Phase2BMigrationError("phase2b_migration_foreign_key_invalid")
             conn.commit()
-        except Exception:
+            committed = True
+            _inject(fault_injector, "after_commit")
+        except Exception as exc:
             if conn.in_transaction:
                 conn.rollback()
+            if committed:
+                raise Phase2BMigrationError(
+                    "phase2b_migration_post_commit_restore_required",
+                    restore_required=True,
+                ) from exc
             raise
     return Phase2BMigrationResult(
         status="applied",
@@ -130,7 +141,9 @@ def _validate_schema_state(conn: sqlite3.Connection) -> bool:
                 (PHASE2B_MIGRATION_VERSION,),
             ).fetchone()
         except sqlite3.DatabaseError as exc:
-            raise Phase2BMigrationError("phase2b_migration_schema_identity_mismatch") from exc
+            raise Phase2BMigrationError(
+                "phase2b_migration_schema_identity_mismatch"
+            ) from exc
         if identity is None or identity["schema_sql_sha256"] != schema_sql_sha256():
             raise Phase2BMigrationError("phase2b_migration_schema_identity_mismatch")
         return True

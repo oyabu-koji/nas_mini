@@ -1,10 +1,8 @@
 import hashlib
-import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-
 from app.core.settings import Settings
 from app.db.connection import connect
 from app.db.migrations import run_migrations
@@ -14,8 +12,7 @@ from app.services.phase2b_migration import (
     apply_phase2b_migration,
 )
 from app.services.processed_result_delivery import resolve_deliverable_result
-from tests.test_phase2b_schema import _insert_session_asset
-from tests.test_phase2b_schema import _insert_ready_managed
+from tests.test_phase2b_schema import _insert_ready_managed, _insert_session_asset
 
 
 def _settings(tmp_path):
@@ -120,16 +117,12 @@ def test_phase2b_migration_rejects_pending_work_without_schema_change(tmp_path):
 
 
 @pytest.mark.parametrize("writer_kind", ["job", "rendition", "asset"])
-def test_phase2b_migration_rechecks_writers_after_read_preflight(
-    tmp_path, writer_kind
-):
+def test_phase2b_migration_rechecks_writers_after_read_preflight(tmp_path, writer_kind):
     settings = _settings(tmp_path)
     _initialize(settings)
     with connect(settings.database_path, 5000) as conn:
         _insert_session_asset(conn, asset_id=1, session_id="session-one")
-        conn.execute(
-            "UPDATE assets SET preview_status = 'preview_ready' WHERE id = 1"
-        )
+        conn.execute("UPDATE assets SET preview_status = 'preview_ready' WHERE id = 1")
         conn.commit()
 
     def write_after_preflight(step):
@@ -309,7 +302,9 @@ def test_phase2b_migration_does_not_change_direct_or_image_assets(tmp_path):
         jobs = conn.execute(
             "SELECT COUNT(*) FROM jobs WHERE dedup_key LIKE 'phase2b-profile-preview:%'"
         ).fetchone()[0]
-    assert [(row["id"], row["preview_generation"], row["preview_status"]) for row in rows] == [
+    assert [
+        (row["id"], row["preview_generation"], row["preview_status"]) for row in rows
+    ] == [
         (1, 0, "preview_ready"),
         (2, 0, "preview_ready"),
     ]
@@ -321,9 +316,7 @@ def test_existing_phase2b_dedup_job_leaves_asset_unchanged(tmp_path):
     _initialize(settings)
     with connect(settings.database_path, 5000) as conn:
         _insert_session_asset(conn, asset_id=1, session_id="session-one")
-        conn.execute(
-            "UPDATE assets SET preview_status = 'failed' WHERE id = 1"
-        )
+        conn.execute("UPDATE assets SET preview_status = 'failed' WHERE id = 1")
         conn.execute(
             """
             INSERT INTO jobs (

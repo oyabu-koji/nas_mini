@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from app.services.detector_v2_host_migration import (
@@ -11,6 +12,7 @@ from app.services.detector_v2_migration import DetectorV2MigrationResult
 
 from scripts import check_detector_v2_api_capability as capability_cli
 from scripts import migrate_detector_v2 as migration_cli
+from scripts import preflight_detector_v2 as preflight_cli
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -33,6 +35,30 @@ def test_detector_v2_cli_defaults_to_preflight_only(monkeypatch, capsys):
     assert capsys.readouterr().out == '{"status":"preflight_ready"}\n'
 
 
+def test_dedicated_preflight_cli_has_no_apply_mode(monkeypatch, capsys):
+    monkeypatch.setattr(
+        preflight_cli,
+        "load_settings",
+        lambda: SimpleNamespace(database_path=Path("/data/mediavault.sqlite3")),
+    )
+    monkeypatch.setattr(
+        preflight_cli, "require_disposable_database_target", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        preflight_cli,
+        "apply_detector_v2_migration",
+        lambda **_kwargs: DetectorV2MigrationResult(
+            status="preflight_ready",
+            schema_identity_sha256="a" * 64,
+        ),
+    )
+
+    assert preflight_cli.main([]) == 0
+    assert capsys.readouterr().out == '{"status":"preflight_ready"}\n'
+    with pytest.raises(SystemExit):
+        preflight_cli.main(["--apply"])
+
+
 def test_detector_v2_cli_passes_explicit_dry_run_confirmation(monkeypatch):
     captured = {}
     monkeypatch.setattr(migration_cli, "load_settings", lambda: object())
@@ -51,7 +77,7 @@ def test_detector_v2_cli_passes_explicit_dry_run_confirmation(monkeypatch):
     assert captured["isolated_database_confirmed"] is True
 
 
-def test_detector_v2_host_wrapper_stops_drains_migrates_then_restarts():
+def test_detector_v2_legacy_host_wrapper_is_disabled_before_commands():
     calls = []
 
     def runner(argv, timeout):
@@ -64,29 +90,16 @@ def test_detector_v2_host_wrapper_stops_drains_migrates_then_restarts():
             return HostCommandResult(0, "drained")
         return HostCommandResult(0, "")
 
-    run_detector_v2_host_migration(
-        repository_root=REPOSITORY_ROOT,
-        command_runner=runner,
-    )
+    with pytest.raises(
+        DetectorV2HostMigrationError,
+        match="legacy_operator_migration_wrapper_disabled",
+    ):
+        run_detector_v2_host_migration(
+            repository_root=REPOSITORY_ROOT,
+            command_runner=runner,
+        )
 
-    assert calls[0][0][-2:] == ["stop", "api"]
-    assert any(
-        any("phase2b_drain_check" in argument for argument in argv)
-        for argv, _timeout in calls
-    )
-    assert any(argv[-2:] == ["stop", "worker"] for argv, _timeout in calls)
-    migration = next(argv for argv, _timeout in calls if "detector-v2-migrator" in argv)
-    assert migration[-4:] == [
-        "--apply",
-        "--offline-maintenance-confirmed",
-        "--api-stopped-confirmed",
-        "--release-040-ready-confirmed",
-    ]
-    assert any(argv[-4:] == ["up", "-d", "api", "worker"] for argv, _timeout in calls)
-    assert calls[-1][0][-2:] == [
-        "-m",
-        "scripts.check_detector_v2_api_capability",
-    ]
+    assert calls == []
 
 
 def test_detector_v2_host_failure_keeps_services_stopped():
@@ -100,7 +113,7 @@ def test_detector_v2_host_failure_keeps_services_stopped():
 
     with pytest.raises(
         DetectorV2HostMigrationError,
-        match="detector_v2_migration_command_failed",
+        match="legacy_operator_migration_wrapper_disabled",
     ):
         run_detector_v2_host_migration(
             repository_root=REPOSITORY_ROOT,
@@ -121,7 +134,7 @@ def test_detector_v2_post_start_failure_stops_services():
 
     with pytest.raises(
         DetectorV2HostMigrationError,
-        match="detector_v2_post_start_capability_unavailable",
+        match="legacy_operator_migration_wrapper_disabled",
     ):
         run_detector_v2_host_migration(
             repository_root=REPOSITORY_ROOT,
@@ -129,7 +142,7 @@ def test_detector_v2_post_start_failure_stops_services():
             post_start_timeout_seconds=0,
         )
 
-    assert calls[-1][0][-3:] == ["stop", "api", "worker"]
+    assert calls == []
 
 
 def test_detector_v2_post_start_command_error_stops_services():
@@ -143,14 +156,14 @@ def test_detector_v2_post_start_command_error_stops_services():
 
     with pytest.raises(
         DetectorV2HostMigrationError,
-        match="detector_v2_migration_command_failed",
+        match="legacy_operator_migration_wrapper_disabled",
     ):
         run_detector_v2_host_migration(
             repository_root=REPOSITORY_ROOT,
             command_runner=runner,
         )
 
-    assert calls[-1][0][-3:] == ["stop", "api", "worker"]
+    assert calls == []
 
 
 def test_detector_v2_capability_check_accepts_ready_response(monkeypatch, capsys):

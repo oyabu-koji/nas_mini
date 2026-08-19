@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from app.core.settings import Settings
-from app.db.connection import connect
+from app.db.connection import connect, connect_read_only
 from app.db.detector_v2 import (
     DETECTOR_V2_MIGRATION_VERSION,
     EXPECTED_PREVIOUS_MIGRATION_VERSION,
@@ -37,16 +37,16 @@ from app.services.preset_registry import (
     classify_reserved_preset_with_identity,
 )
 
-
 MigrationMode = Literal["preflight-only", "dry-run", "apply"]
 FaultInjector = Callable[[str], None]
 ReleaseReadinessCheck = Callable[[Settings], bool]
 
 
 class DetectorV2MigrationError(RuntimeError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, restore_required: bool = False):
         super().__init__(code)
         self.code = code
+        self.restore_required = restore_required
 
 
 @dataclass(frozen=True)
@@ -87,6 +87,28 @@ def apply_detector_v2_migration(
         )
 
     readiness = release_readiness_check or _release_040_ready
+    if mode == "preflight-only":
+        try:
+            with connect_read_only(
+                settings.database_path,
+                settings.sqlite_busy_timeout_ms,
+            ) as conn:
+                _require_read_only_connection_state(conn)
+                already_applied, _read_snapshot = _read_preflight(
+                    conn,
+                    settings=settings,
+                    require_release_ready=False,
+                    release_readiness_check=readiness,
+                )
+                _require_integrity(conn)
+                return _result(
+                    "already_applied" if already_applied else "preflight_ready"
+                )
+        except sqlite3.DatabaseError as exc:
+            raise DetectorV2MigrationError(
+                "detector_v2_preflight_read_only_open_failed"
+            ) from exc
+
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         _require_initial_connection_state(conn)
         already_applied, read_snapshot = _read_preflight(
@@ -97,12 +119,10 @@ def apply_detector_v2_migration(
         )
         if already_applied:
             return _result("already_applied")
-        if mode == "preflight-only":
-            _require_default_pragmas(conn)
-            return _result("preflight_ready")
         _inject(fault_injector, "after_read_preflight")
 
         transaction_started = False
+        committed = False
         try:
             _set_migration_pragmas(conn)
             conn.execute("BEGIN IMMEDIATE")
@@ -128,9 +148,7 @@ def apply_detector_v2_migration(
                 transaction_started = False
                 return _result("already_applied")
             if locked_snapshot != read_snapshot:
-                raise DetectorV2MigrationError(
-                    "detector_v2_reserved_preset_changed"
-                )
+                raise DetectorV2MigrationError("detector_v2_reserved_preset_changed")
             _inject(fault_injector, "after_locked_preflight")
             _rebuild_successor_schema(conn, fault_injector=fault_injector)
             _insert_successor_markers(conn)
@@ -151,19 +169,24 @@ def apply_detector_v2_migration(
                     ) from exc
                 raise
             if final_snapshot != locked_snapshot:
-                raise DetectorV2MigrationError(
-                    "detector_v2_reserved_preset_changed"
-                )
+                raise DetectorV2MigrationError("detector_v2_reserved_preset_changed")
             if mode == "dry-run":
                 conn.rollback()
                 status = "dry_run"
             else:
                 conn.commit()
+                committed = True
+                _inject(fault_injector, "after_commit")
                 status = "applied"
             transaction_started = False
-        except Exception:
+        except Exception as exc:
             if transaction_started and conn.in_transaction:
                 conn.rollback()
+            if committed:
+                raise DetectorV2MigrationError(
+                    "detector_v2_migration_post_commit_restore_required",
+                    restore_required=True,
+                ) from exc
             raise
         finally:
             _restore_default_pragmas(conn)
@@ -184,9 +207,7 @@ def _read_preflight(
     if state.detector_v2_valid:
         return True, ()
     if not state.phase2c_valid or not predecessor_schema_matches():
-        raise DetectorV2MigrationError(
-            "detector_v2_migration_precondition_changed"
-        )
+        raise DetectorV2MigrationError("detector_v2_migration_precondition_changed")
     latest = conn.execute(
         """
         SELECT version FROM schema_migrations
@@ -195,16 +216,12 @@ def _read_preflight(
         """
     ).fetchone()
     if latest is None or latest["version"] != EXPECTED_PREVIOUS_MIGRATION_VERSION:
-        raise DetectorV2MigrationError(
-            "detector_v2_migration_precondition_changed"
-        )
+        raise DetectorV2MigrationError("detector_v2_migration_precondition_changed")
     _require_drained(conn)
     _require_existing_rows_compatible(conn)
     snapshot = _reserved_preset_snapshot(settings)
     if require_release_ready and not release_readiness_check(settings):
-        raise DetectorV2MigrationError(
-            "detector_v2_migration_release_040_not_ready"
-        )
+        raise DetectorV2MigrationError("detector_v2_migration_release_040_not_ready")
     return False, snapshot
 
 
@@ -217,13 +234,9 @@ def _reserved_preset_snapshot(
     )
     for identity in identities:
         if identity.classification == "reserved_namespace_collision":
-            raise DetectorV2MigrationError(
-                "detector_v2_reserved_namespace_collision"
-            )
+            raise DetectorV2MigrationError("detector_v2_reserved_namespace_collision")
         if identity.classification not in {"absent", "disabled"}:
-            raise DetectorV2MigrationError(
-                "detector_v2_reserved_preset_not_disabled"
-            )
+            raise DetectorV2MigrationError("detector_v2_reserved_preset_not_disabled")
     return identities
 
 
@@ -313,9 +326,7 @@ def _require_existing_rows_compatible(conn: sqlite3.Connection) -> None:
         """
     ).fetchone()[0]
     if invalid_assets or invalid_attempts or invalid_provenance:
-        raise DetectorV2MigrationError(
-            "detector_v2_existing_rows_incompatible"
-        )
+        raise DetectorV2MigrationError("detector_v2_existing_rows_incompatible")
 
 
 def _require_drained(conn: sqlite3.Connection) -> None:
@@ -327,9 +338,7 @@ def _require_drained(conn: sqlite3.Connection) -> None:
         """
     ).fetchone()[0]
     if not counts.drained or attempts:
-        raise DetectorV2MigrationError(
-            "detector_v2_migration_preview_not_drained"
-        )
+        raise DetectorV2MigrationError("detector_v2_migration_preview_not_drained")
 
 
 def _rebuild_successor_schema(
@@ -364,18 +373,16 @@ def _rebuild_successor_schema(
     )
     for table, temporary, create_sql in rebuilds:
         conn.execute(create_sql)
-        columns = [
-            row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')
-        ]
+        columns = [row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')]
         quoted = ", ".join(f'"{column}"' for column in columns)
         conn.execute(
-            f'INSERT INTO "{temporary}" ({quoted}) '
-            f'SELECT {quoted} FROM "{table}"'
+            f'INSERT INTO "{temporary}" ({quoted}) SELECT {quoted} FROM "{table}"'
         )
-        if conn.execute(f'SELECT COUNT(*) FROM "{temporary}"').fetchone()[0] != counts[table]:
-            raise DetectorV2MigrationError(
-                "detector_v2_migration_row_count_mismatch"
-            )
+        if (
+            conn.execute(f'SELECT COUNT(*) FROM "{temporary}"').fetchone()[0]
+            != counts[table]
+        ):
+            raise DetectorV2MigrationError("detector_v2_migration_row_count_mismatch")
         _inject(fault_injector, f"after_{table}_copy")
 
     for table, temporary, _create_sql in reversed(rebuilds):
@@ -419,18 +426,16 @@ def _insert_successor_markers(conn: sqlite3.Connection) -> None:
 
 
 def _require_integrity(conn: sqlite3.Connection) -> None:
+    if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+        raise DetectorV2MigrationError("detector_v2_migration_integrity_invalid")
     if conn.execute("PRAGMA foreign_key_check").fetchall():
-        raise DetectorV2MigrationError(
-            "detector_v2_migration_foreign_key_invalid"
-        )
+        raise DetectorV2MigrationError("detector_v2_migration_foreign_key_invalid")
     for table in ("formal_preview_attempts", "preview_provenance"):
         if conn.execute(
             f'SELECT COUNT(*) FROM "{table}" WHERE asset_id NOT IN '
             "(SELECT id FROM assets)"
         ).fetchone()[0]:
-            raise DetectorV2MigrationError(
-                "detector_v2_migration_key_relation_invalid"
-            )
+            raise DetectorV2MigrationError("detector_v2_migration_key_relation_invalid")
 
 
 def _require_successor_identity(conn: sqlite3.Connection) -> None:
@@ -439,24 +444,26 @@ def _require_successor_identity(conn: sqlite3.Connection) -> None:
     except PhaseSchemaIdentityError as exc:
         raise DetectorV2MigrationError(exc.code) from exc
     if not state.detector_v2_valid:
-        raise DetectorV2MigrationError(
-            "detector_v2_migration_schema_identity_mismatch"
-        )
+        raise DetectorV2MigrationError("detector_v2_migration_schema_identity_mismatch")
 
 
 def _require_initial_connection_state(conn: sqlite3.Connection) -> None:
     if conn.in_transaction:
-        raise DetectorV2MigrationError(
-            "detector_v2_migration_active_transaction"
-        )
+        raise DetectorV2MigrationError("detector_v2_migration_active_transaction")
+    _require_default_pragmas(conn)
+
+
+def _require_read_only_connection_state(conn: sqlite3.Connection) -> None:
+    if conn.in_transaction:
+        raise DetectorV2MigrationError("detector_v2_migration_active_transaction")
+    if conn.execute("PRAGMA query_only").fetchone()[0] != 1:
+        raise DetectorV2MigrationError("detector_v2_preflight_read_only_open_failed")
     _require_default_pragmas(conn)
 
 
 def _require_default_pragmas(conn: sqlite3.Connection) -> None:
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-        raise DetectorV2MigrationError(
-            "detector_v2_migration_foreign_keys_not_enabled"
-        )
+        raise DetectorV2MigrationError("detector_v2_migration_foreign_keys_not_enabled")
     if conn.execute("PRAGMA legacy_alter_table").fetchone()[0] != 0:
         raise DetectorV2MigrationError(
             "detector_v2_migration_legacy_alter_table_enabled"
@@ -470,9 +477,7 @@ def _set_migration_pragmas(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys").fetchone()[0] != 0
         or conn.execute("PRAGMA legacy_alter_table").fetchone()[0] != 1
     ):
-        raise DetectorV2MigrationError(
-            "detector_v2_migration_pragma_switch_failed"
-        )
+        raise DetectorV2MigrationError("detector_v2_migration_pragma_switch_failed")
 
 
 def _restore_default_pragmas(conn: sqlite3.Connection) -> None:
@@ -488,10 +493,7 @@ def _restore_default_pragmas(conn: sqlite3.Connection) -> None:
 
 def _release_040_ready(settings: Settings) -> bool:
     capability = evaluate_detector_runtime(settings)
-    return bool(
-        capability.detector_certified
-        and capability.formal_apple_log_preview
-    )
+    return bool(capability.detector_certified and capability.formal_apple_log_preview)
 
 
 def _result(status) -> DetectorV2MigrationResult:

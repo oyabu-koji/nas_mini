@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import subprocess
-import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -29,85 +29,10 @@ def run_phase2c_host_migration(
     command_runner: CommandRunner | None = None,
     drain_timeout_seconds: int = 300,
 ) -> None:
-    repository_root = repository_root.resolve()
     if mode not in {"dry-run", "apply"}:
         raise Phase2CHostMigrationError("phase2c_migration_mode_invalid")
-    if not (repository_root / "docker-compose.yml").is_file():
-        raise Phase2CHostMigrationError(
-            "phase2c_migration_invalid_working_directory"
-        )
-    run = command_runner or _run_command
-    compose = ["docker", "compose", "--project-directory", str(repository_root)]
-    _require_success(run([*compose, "stop", "api"], 60))
-    worker_state = _require_success(
-        run([*compose, "ps", "--status", "running", "--services", "worker"], 30)
-    )
-    deadline = time.monotonic() + drain_timeout_seconds
-    while worker_state.stdout.strip():
-        drained = run(
-            [
-                *compose,
-                "exec",
-                "-T",
-                "worker",
-                "uv",
-                "run",
-                "--frozen",
-                "--no-dev",
-                "python",
-                "-m",
-                "app.services.phase2b_drain_check",
-            ],
-            30,
-        )
-        if drained.returncode == 0 and drained.stdout.strip() == "drained":
-            break
-        if time.monotonic() >= deadline:
-            raise Phase2CHostMigrationError(
-                "phase2c_migration_preview_not_drained"
-            )
-        time.sleep(2)
-    _require_success(run([*compose, "stop", "worker"], 60))
-    running = _require_success(
-        run(
-            [
-                *compose,
-                "ps",
-                "--status",
-                "running",
-                "--services",
-                "api",
-                "worker",
-            ],
-            30,
-        )
-    )
-    if running.stdout.strip():
-        raise Phase2CHostMigrationError("phase2c_migration_services_running")
-    migration = run(
-        [
-            *compose,
-            "--profile",
-            "phase2c-migration",
-            "run",
-            "--rm",
-            "--no-deps",
-            "-T",
-            "phase2c-migrator",
-            "uv",
-            "run",
-            "--frozen",
-            "--no-dev",
-            "python",
-            "-m",
-            "scripts.migrate_phase2c_safe_delete_candidate",
-            f"--{mode}",
-            "--offline-maintenance-confirmed",
-        ],
-        900,
-    )
-    _require_success(migration)
-    _require_success(run([*compose, "up", "-d", "api", "worker"], 300))
+    del repository_root, command_runner, drain_timeout_seconds
+    raise Phase2CHostMigrationError("legacy_operator_migration_wrapper_disabled")
 
 
 def _run_command(argv: list[str], timeout_seconds: int) -> HostCommandResult:
@@ -123,9 +48,7 @@ def _run_command(argv: list[str], timeout_seconds: int) -> HostCommandResult:
             text=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        raise Phase2CHostMigrationError(
-            "phase2c_migration_command_failed"
-        ) from exc
+        raise Phase2CHostMigrationError("phase2c_migration_command_failed") from exc
     if len(completed.stdout.encode("utf-8")) > 1_048_576:
         raise Phase2CHostMigrationError("phase2c_migration_command_failed")
     return HostCommandResult(

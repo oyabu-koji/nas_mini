@@ -1,10 +1,12 @@
+import pytest
 from app.services.phase2b_host_migration import (
     HostCommandResult,
+    Phase2BHostMigrationError,
     run_phase2b_host_migration,
 )
 
 
-def test_host_wrapper_stops_drains_migrates_then_starts_services(tmp_path):
+def test_legacy_host_wrapper_is_disabled_before_any_command(tmp_path):
     calls = []
 
     def run(argv, timeout):
@@ -18,14 +20,13 @@ def test_host_wrapper_stops_drains_migrates_then_starts_services(tmp_path):
             return HostCommandResult(0, "")
         return HostCommandResult(0, "")
 
-    run_phase2b_host_migration(
-        repository_root=tmp_path,
-        command_runner=run,
-    )
+    with pytest.raises(
+        Phase2BHostMigrationError,
+        match="legacy_operator_migration_wrapper_disabled",
+    ):
+        run_phase2b_host_migration(
+            repository_root=tmp_path,
+            command_runner=run,
+        )
 
-    commands = [" ".join(call[0]) for call in calls]
-    assert commands[0].endswith("stop api")
-    assert "phase2b_drain_check" in commands[2]
-    assert commands[3].endswith("stop worker")
-    assert "--profile phase2b-migration run --rm --no-deps -T phase2b-migrator" in commands[5]
-    assert commands[6].endswith("up -d api worker")
+    assert calls == []

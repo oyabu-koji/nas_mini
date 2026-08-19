@@ -6,8 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.core.settings import (
-    MAX_UPLOAD_CHUNKS,
     MAX_UPLOAD_CHUNK_SIZE_BYTES,
+    MAX_UPLOAD_CHUNKS,
     MAX_UPLOAD_SESSION_SIZE_BYTES,
     Settings,
 )
@@ -33,9 +33,10 @@ from app.services.safe_delete_candidate import (
 
 
 class Phase2CMigrationError(RuntimeError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, restore_required: bool = False):
         super().__init__(code)
         self.code = code
+        self.restore_required = restore_required
 
 
 @dataclass(frozen=True)
@@ -79,9 +80,8 @@ def apply_phase2c_migration(
         conn.execute("PRAGMA foreign_keys = OFF")
         conn.execute("PRAGMA legacy_alter_table = ON")
         if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
-            raise Phase2CMigrationError(
-                "phase2c_migration_foreign_keys_disable_failed"
-            )
+            raise Phase2CMigrationError("phase2c_migration_foreign_keys_disable_failed")
+        committed = False
         try:
             conn.execute("BEGIN IMMEDIATE")
             if _locked_preflight(
@@ -131,10 +131,17 @@ def apply_phase2c_migration(
                 status = "dry_run"
             else:
                 conn.commit()
+                committed = True
+                _inject(fault_injector, "after_commit")
                 status = "applied"
-        except Exception:
+        except Exception as exc:
             if conn.in_transaction:
                 conn.rollback()
+            if committed:
+                raise Phase2CMigrationError(
+                    "phase2c_migration_post_commit_restore_required",
+                    restore_required=True,
+                ) from exc
             raise
         finally:
             conn.execute("PRAGMA legacy_alter_table = OFF")
@@ -196,9 +203,7 @@ def _require_exact_predecessor(conn: sqlite3.Connection) -> None:
 
 def _require_runtime(settings: Settings, runtime_check: RuntimeCheck) -> None:
     if not runtime_check(settings):
-        raise Phase2CMigrationError(
-            "phase2c_migration_phase2b_runtime_unavailable"
-        )
+        raise Phase2CMigrationError("phase2c_migration_phase2b_runtime_unavailable")
 
 
 def _runtime_available(settings: Settings) -> bool:
@@ -229,9 +234,7 @@ def _require_upload_bounds(conn: sqlite3.Connection) -> None:
         (MAX_UPLOAD_SESSION_SIZE_BYTES, MAX_UPLOAD_CHUNK_SIZE_BYTES),
     ).fetchone()[0]
     if upload_count:
-        raise Phase2CMigrationError(
-            "phase2c_migration_upload_limit_exceeded"
-        )
+        raise Phase2CMigrationError("phase2c_migration_upload_limit_exceeded")
     chunk_count = conn.execute(
         """
         SELECT COUNT(*) FROM upload_sessions
@@ -242,9 +245,7 @@ def _require_upload_bounds(conn: sqlite3.Connection) -> None:
         (MAX_UPLOAD_CHUNKS,),
     ).fetchone()[0]
     if chunk_count:
-        raise Phase2CMigrationError(
-            "phase2c_migration_chunk_limit_exceeded"
-        )
+        raise Phase2CMigrationError("phase2c_migration_chunk_limit_exceeded")
 
 
 def _backfill(conn: sqlite3.Connection) -> tuple[int, int, Counter]:
@@ -295,9 +296,7 @@ def _require_integrity(conn: sqlite3.Connection) -> None:
             conn,
             asset_id=int(row["id"]),
         ).eligible:
-            raise Phase2CMigrationError(
-                "phase2c_migration_candidate_integrity_invalid"
-            )
+            raise Phase2CMigrationError("phase2c_migration_candidate_integrity_invalid")
 
 
 def _actual_assets_sql(conn: sqlite3.Connection) -> str:
@@ -308,9 +307,7 @@ def _actual_assets_sql(conn: sqlite3.Connection) -> str:
         """
     ).fetchone()
     if row is None or not isinstance(row["sql"], str):
-        raise Phase2CMigrationError(
-            "phase2c_migration_assets_schema_identity_mismatch"
-        )
+        raise Phase2CMigrationError("phase2c_migration_assets_schema_identity_mismatch")
     return row["sql"]
 
 

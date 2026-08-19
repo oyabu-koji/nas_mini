@@ -4,36 +4,39 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from app.services.phase2c_host_migration import (
     HostCommandResult as MigrationCommandResult,
 )
-from app.services.phase2c_migration import Phase2CMigrationResult
 from app.services.phase2c_host_migration import (
     Phase2CHostMigrationError,
-    _run_command as run_migration_command,
     run_phase2c_host_migration,
 )
+from app.services.phase2c_host_migration import (
+    _run_command as run_migration_command,
+)
+from app.services.phase2c_migration import Phase2CMigrationResult
+from app.services.safe_delete_reconciliation import ReconciliationSummary
 from app.services.safe_delete_reconciliation_host import (
     HostCommandResult as ReconciliationCommandResult,
 )
-from app.services.safe_delete_reconciliation import ReconciliationSummary
+from app.services.safe_delete_reconciliation_host import (
+    SafeDeleteReconciliationHostError,
+    run_safe_delete_reconciliation_host,
+)
+from app.services.safe_delete_reconciliation_host import (
+    _run_command as run_reconciliation_command,
+)
+
 from scripts import migrate_phase2c_safe_delete_candidate as migration_cli
 from scripts import reconcile_safe_delete_candidates as reconciliation_cli
 from scripts import run_phase2c_safe_delete_candidate_migration as migration_host_cli
 from scripts import run_safe_delete_candidate_reconciliation as reconciliation_host_cli
-from app.services.safe_delete_reconciliation_host import (
-    SafeDeleteReconciliationHostError,
-    _run_command as run_reconciliation_command,
-    run_safe_delete_reconciliation_host,
-)
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("mode", ["dry-run", "apply"])
-def test_phase2c_migration_host_wrapper_uses_fixed_order_and_argv(mode):
+def test_phase2c_migration_legacy_host_wrapper_is_disabled(mode):
     calls = []
 
     def runner(argv, timeout):
@@ -44,30 +47,17 @@ def test_phase2c_migration_host_wrapper_uses_fixed_order_and_argv(mode):
             return MigrationCommandResult(0, "drained")
         return MigrationCommandResult(0, "")
 
-    run_phase2c_host_migration(
-        repository_root=REPOSITORY_ROOT,
-        mode=mode,
-        command_runner=runner,
-    )
+    with pytest.raises(
+        Phase2CHostMigrationError,
+        match="legacy_operator_migration_wrapper_disabled",
+    ):
+        run_phase2c_host_migration(
+            repository_root=REPOSITORY_ROOT,
+            mode=mode,
+            command_runner=runner,
+        )
 
-    assert calls[0][0][-2:] == ["stop", "api"]
-    assert any(
-        any("phase2b_drain_check" in argument for argument in argv)
-        for argv, _timeout in calls
-    )
-    assert any(call[0][-2:] == ["stop", "worker"] for call in calls)
-    migration = next(call for call in calls if "phase2c-migrator" in call[0])
-    module_index = migration[0].index("-m")
-    assert migration[0][module_index : module_index + 2] == [
-        "-m",
-        "scripts.migrate_phase2c_safe_delete_candidate",
-    ]
-    assert migration[0][-2:] == [
-        f"--{mode}",
-        "--offline-maintenance-confirmed",
-    ]
-    assert migration[1] == 900
-    assert calls[-1][0][-4:] == ["up", "-d", "api", "worker"]
+    assert calls == []
 
 
 def test_phase2c_migration_failure_keeps_services_stopped():
@@ -81,7 +71,7 @@ def test_phase2c_migration_failure_keeps_services_stopped():
 
     with pytest.raises(
         Phase2CHostMigrationError,
-        match="phase2c_migration_command_failed",
+        match="legacy_operator_migration_wrapper_disabled",
     ):
         run_phase2c_host_migration(
             repository_root=REPOSITORY_ROOT,
@@ -335,8 +325,7 @@ def test_operator_module_entrypoint_starts_in_a_real_process(module_name):
         cwd=REPOSITORY_ROOT / "backend",
         shell=False,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=10,
         check=False,
         text=True,

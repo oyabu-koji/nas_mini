@@ -114,6 +114,15 @@ graph LR
 
 ## データ管理
 
+### Operator migration safety boundary
+
+- 002–007はFastAPI lifespan、worker、startup recovery/backfillから分離したoffline CLIだけが、固定marker列とSQL digestを検証して適用する。exact 001又はexact 007以外はfail closedとし、002–006部分commit後の自動再開を禁止する。
+- 002–009 orchestrationはmanifest nonceとDocker labelが一致するdisposable DB volumeだけを受理し、current HEAD/commitとhost contractのclean tracked state、DB volume consumer inventoryをauthorityとする。検証済みone-shotでvolume markerを作り、全entrypointがvolume/nonceを再確認する。API常時停止、008後のpinned worker-only drain、worker再停止、009 dry-run/apply、010 read-only preflightの順を固定する。各containerは作成後・起動前にactual project/image/Entrypoint/Cmd、pinned image `Config.Env`とphase envのexact merge、mount/securityを検証し、running containerはID/imageまで一致させる。one-time claim、ambient Compose override/build/pull/未知container拒否により自動再開を行わない。
+- container contractはenv allowlist、persistent mount exact set、privileged/device/host namespace/restart policy/tmpfs denyを含み、create/inspect後とstart直前のconsumer再列挙でTOCTOUを閉じる。旧auto-restart host wrapper/Compose migratorは無効化し、旧CLIにもcontainer DB pathのmarker guardを置く。
+- 010 preflightはwritable共通接続とoperator apply wrapperから分離し、SQLite URI read-only connectionとCompose `:ro` mountを二重境界にする。main DBとWAL/SHMを作成・変更しない。
+- rollback authorityはowner-only fresh SQLite Backup API artifact、別々に固定したrelease/rollback image/env、hostでは`/private/tmp/mediavault-operator-*`、containerでは`/restore`に限定したnonce付きdisposable restore rootである。`MEDIA_ROOT`も同rootのstrict childとする。rollback image/envはAPI/worker停止containerのactual command/mount/securityまでdry inspectする。DB参照derivedとの突合後、operation由来orphanだけをcleanupし、originalとpre-existing derivedを不変に保つ。
+- Restore mutation前にfailure DB/main/WAL/SHMのraw identity、取得可能なlogical identity、fresh backup/attestation identityをowner-only forensic artifactへ固定する。commit後faultは008/009/010 serviceがrestore-requiredへ分類し、orchestratorは停止確認後にpinned DB `:ro` identity one-shotでactual marker prefix/integrity/FKを読み、phase履歴から推測しないlast committed versionを返す。
+
 ### SQLite
 
 - DBファイル配置はbackend設定で指定する。

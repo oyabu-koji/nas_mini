@@ -4,6 +4,10 @@ import argparse
 import sys
 
 from app.core.settings import SettingsError, load_settings
+from app.services.disposable_database_target import (
+    DisposableDatabaseTargetError,
+    require_disposable_container_database,
+)
 from app.services.initial_release_guard import InitialReleaseConfigurationError
 from app.services.phase2b_migration import (
     Phase2BMigrationError,
@@ -21,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         settings = load_settings()
+        require_disposable_container_database(settings)
         result = apply_phase2b_migration(
             settings=settings,
             offline_maintenance_confirmed=arguments.offline_maintenance_confirmed,
@@ -29,7 +34,11 @@ def main(argv: list[str] | None = None) -> int:
     except InitialReleaseConfigurationError as exc:
         print(exc.code, file=sys.stderr)
         return 1
-    except (SettingsError, Phase2BMigrationError) as exc:
+    except (
+        DisposableDatabaseTargetError,
+        SettingsError,
+        Phase2BMigrationError,
+    ) as exc:
         code = getattr(exc, "code", "phase2b_migration_configuration_invalid")
         print(code, file=sys.stderr)
         return 1

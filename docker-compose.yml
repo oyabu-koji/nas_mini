@@ -84,15 +84,7 @@ services:
       - phase2b-migration
     build:
       context: ./backend
-    command:
-      - uv
-      - run
-      - --frozen
-      - --no-dev
-      - python
-      - scripts/migrate_phase2b_formal_preview.py
-      - --apply
-      - --offline-maintenance-confirmed
+    command: uv run --frozen --no-dev python -m scripts.reject_legacy_operator_migration
     environment:
       API_TOKEN: migration-not-exposed
       DATABASE_PATH: /data/mediavault.sqlite3
@@ -106,12 +98,10 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
-    volumes:
-      - backend-db:/data
 
-  phase2c-migrator:
+  startup-migrator:
     profiles:
-      - phase2c-migration
+      - operator-migration
     build:
       context: ./backend
     command:
@@ -121,9 +111,152 @@ services:
       - --no-dev
       - python
       - -m
-      - scripts.migrate_phase2c_safe_delete_candidate
-      - --dry-run
+      - scripts.migrate_startup_offline
+      - --apply
       - --offline-maintenance-confirmed
+    environment:
+      DATABASE_PATH: /data/mediavault.sqlite3
+      OPERATOR_DATABASE_VOLUME_NAME: ${OPERATOR_DISPOSABLE_DATABASE_VOLUME:-disposable-volume-not-configured}
+      OPERATOR_DISPOSABLE_NONCE: ${OPERATOR_DISPOSABLE_NONCE:-not-configured}
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - operator-disposable-db:/data
+
+  operator-disposable-marker:
+    profiles:
+      - operator-migration
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.initialize_disposable_database_target
+    environment:
+      DATABASE_PATH: /data/mediavault.sqlite3
+      OPERATOR_DATABASE_VOLUME_NAME: ${OPERATOR_DISPOSABLE_DATABASE_VOLUME:-disposable-volume-not-configured}
+      OPERATOR_DISPOSABLE_NONCE: ${OPERATOR_DISPOSABLE_NONCE:-not-configured}
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - operator-disposable-db:/data
+
+  operator-migration-identity:
+    profiles:
+      - operator-migration
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.inspect_operator_migration_identity
+    environment:
+      DATABASE_PATH: /data/mediavault.sqlite3
+      OPERATOR_DATABASE_VOLUME_NAME: ${OPERATOR_DISPOSABLE_DATABASE_VOLUME:-disposable-volume-not-configured}
+      OPERATOR_DISPOSABLE_NONCE: ${OPERATOR_DISPOSABLE_NONCE:-not-configured}
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - operator-disposable-db:/data:ro
+
+  operator-phase2b-migrator:
+    profiles:
+      - operator-migration
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.migrate_phase2b_operator_safe
+    environment:
+      API_TOKEN: migration-not-exposed
+      DATABASE_PATH: /data/mediavault.sqlite3
+      MEDIA_ROOT: /unmounted-media
+      USER_LUT_ROOT: ""
+      OPERATOR_DATABASE_VOLUME_NAME: ${OPERATOR_DISPOSABLE_DATABASE_VOLUME:-disposable-volume-not-configured}
+      OPERATOR_DISPOSABLE_NONCE: ${OPERATOR_DISPOSABLE_NONCE:-not-configured}
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - operator-disposable-db:/data
+
+  operator-worker-drain:
+    profiles:
+      - operator-migration
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.run_operator_worker_drain
+    environment:
+      MEDIA_ROOT: /media_root
+      API_TOKEN: ${API_TOKEN:?API_TOKEN is required}
+      DATABASE_PATH: /data/mediavault.sqlite3
+      SQLITE_BUSY_TIMEOUT_MS: ${SQLITE_BUSY_TIMEOUT_MS:-5000}
+      JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
+      USER_LUT_ROOT: /user_luts
+      OPERATOR_DATABASE_VOLUME_NAME: ${OPERATOR_DISPOSABLE_DATABASE_VOLUME:-disposable-volume-not-configured}
+      OPERATOR_DISPOSABLE_NONCE: ${OPERATOR_DISPOSABLE_NONCE:-not-configured}
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    volumes:
+      - ${MEDIA_ROOT_HOST_PATH:-/private/tmp/mediavault-media}:/media_root
+      - ${USER_LUT_ROOT_HOST_PATH:-/private/tmp/mediavault-user-luts}:/user_luts:ro
+      - operator-disposable-db:/data
+
+  phase2c-migrator:
+    profiles:
+      - phase2c-migration
+    build:
+      context: ./backend
+    command: uv run --frozen --no-dev python -m scripts.reject_legacy_operator_migration
     environment:
       API_TOKEN: migration-not-exposed
       DATABASE_PATH: /data/mediavault.sqlite3
@@ -137,8 +270,72 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
+
+  phase2c-migrator-dry-run:
+    profiles:
+      - operator-migration
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.migrate_phase2c_operator_safe
+      - --dry-run
+      - --offline-maintenance-confirmed
+    environment:
+      API_TOKEN: migration-not-exposed
+      DATABASE_PATH: /data/mediavault.sqlite3
+      MEDIA_ROOT: /unmounted-media
+      USER_LUT_ROOT: ""
+      OPERATOR_DATABASE_VOLUME_NAME: ${OPERATOR_DISPOSABLE_DATABASE_VOLUME:-disposable-volume-not-configured}
+      OPERATOR_DISPOSABLE_NONCE: ${OPERATOR_DISPOSABLE_NONCE:-not-configured}
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
     volumes:
-      - backend-db:/data
+      - operator-disposable-db:/data
+
+  phase2c-migrator-apply:
+    profiles:
+      - operator-migration
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.migrate_phase2c_operator_safe
+      - --apply
+      - --offline-maintenance-confirmed
+    environment:
+      API_TOKEN: migration-not-exposed
+      DATABASE_PATH: /data/mediavault.sqlite3
+      MEDIA_ROOT: /unmounted-media
+      USER_LUT_ROOT: ""
+      OPERATOR_DATABASE_VOLUME_NAME: ${OPERATOR_DISPOSABLE_DATABASE_VOLUME:-disposable-volume-not-configured}
+      OPERATOR_DISPOSABLE_NONCE: ${OPERATOR_DISPOSABLE_NONCE:-not-configured}
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - operator-disposable-db:/data
 
   phase2c-reconciler:
     profiles:
@@ -175,15 +372,7 @@ services:
       - detector-v2-migration
     build:
       context: ./backend
-    command:
-      - uv
-      - run
-      - --frozen
-      - --no-dev
-      - python
-      - -m
-      - scripts.migrate_detector_v2
-      - --preflight-only
+    command: uv run --frozen --no-dev python -m scripts.reject_legacy_operator_migration
     environment:
       API_TOKEN: migration-not-exposed
       DATABASE_PATH: /data/mediavault.sqlite3
@@ -197,9 +386,41 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
+
+  detector-v2-preflight:
+    profiles:
+      - detector-v2-preflight
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - scripts.preflight_detector_v2
+    environment:
+      API_TOKEN: migration-not-exposed
+      DATABASE_PATH: /data/mediavault.sqlite3
+      MEDIA_ROOT: /unmounted-media
+      USER_LUT_ROOT: /user_luts
+      OPERATOR_DATABASE_VOLUME_NAME: ${OPERATOR_DISPOSABLE_DATABASE_VOLUME:-disposable-volume-not-configured}
+      OPERATOR_DISPOSABLE_NONCE: ${OPERATOR_DISPOSABLE_NONCE:-not-configured}
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
     volumes:
       - ${USER_LUT_ROOT_HOST_PATH:-/private/tmp/mediavault-user-luts}:/user_luts:ro
-      - backend-db:/data
+      - operator-disposable-db:/data:ro
 
 volumes:
   backend-db:
+  operator-disposable-db:
+    name: ${OPERATOR_DISPOSABLE_DATABASE_VOLUME:-disposable-volume-not-configured}
+    external: true

@@ -195,6 +195,9 @@ root `data/`はlocal-only inputであり、tracked treeには含めない。固�
   `reconcile_safe_delete_candidates.py`はnetwork-disabled one-shot serviceでcandidate projectionを
   dry-run/applyする。
 - `run_detector_v2_migration.py`はAPI/worker停止、worker drain、release 0.4.0 readiness、明示承認後のoperator applyを行うhost wrapperとする。現行wrapper単独では同じDB volumeをmountする他containerを検出しないため、外側のrelease gateが全volume writerの停止を確認してから呼び出す。`migrate_detector_v2.py`は専用read-only接続のpreflight、isolated DB限定dry-run、確認flag付きapplyを分離する。実装・検証中のapplyはisolated DBだけを対象とし、operator applyは別release operationに限定する。再起動後は`check_detector_v2_api_capability.py`がminimum client 0.4.0とdetector/formal preview/safe-delete capabilityを確認し、operator databaseへ自動applyしない。
+- `initialize_disposable_database_target.py`はhost側でlabel/nonceとactual mountをinspectしたpinned one-shotからowner-only volume markerを作る。`migrate_startup_offline.py`、`migrate_phase2b_operator_safe.py`、`migrate_phase2c_operator_safe.py`、`run_operator_worker_drain.py`はmarker一致後だけ固定002–009処理を実行し、`preflight_detector_v2.py`は同guardと`:ro` mountを持つapplyへ昇格できない010 entrypointとする。`prepare_operator_release_manifest.py`はrelease/rollback image/env、commit、disposable volume nonceを固定し、`run_operator_release_orchestration.py`はone-time claim、002–009、010 preflightの停止維持順序だけを所有する。`validate_operator_rollback_reconstruction.py`はrollback API/worker停止containerのactual構成をinspectし、起動せず削除する。
+- `reject_legacy_operator_migration.py`は旧Compose migratorを恒久fail closedにする。旧host wrapperもcommand実行前に同じstable errorで停止し、旧container CLIは`/data/mediavault.sqlite3`を使う場合にdisposable markerを要求する。
+- `run_operator_restore_drill.py`と`certify_operator_restore_drill.py`はnonce marker付きdisposable root/volumeだけでDBと同root strict childの`MEDIA_ROOT`のrestore invariantを検証し、operator volume名と外部media rootを拒否する。
 - `inspect_detector_fixture.py`はsnapshotを一度だけno-follow openし、同じinherited fdをbounded parserとpinned FFprobeへ渡す。`audit_external_fixture_git_history.py`はlocal fixture hash確認後にGit history/path/object DBをbounded auditするthin CLIとする。
 - `renditions.py`と`rendition_provenance.py`はrequest/job/result/provenance relationを扱い、finalizerのtransactionを内側でcommitしない。
 - formal preview repositoryとrendition repositoryはresult kindを共有flagから推測せず、
@@ -215,6 +218,7 @@ root `data/`はlocal-only inputであり、tracked treeには含めない。固�
 - `detector_source.py`はverified originalのno-follow openと前後identity検証、`iso_bmff_log_parser.py`はbounded ISO BMFF traversal、`apple_log_detector.py`はFFprobe stream ID相関とclosed classifierを所有する。
 - `detector_fixture_descriptor.py`、`detector_snapshot_cleanup.py`、`detector_inspection.py`、`detector_certification.py`は、local descriptor検証、owner-only snapshot lifecycle、same-fd container inspection、path-free artifact publishを分担する。
 - `detector_v2_migration.py`と`detector_v2_host_migration.py`はsuccessor schemaのread/locked preflight、reserved preset identity snapshot、transaction/PRAGMA lifecycle、operator stop/drain/restartを分離する。
+- `offline_startup_migration.py`、`operator_migration_identity.py`、`operator_release_manifest.py`、`operator_release_orchestration.py`、`operator_restore_drill.py`はそれぞれfixed 002–007 contract、失敗後のread-only actual marker identity、artifact/env identity、volume consumer停止とphase遷移、fresh backup/media reconciliationを分離する。
 - `external_fixture_git_audit.py`は実動画を保存せず、verified fixtureから導出したblob identityとreachable path/object databaseだけを上限付きで検査する。
 
 ### `modules/streaming-sha256/`

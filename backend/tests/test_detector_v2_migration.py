@@ -1,8 +1,8 @@
 import sqlite3
 from hashlib import sha256
+from pathlib import Path
 
 import pytest
-
 from app.core.settings import Settings
 from app.db.connection import connect
 from app.db.detector_v2 import DETECTOR_V2_MIGRATION_VERSION
@@ -43,6 +43,17 @@ def _initialize_phase2c(settings):
         offline_maintenance_confirmed=True,
         runtime_check=lambda _settings: True,
     )
+    backup_path = settings.database_path.with_name("standalone-backup.sqlite3")
+    source = sqlite3.connect(settings.database_path)
+    target = sqlite3.connect(backup_path)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+    backup_path.replace(settings.database_path)
+    Path(f"{settings.database_path}-wal").unlink(missing_ok=True)
+    Path(f"{settings.database_path}-shm").unlink(missing_ok=True)
 
 
 def _migrate(settings, *, mode="apply", **kwargs):
@@ -71,6 +82,98 @@ def test_detector_v2_preflight_only_is_read_only(tmp_path):
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA legacy_alter_table").fetchone()[0] == 0
         assert resolve_managed_phase_schema(conn).detector_v2_present is False
+
+
+def _sidecar_snapshot(database_path: Path):
+    result = {}
+    for path in (
+        database_path,
+        Path(f"{database_path}-wal"),
+        Path(f"{database_path}-shm"),
+    ):
+        if not path.exists():
+            result[path.name] = None
+            continue
+        stat = path.stat()
+        result[path.name] = (
+            stat.st_mode,
+            stat.st_size,
+            stat.st_mtime_ns,
+            stat.st_ctime_ns,
+            sha256(path.read_bytes()).hexdigest(),
+        )
+    return result
+
+
+def test_detector_v2_preflight_does_not_create_or_change_main_wal_shm(tmp_path):
+    settings = _settings(tmp_path)
+    _initialize_phase2c(settings)
+    wal = Path(f"{settings.database_path}-wal")
+    shm = Path(f"{settings.database_path}-shm")
+    assert not wal.exists()
+    assert not shm.exists()
+    before = _sidecar_snapshot(settings.database_path)
+
+    result = apply_detector_v2_migration(settings=settings)
+
+    assert result.status == "preflight_ready"
+    assert _sidecar_snapshot(settings.database_path) == before
+
+
+def test_detector_v2_preflight_preserves_existing_sidecar_bytes_and_metadata(tmp_path):
+    settings = _settings(tmp_path)
+    _initialize_phase2c(settings)
+    wal = Path(f"{settings.database_path}-wal")
+    shm = Path(f"{settings.database_path}-shm")
+    wal.write_bytes(b"existing-wal-sentinel")
+    shm.write_bytes(b"existing-shm-sentinel")
+    before = _sidecar_snapshot(settings.database_path)
+
+    with pytest.raises(
+        DetectorV2MigrationError,
+        match="detector_v2_preflight_read_only_open_failed",
+    ):
+        apply_detector_v2_migration(settings=settings)
+
+    assert _sidecar_snapshot(settings.database_path) == before
+
+
+def test_detector_v2_preflight_rejects_broken_sidecar_symlink_without_change(tmp_path):
+    settings = _settings(tmp_path)
+    _initialize_phase2c(settings)
+    wal = Path(f"{settings.database_path}-wal")
+    wal.symlink_to(tmp_path / "missing-sidecar-target")
+    before_database = settings.database_path.read_bytes()
+
+    with pytest.raises(
+        DetectorV2MigrationError,
+        match="detector_v2_preflight_read_only_open_failed",
+    ):
+        apply_detector_v2_migration(settings=settings)
+
+    assert wal.is_symlink()
+    assert settings.database_path.read_bytes() == before_database
+
+
+def test_detector_v2_preflight_does_not_create_missing_parent(tmp_path):
+    settings = _settings(tmp_path)
+    missing_parent = tmp_path / "missing" / "nested"
+    settings = Settings(
+        media_root=settings.media_root,
+        api_token=settings.api_token,
+        database_path=missing_parent / "db.sqlite3",
+        detector_root=settings.detector_root,
+        built_in_preset_root=settings.built_in_preset_root,
+        user_lut_root=settings.user_lut_root,
+    )
+
+    with pytest.raises(
+        DetectorV2MigrationError,
+        match="detector_v2_preflight_read_only_open_failed",
+    ):
+        apply_detector_v2_migration(settings=settings)
+
+    assert not missing_parent.exists()
 
 
 def test_detector_v2_dry_run_rolls_back_full_successor(tmp_path):
@@ -228,9 +331,7 @@ def _table_structure(conn, table):
                 tuple(row),
                 tuple(
                     tuple(index_row)
-                    for index_row in conn.execute(
-                        f'PRAGMA index_xinfo("{row[1]}")'
-                    )
+                    for index_row in conn.execute(f'PRAGMA index_xinfo("{row[1]}")')
                 ),
             )
         )
@@ -405,9 +506,7 @@ def test_detector_v2_fault_rolls_back_schema_marker_rows_and_pragmas(tmp_path):
         "after_schema_identity",
     ],
 )
-def test_detector_v2_migration_fault_matrix_completely_rolls_back(
-    tmp_path, step
-):
+def test_detector_v2_migration_fault_matrix_completely_rolls_back(tmp_path, step):
     settings = _settings(tmp_path)
     _initialize_phase2c(settings)
     with connect(settings.database_path, 5000) as conn:
@@ -535,7 +634,9 @@ def test_reserved_disabled_preset_identity_race_rolls_back_successor(
             return
         if mutation == "candidate_replace":
             replacement = settings.user_lut_root / f"{preset_id}-replacement"
-            write_custom(settings.user_lut_root, f"{preset_id}-replacement", enabled=False)
+            write_custom(
+                settings.user_lut_root, f"{preset_id}-replacement", enabled=False
+            )
             candidate.rename(settings.user_lut_root / f"{preset_id}-old")
             replacement.rename(candidate)
         else:
@@ -610,9 +711,7 @@ def test_detector_v2_rejects_each_incompatible_profile_preset_row(
                 """
             )
         conn.execute(trigger_sql)
-        before = tuple(
-            tuple(row) for row in conn.execute(f'SELECT * FROM "{target}"')
-        )
+        before = tuple(tuple(row) for row in conn.execute(f'SELECT * FROM "{target}"'))
         conn.commit()
 
     with pytest.raises(
@@ -622,8 +721,6 @@ def test_detector_v2_rejects_each_incompatible_profile_preset_row(
         _migrate(settings)
 
     with connect(settings.database_path, 5000) as conn:
-        after = tuple(
-            tuple(row) for row in conn.execute(f'SELECT * FROM "{target}"')
-        )
+        after = tuple(tuple(row) for row in conn.execute(f'SELECT * FROM "{target}"'))
         assert after == before
         assert resolve_managed_phase_schema(conn).detector_v2_present is False
