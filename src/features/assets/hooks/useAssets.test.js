@@ -13,11 +13,13 @@ const { getAsset, listAssets } = require('../../../shared/api/mediaVaultApi');
 const settings = { backendUrl: 'http://mediavault', apiToken: 'token' };
 
 function ListHarness({ canUseApi = true }) {
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestAssetList = useAssetList(settings, canUseApi, { autoLoad: false });
   return null;
 }
 
 function DetailHarness({ assetId = 42, autoPoll = true }) {
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestAssetDetail = useAssetDetail(settings, true, assetId, { autoPoll });
   return null;
 }
@@ -130,8 +132,18 @@ describe('useAssetDetail', () => {
 
   it('polls generating previews every two seconds and clears the timer on unmount', async () => {
     jest.useFakeTimers();
-    const generating = { id: 42, preview_status: 'preview_generating' };
-    const ready = { id: 42, preview_status: 'preview_ready' };
+    const generating = {
+      id: 42,
+      type: 'image',
+      preview_status: 'preview_generating',
+      formal_preview: null,
+    };
+    const ready = {
+      id: 42,
+      type: 'image',
+      preview_status: 'preview_ready',
+      formal_preview: null,
+    };
     getAsset.mockResolvedValueOnce(generating).mockResolvedValueOnce(ready);
     const view = await render(<DetailHarness />);
     await waitFor(() => expect(global.latestAssetDetail.asset).toBe(generating));
@@ -151,11 +163,15 @@ describe('useAssetDetail', () => {
     jest.useFakeTimers();
     const generating = {
       id: 42,
+      type: 'video',
+      verification_status: 'file_verified',
       preview_status: 'preview_ready',
       formal_preview: { state: 'generating' },
     };
     const failed = {
       id: 42,
+      type: 'video',
+      verification_status: 'file_verified',
       preview_status: 'failed',
       formal_preview: { state: 'failed' },
     };
@@ -169,6 +185,27 @@ describe('useAssetDetail', () => {
     await waitFor(() => expect(global.latestAssetDetail.asset).toBe(failed));
     await jest.advanceTimersByTimeAsync(4000);
     expect(getAsset).toHaveBeenCalledTimes(2);
+    await view.unmount();
+  });
+
+  it('does not fall back to legacy polling for a video with null formal authority', async () => {
+    jest.useFakeTimers();
+    const blocked = {
+      id: 42,
+      type: 'video',
+      verification_status: 'file_verified',
+      preview_status: 'preview_generating',
+      formal_preview: null,
+    };
+    getAsset.mockResolvedValueOnce(blocked);
+    const view = await render(<DetailHarness />);
+    await waitFor(() => expect(global.latestAssetDetail.asset).toBe(blocked));
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(4000);
+    });
+
+    expect(getAsset).toHaveBeenCalledTimes(1);
     await view.unmount();
   });
 });

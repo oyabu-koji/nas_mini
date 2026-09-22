@@ -2,7 +2,7 @@
 
 ## 前提と方針
 
-- Mobile AppはReact Native + Expo managed workflow + JavaScriptで実装する。
+- Mobile AppはReact Native + Expo + JavaScriptで実装し、checked-in native projectを正本とするnon-CNG構成で管理する。
 - BackendはFastAPI、DBはSQLite、preview生成はffmpegを使う。
 - Mac mini移行時はDocker内の実行環境を正とする。
 - 初期リリースは1つのBackend URLと1つの固定APIトークンだけを持つ。URLはMobile設定値であり、
@@ -41,9 +41,10 @@ graph LR
 
 | 分類 | 技術 | 方針 |
 |------|------|------|
-| Mobile runtime | Node.js 24, Expo SDK 54 | `.nvmrc`とdevcontainerをNode 24で統一 |
-| Mobile UI | React Native, JavaScript | TypeScriptは明示依頼なしに導入しない |
-| Device API | `expo-media-library` | Expo関連依存は`npx expo install`で追加 |
+| Mobile runtime | Node.js 24, Expo SDK 57 | `.nvmrc`とdevcontainerをNode 24で統一 |
+| Mobile UI | React Native 0.86.3, JavaScript | New Architectureを前提とし、TypeScriptは明示依頼なしに導入しない |
+| iOS native | iOS 16.4以上, Xcode 26.4以上 | checked-in `ios/`と`Podfile.lock`をrelease inputとして同期する |
+| Device API | `expo-media-library`, `expo-video` | Expo関連依存は`npx expo install`で追加 |
 | Backend | Python, FastAPI | private endpoint APIとjob登録を担当 |
 | Private network | Tailscale, LAN | Phase 1のiPhone-backend到達経路 |
 | Backend dependency manager | uv | `pyproject.toml`と`uv.lock`で依存を固定 |
@@ -253,12 +254,12 @@ ${MEDIA_ROOT}/
 
 ## 品質確認
 
-- Mobileの品質境界は`npm run lint`、`npm test`、`npm run test:coverage`、`npx expo install --check`、iOS export、Metro起動確認とする。lintはroot `eslint.config.js`のExpo flat configを使い、error/warning 0件を必須にする。
+- Mobileの品質境界は`npm run lint`、`npm test`、`npm run test:coverage`、`npx expo install --check`、`npx expo-doctor@latest`、iOS export、SDK 57のGo modeでのMetro起動確認とする。lintはroot `eslint.config.js`のExpo flat configを使い、error/warning 0件を必須にする。
 - canonical coverageは`src/**/*.{js,jsx}`と`modules/*/src/**/*.{js,jsx}`へ自動適用し、test fileと`__tests__`だけを除外する。新しいproduction sourceは未importでもdenominatorへ入り、statements/lines 80%、branches 69.46%、functions 80.08%を下回ると失敗する。
 - 2026-07-22のcanonical finalは36 production files、32 suites / 157 tests、statements 86.07%（1280 / 1487）、branches 77.30%（1056 / 1366）、functions 89.56%（249 / 278）、lines 86.08%（1262 / 1466）である。
 - coverage scope変更は旧新glob・除外・file数・suite/test数・4指標・理由・承認を記録し、silent exclusion又はfloor引下げを行わない。
 - Backend: `uv run pytest`を標準のtest commandとし、lintを導入した場合も`uv run ...`で実行する。
-- 実機: Development Buildでライブラリアクセス、TailscaleまたはLAN経由のHTTP通信、preview再生、iPhone側original手動削除の権限/キャンセルを確認する。physical-device validationはJest coverageの母集団外であり、別の受入確認として扱う。
+- 実機: Expo Goで画像upload/previewの基本導線を確認し、custom `StreamingSha256` moduleを使う動画resumable uploadはSDK 57 Development Buildで確認する。`--tunnel`はMetroだけを中継するため、backendはLAN又はTailscaleで到達させる。ライブラリアクセス、preview再生、iPhone側original手動削除の権限/キャンセルも実機受入確認として扱い、Jest coverageの母集団には含めない。
 
 ## Open Questions
 

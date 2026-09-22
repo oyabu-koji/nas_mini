@@ -93,6 +93,7 @@ function record({
 const defaultLoadAsset = jest.fn();
 
 function Harness({ currentAsset = asset, loadAsset = defaultLoadAsset }) {
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestManagedRendition = useManagedRendition({
     settings,
     canUseApi: true,

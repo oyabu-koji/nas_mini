@@ -72,8 +72,8 @@ function VideoPreview({ source }) {
 
   return (
     <VideoView
-      allowsFullscreen
       contentFit="contain"
+      fullscreenOptions={{ enable: true }}
       nativeControls
       player={player}
       style={styles.videoPreview}

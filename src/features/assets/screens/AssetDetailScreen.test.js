@@ -203,9 +203,10 @@ describe('AssetDetailScreen LOG safety gate', () => {
         taken_at: null,
         is_log: false,
         transfer_status: 'uploaded',
-        verification_status: 'file_verified',
+        verification_status: 'server_hash_recorded',
         preview_status: 'preview_ready',
         review_status: 'not_reviewed',
+        formal_preview: null,
         active_processed_result: {
           result_id: 'a'.repeat(32),
           mime_type: 'video/mp4',
@@ -241,6 +242,84 @@ describe('AssetDetailScreen LOG safety gate', () => {
     await fireEvent.press(view.getByText('Save processed video'));
 
     expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens a ready image preview when the API includes a null formal preview', async () => {
+    useAssetDetail.mockReturnValue({
+      asset: {
+        id: 42,
+        type: 'image',
+        filename: 'still.heic',
+        size_bytes: 10,
+        server_sha256: 'hash',
+        taken_at: null,
+        is_log: false,
+        transfer_status: 'uploaded',
+        verification_status: 'server_hash_recorded',
+        preview_status: 'preview_ready',
+        review_status: 'not_reviewed',
+        formal_preview: null,
+      },
+      status: 'ready',
+      error: null,
+      loadAsset: jest.fn(),
+    });
+    const onPreview = jest.fn();
+    const view = await render(
+      <AssetDetailScreen
+        assetId={42}
+        canUseApi
+        onBack={jest.fn()}
+        onPreview={onPreview}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
+      />,
+    );
+
+    await fireEvent.press(view.getByText('Open preview'));
+
+    expect(onPreview).toHaveBeenCalledWith(42);
+  });
+
+  it.each([
+    ['null', { formal_preview: null }],
+    ['missing', {}],
+  ])('does not open a file-verified video preview when formal preview is %s', async (
+    _formalPreviewState,
+    formalPreviewFields,
+  ) => {
+    useAssetDetail.mockReturnValue({
+      asset: {
+        id: 42,
+        type: 'video',
+        filename: 'clip.mov',
+        size_bytes: 10,
+        server_sha256: 'hash',
+        taken_at: null,
+        is_log: false,
+        transfer_status: 'uploaded',
+        verification_status: 'file_verified',
+        preview_status: 'preview_ready',
+        review_status: 'not_reviewed',
+        ...formalPreviewFields,
+      },
+      status: 'ready',
+      error: null,
+      loadAsset: jest.fn(),
+    });
+    const onPreview = jest.fn();
+    const view = await render(
+      <AssetDetailScreen
+        assetId={42}
+        canUseApi
+        onBack={jest.fn()}
+        onPreview={onPreview}
+        settings={{ backendUrl: 'http://mediavault', apiToken: 'masked' }}
+      />,
+    );
+
+    await fireEvent.press(view.getByText('Open preview'));
+
+    expect(onPreview).not.toHaveBeenCalled();
   });
 
   it('uses a ready formal result for Apple Log preview and save actions', async () => {

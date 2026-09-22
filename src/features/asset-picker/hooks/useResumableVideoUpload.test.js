@@ -55,6 +55,7 @@ const record = {
 };
 
 function HookHarness({ asset = pickedVideo, onUploaded, onMappingUnavailable }) {
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestResumableHook = useResumableVideoUpload({
     settings: { backendUrl: 'http://mediavault', apiToken: 'masked' },
     pickedAsset: asset,

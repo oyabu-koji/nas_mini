@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.settings import Settings
+from app.repositories.upload_sessions import is_session_video_asset
 from app.schemas.assets import (
     FormalPreviewFailedResponse,
     FormalPreviewFailureCode,
@@ -11,7 +12,6 @@ from app.schemas.assets import (
     ProcessedResultMetadataResponse,
 )
 from app.services.processed_result_delivery import resolve_formal_preview_result
-
 
 FAILURE_CODES = frozenset(FormalPreviewFailureCode.__args__)
 
@@ -24,7 +24,7 @@ def build_formal_preview_response(
         "formal_preview_id" not in asset
         or not isinstance(generation, int)
         or generation < 1
-        or not _is_phase2b_session_video(conn, asset_id=int(asset["id"]))
+        or not is_session_video_asset(conn, asset_id=int(asset["id"]))
     ):
         return None
     attempt_row = conn.execute(
@@ -226,19 +226,6 @@ def _detector_values(
         "detector_manifest_sha256": attempt["detector_manifest_sha256"],
         "detector_evidence_sha256": attempt["detector_evidence_sha256"],
     }
-
-
-def _is_phase2b_session_video(conn, *, asset_id: int) -> bool:
-    return (
-        conn.execute(
-            """
-            SELECT 1 FROM upload_sessions
-            WHERE asset_id = ? AND type = 'video'
-            """,
-            (asset_id,),
-        ).fetchone()
-        is not None
-    )
 
 
 def _value(attempt: dict[str, Any] | None, field: str):

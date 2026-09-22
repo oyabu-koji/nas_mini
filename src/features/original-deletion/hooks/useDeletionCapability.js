@@ -41,6 +41,7 @@ export function useDeletionCapability({ settings, canUseApi }) {
   }, [canUseApi, settings]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Settings changes intentionally synchronize external backend capabilities and their loading state.
     refreshCapabilities();
     return () => {
       operationRef.current += 1;

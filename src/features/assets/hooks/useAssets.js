@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAsset, listAssets } from '../../../shared/api/mediaVaultApi';
 import { PREVIEW_STATUS } from '../../../shared/constants/assetStatuses';
 import { toDisplayError } from '../../../shared/utils/errors';
+import { hasFormalPreviewAuthority } from '../../../shared/utils/formalPreviewPresentation';
 
 export function useAssetList(settings, canUseApi, { autoLoad = true } = {}) {
   const [items, setItems] = useState([]);
@@ -40,6 +41,7 @@ export function useAssetList(settings, canUseApi, { autoLoad = true } = {}) {
 
   useEffect(() => {
     if (autoLoad) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- This effect intentionally starts an external API synchronization; the callback owns its loading state.
       refreshAssets();
     }
   }, [autoLoad, refreshAssets]);
@@ -57,10 +59,7 @@ export function useAssetDetail(settings, canUseApi, assetId, { autoPoll = true }
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
   const intervalRef = useRef(null);
-  const hasFormalPreview = Object.prototype.hasOwnProperty.call(
-    asset ?? {},
-    'formal_preview',
-  );
+  const hasFormalPreview = hasFormalPreviewAuthority(asset);
 
   const loadAsset = useCallback(async () => {
     if (!canUseApi || !assetId) {
@@ -82,6 +81,7 @@ export function useAssetDetail(settings, canUseApi, assetId, { autoPoll = true }
   }, [assetId, canUseApi, settings]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Asset identity changes intentionally trigger an external API synchronization and its loading state.
     loadAsset();
   }, [loadAsset]);
 

@@ -3,7 +3,10 @@ import { useCallback, useMemo, useState } from 'react';
 import { buildPreviewSource, buildPreviewVideoSource, confirmPreview } from '../../../shared/api/mediaVaultApi';
 import { ASSET_TYPE, PREVIEW_STATUS } from '../../../shared/constants/assetStatuses';
 import { messageForErrorCode, toDisplayError } from '../../../shared/utils/errors';
-import { formalPreviewProfileLabel } from '../../../shared/utils/formalPreviewPresentation';
+import {
+  formalPreviewProfileLabel,
+  hasFormalPreviewAuthority,
+} from '../../../shared/utils/formalPreviewPresentation';
 import { useAssetDetail } from '../../assets/hooks/useAssets';
 import { downloadPreviewToCache } from '../services/previewCacheService';
 
@@ -17,9 +20,7 @@ export function usePreviewReview(settings, canUseApi, assetId) {
   const [cacheStatus, setCacheStatus] = useState('idle');
   const [cacheError, setCacheError] = useState(null);
 
-  const hasFormalPreview = Boolean(
-    asset && Object.prototype.hasOwnProperty.call(asset, 'formal_preview'),
-  );
+  const hasFormalPreview = hasFormalPreviewAuthority(asset);
   const formalPreview = asset?.formal_preview ?? null;
   const canReview = hasFormalPreview
     ? formalPreview?.state === 'ready'
@@ -85,7 +86,7 @@ export function usePreviewReview(settings, canUseApi, assetId) {
       setCacheStatus('error');
       setCacheError(toDisplayError(error));
     }
-  }, [asset?.type, assetId, canReview, settings]);
+  }, [asset, assetId, canReview, settings]);
 
   return {
     asset,

@@ -14,8 +14,9 @@
 ## 開発環境
 
 - Node.js: 24.x
-- Expo SDK: 54
-- Mobile: React Native + Expo managed workflow + JavaScript
+- Expo SDK: 57
+- Mobile: React Native 0.86.3 + Expo + checked-in native project + JavaScript（non-CNG）
+- iOS: deployment target 16.4以上、Xcode 26.4以上、New Architecture
 - Backend: Python + FastAPI
 - DB: SQLite
 - Preview: ffmpeg
@@ -25,6 +26,7 @@
 
 - Expo関連依存は`npx expo install`を使う。
 - Expo SDKやNode versionは明示依頼なしに変更しない。
+- SDK更新は1 majorずつ進め、各段階で`npx expo install --fix`と`npx expo-doctor@latest`を確認する。checked-in `ios/`は一時reference prebuildとの差分だけを手動同期し、Pod lockを再生成する。
 - Python依存はbackendの`pyproject.toml`と`uv.lock`で管理し、`uv`で解決する。
 - `uv.lock`は再現性のためcommitし、`.venv/`はcommitしない。
 - ローカル`node_modules`をDockerへコピーしない。
@@ -232,8 +234,9 @@ npm run lint
 npm test
 npm run test:coverage
 npx expo install --check
+npx expo-doctor@latest
 npx expo export --platform ios
-npx expo start
+npx expo start --go
 ```
 
 - `npm run lint`は`eslint App.jsx index.js jest.setup.js eslint.config.js src modules --max-warnings=0`を実行し、Mobile JavaScript/JSXとroot設定を非破壊で検査する。errorとwarningはいずれも0件を必須とする。
@@ -287,7 +290,7 @@ preflight/dry-run/apply/rollbackを検証する。operator DBに接続するhost
 
 ### Backend ローカル疎通確認
 
-DockerなしでMBA上のbackendを確認する場合は、API serverとworkerを別Terminalで起動する。MBA自身から確認するだけなら`127.0.0.1`でよい。iPhoneからTailscale経由でMBA backendへ接続する場合は、API serverを`0.0.0.0`で待ち受け、Backend URLにはMBAのTailscale IPまたはMagicDNS名を使う。
+DockerなしでMBA上のbackendを確認する場合は、API serverとworkerを別Terminalで起動する。MBA自身から確認するだけなら`127.0.0.1`でよい。iPhoneからTailscale経由でMBA backendへ接続する場合は、API serverを`0.0.0.0`で待ち受け、Backend URLにはMBAのTailscale IPまたはMagicDNS名を使う。`npx expo start --go --tunnel`が中継するのはMetroであり、backendの`:8000`通信は中継しない。
 
 API server:
 

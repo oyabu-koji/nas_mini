@@ -1,4 +1,28 @@
-import { formalPreviewProfileLabel } from './formalPreviewPresentation';
+import {
+  formalPreviewProfileLabel,
+  hasFormalPreviewAuthority,
+} from './formalPreviewPresentation';
+
+describe('hasFormalPreviewAuthority', () => {
+  it('uses formal preview authority only for file-verified video assets', () => {
+    expect(hasFormalPreviewAuthority({
+      type: 'video',
+      verification_status: 'file_verified',
+      formal_preview: null,
+    })).toBe(true);
+    expect(hasFormalPreviewAuthority({
+      type: 'video',
+      verification_status: 'file_verified',
+    })).toBe(true);
+    expect(hasFormalPreviewAuthority({
+      type: 'video',
+      verification_status: 'server_hash_recorded',
+      formal_preview: null,
+    })).toBe(false);
+    expect(hasFormalPreviewAuthority({ type: 'image', formal_preview: null })).toBe(false);
+    expect(hasFormalPreviewAuthority(null)).toBe(false);
+  });
+});
 
 describe('formalPreviewProfileLabel', () => {
   it.each([

@@ -26,12 +26,19 @@ const readyVideo = {
   id: 42,
   filename: 'clip.mov',
   type: 'video',
+  verification_status: 'file_verified',
   is_log: false,
   preview_status: 'preview_ready',
   review_status: 'not_reviewed',
+  formal_preview: {
+    state: 'ready',
+    detection_status: 'not_log',
+    color_transform_status: 'not_requested',
+  },
 };
 
 function HookHarness() {
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestPreviewReview = usePreviewReview(settings, true, 42);
   return null;
 }
@@ -60,7 +67,12 @@ describe('usePreviewReview', () => {
   });
 
   it('blocks LOG and unready assets from sources and actions', async () => {
-    mockAsset({ ...readyVideo, is_log: true });
+    mockAsset({
+      ...readyVideo,
+      verification_status: 'server_hash_recorded',
+      is_log: true,
+      formal_preview: null,
+    });
     const view = await render(<HookHarness />);
     expect(global.latestPreviewReview.canReview).toBe(false);
     expect(global.latestPreviewReview.videoSource).toBeNull();
@@ -72,7 +84,11 @@ describe('usePreviewReview', () => {
     expect(api.confirmPreview).not.toHaveBeenCalled();
     expect(downloadPreviewToCache).not.toHaveBeenCalled();
 
-    mockAsset({ ...readyVideo, preview_status: 'preview_generating' });
+    mockAsset({
+      ...readyVideo,
+      preview_status: 'preview_generating',
+      formal_preview: { state: 'generating' },
+    });
     await view.rerender(<HookHarness />);
     expect(global.latestPreviewReview.canReview).toBe(false);
   });
@@ -171,6 +187,67 @@ describe('usePreviewReview', () => {
     mockAsset({ ...readyVideo, type: 'image', filename: 'still.jpg' });
     await view.rerender(<HookHarness />);
     expect(global.latestPreviewReview.imageSource).toEqual({ uri: 'file:///cache/preview.mp4' });
+  });
+
+  it('reviews a ready image when the API includes a null formal preview', async () => {
+    mockAsset({
+      ...readyVideo,
+      type: 'image',
+      filename: 'still.heic',
+      verification_status: 'server_hash_recorded',
+      formal_preview: null,
+    });
+    await render(<HookHarness />);
+
+    expect(global.latestPreviewReview.canReview).toBe(true);
+    expect(global.latestPreviewReview.videoSource).toBeNull();
+    expect(global.latestPreviewReview.imageSource).toEqual({
+      uri: 'http://remote/image',
+      headers: { Authorization: 'Bearer token' },
+    });
+  });
+
+  it('keeps a video with null formal authority fail closed', async () => {
+    mockAsset({
+      ...readyVideo,
+      formal_preview: null,
+    });
+    await render(<HookHarness />);
+
+    expect(global.latestPreviewReview.canReview).toBe(false);
+    expect(global.latestPreviewReview.videoSource).toBeNull();
+    expect(global.latestPreviewReview.imageSource).toBeNull();
+
+    await act(async () => {
+      await global.latestPreviewReview.confirm();
+      await global.latestPreviewReview.cachePreview();
+    });
+    expect(api.confirmPreview).not.toHaveBeenCalled();
+    expect(downloadPreviewToCache).not.toHaveBeenCalled();
+  });
+
+  it('keeps a file-verified video with a missing formal preview fail closed', async () => {
+    mockAsset({
+      id: 42,
+      filename: 'clip.mov',
+      type: 'video',
+      verification_status: 'file_verified',
+      is_log: false,
+      preview_status: 'preview_ready',
+      review_status: 'not_reviewed',
+    });
+    await render(<HookHarness />);
+
+    expect(global.latestPreviewReview.canReview).toBe(false);
+    expect(global.latestPreviewReview.videoSource).toBeNull();
+    expect(global.latestPreviewReview.imageSource).toBeNull();
+
+    await act(async () => {
+      await global.latestPreviewReview.confirm();
+      await global.latestPreviewReview.cachePreview();
+    });
+    expect(api.confirmPreview).not.toHaveBeenCalled();
+    expect(downloadPreviewToCache).not.toHaveBeenCalled();
   });
 
   it('confirms a review then reloads the current asset', async () => {

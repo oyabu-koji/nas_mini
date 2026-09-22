@@ -65,6 +65,7 @@ function SafetyHarness() {
     refreshAsset: detail.loadAsset,
     refreshCapabilities: jest.fn(),
   });
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestFormalPreviewSafety = {
     detail,
     review,

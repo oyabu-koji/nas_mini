@@ -1,5 +1,6 @@
 import React from 'react';
-import { SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
 import { AssetPickerScreen } from '../features/asset-picker/screens/AssetPickerScreen';
@@ -30,54 +31,56 @@ export function AppShell() {
   const openPreview = React.useCallback((assetId) => setRoute({ screen: 'previewReview', selectedAssetId: assetId }), []);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
-      <View style={styles.nav}>
-        <NavButton active={route.screen === 'settings'} label="Settings" onPress={openSettings} />
-        <NavButton active={route.screen === 'picker'} label="Upload" onPress={openUpload} />
-        <NavButton active={route.screen === 'assets'} label="Assets" onPress={openAssets} />
-      </View>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {route.screen === 'settings' ? <SettingsScreen settingsState={settingsState} /> : null}
-        {route.screen === 'picker' ? (
-          <AssetPickerScreen
-            canUseApi={settingsState.canUseApi}
-            onMappingUnavailable={markMappingUnavailable}
-            onOpenAssets={openAssets}
-            onOpenSettings={openSettings}
-            onUploaded={openAssetDetail}
-            settings={settingsState.settings}
-          />
-        ) : null}
-        {route.screen === 'assets' ? (
-          <AssetListScreen
-            canUseApi={settingsState.canUseApi}
-            onOpenSettings={openSettings}
-            onPendingAcknowledged={openUpload}
-            onSelectAsset={openAssetDetail}
-            settings={settingsState.settings}
-          />
-        ) : null}
-        {route.screen === 'assetDetail' ? (
-          <AssetDetailScreen
-            assetId={route.selectedAssetId}
-            canUseApi={settingsState.canUseApi}
-            onBack={openAssets}
-            mappingUnavailable={route.mappingUnavailable === true}
-            onPreview={openPreview}
-            settings={settingsState.settings}
-          />
-        ) : null}
-        {route.screen === 'previewReview' ? (
-          <PreviewReviewScreen
-            assetId={route.selectedAssetId}
-            canUseApi={settingsState.canUseApi}
-            onBack={() => openAssetDetail(route.selectedAssetId)}
-            settings={settingsState.settings}
-          />
-        ) : null}
-      </ScrollView>
-    </SafeAreaView>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="dark" />
+        <View style={styles.nav}>
+          <NavButton active={route.screen === 'settings'} label="Settings" onPress={openSettings} />
+          <NavButton active={route.screen === 'picker'} label="Upload" onPress={openUpload} />
+          <NavButton active={route.screen === 'assets'} label="Assets" onPress={openAssets} />
+        </View>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          {route.screen === 'settings' ? <SettingsScreen settingsState={settingsState} /> : null}
+          {route.screen === 'picker' ? (
+            <AssetPickerScreen
+              canUseApi={settingsState.canUseApi}
+              onMappingUnavailable={markMappingUnavailable}
+              onOpenAssets={openAssets}
+              onOpenSettings={openSettings}
+              onUploaded={openAssetDetail}
+              settings={settingsState.settings}
+            />
+          ) : null}
+          {route.screen === 'assets' ? (
+            <AssetListScreen
+              canUseApi={settingsState.canUseApi}
+              onOpenSettings={openSettings}
+              onPendingAcknowledged={openUpload}
+              onSelectAsset={openAssetDetail}
+              settings={settingsState.settings}
+            />
+          ) : null}
+          {route.screen === 'assetDetail' ? (
+            <AssetDetailScreen
+              assetId={route.selectedAssetId}
+              canUseApi={settingsState.canUseApi}
+              onBack={openAssets}
+              mappingUnavailable={route.mappingUnavailable === true}
+              onPreview={openPreview}
+              settings={settingsState.settings}
+            />
+          ) : null}
+          {route.screen === 'previewReview' ? (
+            <PreviewReviewScreen
+              assetId={route.selectedAssetId}
+              canUseApi={settingsState.canUseApi}
+              onBack={() => openAssetDetail(route.selectedAssetId)}
+              settings={settingsState.settings}
+            />
+          ) : null}
+        </ScrollView>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 

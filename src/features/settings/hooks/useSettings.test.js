@@ -21,6 +21,7 @@ const backendStorage = require('../../../shared/services/settingsStorage');
 const tokenStorage = require('../../../shared/services/secureTokenStorage');
 
 function HookHarness() {
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestSettingsState = useSettings();
   return null;
 }

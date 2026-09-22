@@ -41,6 +41,7 @@ const refreshAsset = jest.fn();
 const refreshCapabilities = jest.fn();
 
 function Harness({ asset = readyAsset, capabilities = validCapabilities }) {
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestOriginalDeletion = useOriginalDeletion({
     asset,
     capabilities,

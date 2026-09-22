@@ -1,13 +1,14 @@
-from fastapi.testclient import TestClient
 import pytest
-
 from app.core.settings import Settings
 from app.db.connection import connect
 from app.db.detector_v2.schema import DETECTOR_V2_METADATA_TABLE_SQL
 from app.main import app
+from app.repositories.assets import insert_asset, update_preview_status
+from app.repositories.derived_files import insert_derived_file
 from app.services.detector_capability import DetectorCapability
 from app.services.detector_v2_migration import apply_detector_v2_migration
 from app.services.phase2c_migration import apply_phase2c_migration
+from fastapi.testclient import TestClient
 from tests.phase2c_test_support import (
     initialize_phase2b,
     insert_eligible_confirmed_asset,
@@ -240,6 +241,75 @@ def test_old_client_can_read_upgrade_metadata_list_and_use_upload_paths(
     assert "source_profile" not in listing.json()["items"][0]
     assert image_upload.status_code == 201
     assert session_upload.status_code == 201
+
+
+@pytest.mark.parametrize(
+    ("asset_type", "filename", "preview_relative_path", "preview_mime_type"),
+    [
+        ("image", "direct-image.heic", "previews/direct-image.jpg", "image/jpeg"),
+        ("video", "direct-video.mov", "previews/direct-video.mp4", "video/mp4"),
+    ],
+)
+@pytest.mark.parametrize("client_version", [None, "0.3.0", "0.4.0"])
+def test_detector_v2_schema_keeps_direct_preview_and_confirmation_available(
+    monkeypatch,
+    tmp_path,
+    asset_type,
+    filename,
+    preview_relative_path,
+    preview_mime_type,
+    client_version,
+):
+    settings = _settings(monkeypatch, tmp_path)
+    _prepare_phase2c(settings)
+    preview_content = b"direct-preview"
+    preview_path = settings.media_root / preview_relative_path
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    preview_path.write_bytes(preview_content)
+    with connect(settings.database_path, 5000) as conn:
+        asset = insert_asset(
+            conn,
+            type=asset_type,
+            filename=filename,
+            original_path=f"originals/{filename}",
+            size_bytes=10,
+            server_sha256="a" * 64,
+            taken_at=None,
+            latitude=None,
+            longitude=None,
+            exif_json=None,
+            is_log=False,
+        )
+        update_preview_status(conn, asset["id"], "preview_ready")
+        insert_derived_file(
+            conn,
+            asset_id=asset["id"],
+            kind="preview",
+            path=preview_relative_path,
+            mime_type=preview_mime_type,
+            size_bytes=len(preview_content),
+        )
+        conn.commit()
+
+    with TestClient(app) as client:
+        headers = _auth(client_version)
+        detail = client.get(f"/assets/{asset['id']}", headers=headers)
+        preview = client.get(
+            f"/assets/{asset['id']}/preview",
+            headers=headers,
+        )
+        confirmation = client.post(
+            f"/assets/{asset['id']}/preview-confirmation",
+            headers=headers,
+        )
+
+    assert detail.status_code == 200
+    assert detail.json()["formal_preview"] is None
+    assert preview.status_code == 200
+    assert preview.content == preview_content
+    assert preview.headers["content-type"].startswith(preview_mime_type)
+    assert confirmation.status_code == 200
+    assert confirmation.json()["review_status"] == "preview_confirmed"
 
 
 def test_managed_rendition_api_is_not_version_gated_on_successor_schema(

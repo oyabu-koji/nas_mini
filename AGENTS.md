@@ -6,20 +6,24 @@
 ## Technology Stack
 
 - App type: React Native mobile application
-- Framework: Expo managed workflow
+- Framework: Expo with checked-in native projects (non-CNG)
 - Language: JavaScript
 - Package manager: npm
-- Environment: Node 24, Expo SDK 54
+- Environment: Node 24, Expo SDK 57, React Native 0.86.3
+- iOS: deployment target 16.4+, Xcode 26.4+, New Architecture
 - Start command: `npx expo start`
-- Remote device testing: `npx expo start --tunnel`
+- Expo Go testing: `npx expo start --go`
+- Remote Expo Go testing: `npx expo start --go --tunnel`
 
 ### 日本語説明
 - アプリ種別は React Native のモバイルアプリです。
-- 実行基盤は Expo managed workflow を前提にします。
+- 実行基盤はExpoを使い、checked-in native projectを正本とするnon-CNG構成です。
 - 実装言語は JavaScript を使います。
 - パッケージ管理は npm を想定しています。
-- 開発環境は Node 24 と Expo SDK 54 に固定します。
-- 通常の起動は `npx expo start`、リモート端末確認は `npx expo start --tunnel` を使います。
+- 開発環境は Node 24、Expo SDK 57、React Native 0.86.3、iOS 16.4以上、Xcode 26.4以上、New Architectureに固定します。
+- 通常の起動は `npx expo start`、Expo Go確認は `npx expo start --go`、リモートExpo Go確認は `npx expo start --go --tunnel` を使います。
+- Expo tunnelが中継するのはMetroです。別networkのiPhoneからbackendへ接続するときは、MBAのTailscale IP又はMagicDNS名をBackend URLに使います。
+- SDK 57のiOS Expo Goを使う前に、Expo CLIとiPhoneを同一Expo accountへloginします。
 
 ## Purpose
 
@@ -31,7 +35,7 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 ## Core Workflow
 
 1. Read `PROJECT_CONTEXT.md`
-2. Run `init-project` to create the Expo managed workflow baseline
+2. Run `init-project` to create the Expo baseline
 3. Use `define-project` to create or update `docs/ideas/initial-requirements.md`
 4. Run `setup-project` to create the six durable docs
 5. Use `define-feature` to create or update `docs/ideas/YYYYMMDD_N-[feature-name].md`
@@ -39,17 +43,17 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 7. Use `implement-feature` with the target `.steering/...` directory to make changes and update `tasklist.md`
 8. Use `validate-implementation` with the same `.steering/...` directory to review the implementation strictly
 9. Start the app with `npx expo start`
-10. Use `npx expo start --tunnel` when remote device testing is needed
+10. Use `npx expo start --go` for Expo Go, adding `--tunnel` when remote Metro access is needed
 
 ### 日本語説明
 基本フローは、まず `PROJECT_CONTEXT.md` を読み、`define-project` でプロジェクト初期要件を整えてから進める形です。
-最初に `init-project` で Expo managed workflow の土台を整え、その後 `define-project` と `setup-project` で初期要件と永続ドキュメントを作成します。
+最初に `init-project` でExpoの土台を整え、その後 `define-project` と `setup-project` で初期要件と永続ドキュメントを作成します。
 追加仕様は `define-feature` で `docs/ideas/YYYYMMDD_N-[feature-name].md` として管理し、設計は `plan-feature`、実装は `implement-feature`、厳しめの検証は `validate-implementation` を使います。
-起動確認は `npx expo start`、リモート端末確認は `npx expo start --tunnel` を使います。
+起動確認は `npx expo start`、Expo Go確認は `npx expo start --go`、リモートからMetroへ接続する場合は `npx expo start --go --tunnel` を使います。backend接続にはLAN又はTailscaleの別経路が必要です。
 
 ## Working Rules
 
-- Use React Native + Expo managed workflow + JavaScript as the default project assumption
+- Use React Native + Expo + checked-in native projects + JavaScript as the default project assumption
 - Do not introduce TypeScript unless explicitly requested
 - Do not upgrade Expo SDK automatically
 - Do not change the Node version automatically
@@ -66,9 +70,10 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 - Keep durable product and engineering documentation in `docs/`
 - Update `docs/` when stable requirements or architecture decisions change
 - Keep `.devcontainer/` in the repository as an optional future-facing setup, even if Docker is not used now
+- Treat checked-in `ios/` and `Podfile.lock` as release inputs; compare SDK upgrades against a temporary reference prebuild and do not run `prebuild --clean` in the repository
 
 ### 日本語説明
-- デフォルト前提は React Native + Expo managed workflow + JavaScript です。
+- デフォルト前提はReact Native + Expo + checked-in native project + JavaScriptです。
 - 明示依頼がない限り TypeScript は導入しません。
 - Expo SDK や Node のバージョンは自動で変更しません。
 - Expo 関連の依存追加や更新では `npx expo install` を使います。
@@ -82,6 +87,7 @@ This template is the starting point for an AI-driven React Native + Expo + JavaS
 - 個別機能仕様は `define-feature` で扱います。
 - 短期タスク管理は `.steering/`、長期的に残す設計文書は `docs/` に置きます。
 - 安定した要件や設計判断が変わったら `docs/` を更新します。
+- checked-in `ios/`と`Podfile.lock`はrelease inputです。SDK更新では一時reference prebuildと比較し、repositoryで`prebuild --clean`を実行しません。
 
 ## Expected Directories
 

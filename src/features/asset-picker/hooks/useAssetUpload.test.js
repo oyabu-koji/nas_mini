@@ -49,6 +49,7 @@ function UploadHarness({ onMappingUnavailable, onUploaded }) {
     onMappingUnavailable,
     onUploaded,
   });
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestUploadHook = upload;
   return null;
 }

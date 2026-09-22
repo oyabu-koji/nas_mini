@@ -6,14 +6,13 @@ from app.core.settings import Settings
 from app.db.connection import connect
 from app.repositories.assets import PREVIEW_STATUS_PREVIEW_READY, get_asset
 from app.repositories.derived_files import get_preview_for_asset
-from app.services.media_range import (
-    ByteRange,
-    InvalidRangeError,
-    iter_file as _iter_file,
-    parse_range_header,
-)
+from app.repositories.upload_sessions import is_session_video_asset
+from app.services.media_range import ByteRange, InvalidRangeError, parse_range_header
+from app.services.media_range import iter_file as _iter_file
 from app.services.processed_result_delivery import resolve_formal_preview_result
 from app.services.storage import StorageError, resolve_media_path
+
+__all__ = ["ByteRange", "InvalidRangeError", "parse_range_header"]
 
 
 class PreviewNotFoundError(RuntimeError):
@@ -42,7 +41,11 @@ def open_preview_stream(
         asset = get_asset(conn, asset_id)
         if asset is None:
             raise PreviewNotFoundError("asset not found")
-        if "formal_preview_id" in asset:
+        is_phase2b = (
+            "formal_preview_id" in asset
+            and is_session_video_asset(conn, asset_id=asset_id)
+        )
+        if is_phase2b:
             formal = resolve_formal_preview_result(
                 settings=settings, conn=conn, asset=asset
             )
@@ -57,6 +60,8 @@ def open_preview_stream(
             mime_type = formal.verified_file.mime_type
             total_size = formal.verified_file.size_bytes
         else:
+            if asset.get("formal_preview_id") is not None:
+                raise FormalPreviewProvenanceInvalidError()
             if (
                 bool(asset["is_log"])
                 or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY

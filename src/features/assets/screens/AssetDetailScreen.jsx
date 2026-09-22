@@ -5,7 +5,10 @@ import { ScreenHeader } from '../../../shared/components/ScreenHeader';
 import { StatusPill } from '../../../shared/components/StatusPill';
 import { PREVIEW_STATUS } from '../../../shared/constants/assetStatuses';
 import { formatBytes } from '../../../shared/utils/fileSize';
-import { formalPreviewProfileLabel } from '../../../shared/utils/formalPreviewPresentation';
+import {
+  formalPreviewProfileLabel,
+  hasFormalPreviewAuthority,
+} from '../../../shared/utils/formalPreviewPresentation';
 import { useProcessedResultSave } from '../../processed-results/hooks/useProcessedResultSave';
 import { PresetSelector } from '../../managed-renditions/components/PresetSelector';
 import { useManagedRendition } from '../../managed-renditions/hooks/useManagedRendition';
@@ -16,9 +19,7 @@ import { useAssetDetail } from '../hooks/useAssets';
 export function AssetDetailScreen({ settings, canUseApi, assetId, mappingUnavailable = false, onBack, onPreview }) {
   const { asset, status, error, loadAsset } = useAssetDetail(settings, canUseApi, assetId, { autoPoll: true });
   const formalReady = asset?.formal_preview?.state === 'ready';
-  const hasFormalPreview = Boolean(
-    asset && Object.prototype.hasOwnProperty.call(asset, 'formal_preview'),
-  );
+  const hasFormalPreview = hasFormalPreviewAuthority(asset);
   const formalResult = formalReady ? asset.formal_preview.result : null;
   const saveResult = hasFormalPreview
     ? formalResult

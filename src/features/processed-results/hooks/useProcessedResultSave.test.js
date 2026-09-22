@@ -42,6 +42,7 @@ const replacementResult = {
 };
 
 function HookHarness({ activeResult = result, onSuperseded }) {
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestProcessedResultSave = useProcessedResultSave({
     settings: { backendUrl: 'http://mediavault', apiToken: 'secret-token' },
     assetId: 42,

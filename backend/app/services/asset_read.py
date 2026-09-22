@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from app.core.settings import Settings
 from app.db.connection import connect
@@ -12,26 +13,27 @@ from app.repositories.assets import (
     update_review_status,
 )
 from app.repositories.derived_files import get_preview_for_asset
+from app.repositories.upload_sessions import is_session_video_asset
 from app.schemas.assets import (
     AssetDetailResponse,
     AssetListItemResponse,
     AssetListResponse,
-    ProcessedResultMetadataResponse,
     PreviewMetadataResponse,
+    ProcessedResultMetadataResponse,
     exif_json_from_text,
 )
-from app.services.storage import StorageError, resolve_media_path
+from app.services.formal_preview_read import build_formal_preview_response
 from app.services.processed_result_delivery import (
     DeliverableProcessedResult,
     has_valid_formal_preview_relation,
     resolve_deliverable_result,
     resolve_formal_preview_result,
 )
-from app.services.formal_preview_read import build_formal_preview_response
 from app.services.safe_delete_candidate import (
     evaluate_safe_delete_candidate,
     project_candidate_status,
 )
+from app.services.storage import StorageError, resolve_media_path
 
 
 class AssetNotFoundError(RuntimeError):
@@ -103,8 +105,14 @@ def get_asset_read(settings: Settings, *, asset_id: int) -> AssetDetailResponse:
             conn=conn,
             asset=asset,
         )
-        if (
+        is_phase2b = (
             "formal_preview_id" in asset
+            and is_session_video_asset(conn, asset_id=asset_id)
+        )
+        if not is_phase2b and asset.get("formal_preview_id") is not None:
+            raise PreviewProvenanceInvalidError()
+        if (
+            is_phase2b
             and asset.get("preview_status") == PREVIEW_STATUS_PREVIEW_READY
             and asset.get("formal_preview_id") is not None
             and (formal_preview is None or formal_preview.state != "ready")
@@ -136,7 +144,10 @@ def confirm_preview(
             asset = get_asset(conn, asset_id)
             if asset is None:
                 raise AssetNotFoundError("asset not found")
-            is_phase2b = "formal_preview_id" in asset
+            is_phase2b = (
+                "formal_preview_id" in asset
+                and is_session_video_asset(conn, asset_id=asset_id)
+            )
             if is_phase2b:
                 if preflight is None:
                     raise PreviewProvenanceInvalidError()
@@ -149,6 +160,8 @@ def confirm_preview(
                     )
                 ):
                     raise PreviewProvenanceInvalidError()
+            elif asset.get("formal_preview_id") is not None:
+                raise PreviewProvenanceInvalidError()
             elif (
                 preflight is not None
                 or bool(asset["is_log"])
@@ -226,7 +239,13 @@ def _preflight_confirmation(
         if asset is None:
             raise AssetNotFoundError("asset not found")
         preview = get_preview_for_asset(conn, asset_id)
-        if "formal_preview_id" not in asset:
+        is_phase2b = (
+            "formal_preview_id" in asset
+            and is_session_video_asset(conn, asset_id=asset_id)
+        )
+        if not is_phase2b:
+            if asset.get("formal_preview_id") is not None:
+                raise PreviewProvenanceInvalidError()
             if (
                 bool(asset["is_log"])
                 or asset["preview_status"] != PREVIEW_STATUS_PREVIEW_READY

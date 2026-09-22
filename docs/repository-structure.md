@@ -2,7 +2,7 @@
 
 ## 適用方針
 
-- MobileはExpo managed workflow + JavaScriptのfeature-first構成とする。
+- MobileはExpo + checked-in native project + JavaScriptのnon-CNG feature-first構成とする。
 - BackendはFastAPIのlayered構成とする。
 - originalとderived fileはrepository外の`MEDIA_ROOT`へ保存する。
 - detector certification用の実動画はGit管理外のroot `data/`だけに置き、Docker build contextへ含めない。
@@ -79,7 +79,7 @@ root `data/`はlocal-only inputであり、tracked treeには含めない。固�
 
 ### root `eslint.config.js`
 
-- Expo SDK 54のflat configを基礎に、Mobile production/testとmaintained root JavaScriptのlint policyを所有する。
+- Expo SDK 57のflat configを基礎に、Mobile production/testとmaintained root JavaScriptのlint policyを所有する。
 - Jest globalはtest/setup、Node globalはlint configへ限定し、generated output、Backend、`.agents/`、`.steering/`をglobal ignoreする。
 - Backend Python lintの責務は持たず、Backend品質commandは`backend/pyproject.toml`側で管理する。
 
@@ -256,6 +256,8 @@ root `data/`はlocal-only inputであり、tracked treeには含めない。固�
 ### checked-in iOSとroot verifier
 
 - `ios/LatestTemplate/Info.plist`はrelease inputであり、`app.json`と表示名、version、ATSを同期する。
+- `ios/`は非CNGのchecked-in release inputとして管理する。SDK更新時は`/private/tmp`のreference prebuildと比較し、tracked native差分を手動同期して`ios/Podfile.lock`を再生成する。repositoryの`ios/`へ通常の`prebuild --clean`を直接実行しない。
+- SDK 57ではReact Native New Architecture、iOS deployment target 16.4以上、Xcode 26.4以上を前提とし、custom `StreamingSha256` podspecも同じdeployment targetへ揃える。
 - `scripts/verify-ios-native-config.mjs`は`plutil`でplistをstructured parseし、
   `MediaVault`、Expo/npm/plist/Xcodeの`0.4.0`、ATS `false/true`を固定commandで検証する。
 

@@ -2,7 +2,6 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-
 EXPIRABLE_STATUSES = {"created", "uploading", "ready_to_finalize"}
 UPLOADABLE_STATUSES = {"created", "uploading"}
 CANCELLABLE_STATUSES = {"created", "uploading", "ready_to_finalize", "failed"}
@@ -109,6 +108,26 @@ def get_session_by_client_upload_id(
     client_upload_id: str,
 ) -> dict[str, Any] | None:
     return _get_by_client_upload_id(conn, client_upload_id)
+
+
+def is_session_video_asset(
+    conn: sqlite3.Connection,
+    *,
+    asset_id: int,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM assets
+        JOIN upload_sessions ON upload_sessions.asset_id = assets.id
+        WHERE assets.id = ?
+          AND assets.type = 'video'
+          AND upload_sessions.type = 'video'
+        LIMIT 1
+        """,
+        (asset_id,),
+    ).fetchone()
+    return row is not None
 
 
 def get_session_or_expire(

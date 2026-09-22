@@ -8,16 +8,20 @@ This directory is a reusable base template and initialized Expo baseline for new
 ## Template assumptions
 
 - React Native
-- Expo managed workflow
+- Expo with checked-in native projects (non-CNG)
 - JavaScript
 - Node 24
-- Expo SDK 54
+- Expo SDK 57
+- React Native 0.86.3
+- iOS deployment target 16.4+
+- Xcode 26.4+
+- React Native New Architecture
 
 ### 日本語説明
 - React Native を使う前提です。
-- Expo managed workflow を採用します。
+- Expoを使い、checked-in native projectを正本とするnon-CNG構成を採用します。
 - 実装言語は JavaScript です。
-- Node 24 と Expo SDK 54 を前提にします。
+- Node 24、Expo SDK 57、React Native 0.86.3、iOS 16.4以上、Xcode 26.4以上、New Architectureを前提にします。
 
 ## Included files
 
@@ -61,8 +65,8 @@ Before `init-project`, this template intentionally does not include application 
 1. Create a new repository for the project.
 2. Copy the contents of `project-template/` into the new repository root.
 3. Read `AGENTS.md`, `PROJECT_CONTEXT.md`, and `.agents/README.md`.
-4. Run `init-project` to create the Expo managed workflow baseline.
-5. Keep the environment pinned to Node 24 and Expo SDK 54.
+4. Run `init-project` to create the Expo baseline.
+5. Keep the environment pinned to Node 24, Expo SDK 57, and React Native 0.86.3.
 6. Run `define-project` to create or update `docs/ideas/initial-requirements.md`.
 7. Run `setup-project` to create the six durable docs from `docs/ideas/initial-requirements.md`.
 8. Run `define-feature` to create or update a feature spec in `docs/ideas/YYYYMMDD_N-[feature-name].md`.
@@ -74,8 +78,8 @@ Before `init-project`, this template intentionally does not include application 
 1. 新しいプロジェクト用のリポジトリを作成します。
 2. `project-template/` の中身を新しいリポジトリのルートへコピーします。
 3. `AGENTS.md`、`PROJECT_CONTEXT.md`、`.agents/README.md` を読みます。
-4. `init-project` を実行して Expo managed workflow の土台を作成します。
-5. 開発環境は Node 24 と Expo SDK 54 に固定します。
+4. `init-project` を実行してExpoの土台を作成します。
+5. 開発環境はNode 24、Expo SDK 57、React Native 0.86.3、iOS 16.4以上、Xcode 26.4以上、New Architectureに固定します。
 6. `define-project` を実行して、`docs/ideas/initial-requirements.md` を作成または更新します。
 7. `setup-project` を実行して `docs/ideas/initial-requirements.md` から 6 つの永続ドキュメントを作成します。
 8. 追加機能に着手する前に、`define-feature` を実行して `docs/ideas/YYYYMMDD_N-[feature-name].md` を作成または更新します。
@@ -86,11 +90,17 @@ Before `init-project`, this template intentionally does not include application 
 ## Development commands
 
 - `npx expo start`
-- `npx expo start --tunnel`
+- `npx expo start --go`
+- `npx expo start --go --tunnel`
+- `npx expo start --dev-client`
 
 ### 日本語説明
 - `npx expo start` は通常の開発サーバー起動に使います。
-- `npx expo start --tunnel` はリモート端末から接続したい場合に使います。
+- `npx expo start --go` はExpo Go確認に使います。
+- `npx expo start --go --tunnel` はリモート端末からMetroへ接続したい場合に使います。Expo tunnelはbackendを中継しません。
+- `npx expo start --dev-client` はcustom native moduleを含むDevelopment Build確認に使います。
+- 別networkのiPhoneからbackendへ接続する場合は、MBAのTailscale IP又はMagicDNS名をBackend URLに使います。
+- SDK 57のiOS Expo Goを使う前に、Expo CLIとiPhoneを同一Expo accountへloginします。
 
 ## Environment transfer note
 

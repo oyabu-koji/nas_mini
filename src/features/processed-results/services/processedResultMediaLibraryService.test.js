@@ -1,11 +1,11 @@
-import * as MediaLibrary from 'expo-media-library';
+import * as MediaLibrary from 'expo-media-library/legacy';
 
 import {
   createProcessedResultLibraryAsset,
   requestProcessedResultLibraryPermission,
 } from './processedResultMediaLibraryService';
 
-jest.mock('expo-media-library', () => ({
+jest.mock('expo-media-library/legacy', () => ({
   requestPermissionsAsync: jest.fn(),
   createAssetAsync: jest.fn(),
 }));

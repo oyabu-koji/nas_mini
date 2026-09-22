@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.license = 'UNLICENSED'
   s.author = 'MediaVault'
   s.homepage = 'https://example.invalid/mediavault'
-  s.platforms = { :ios => '15.1' }
+  s.platforms = { :ios => '16.4' }
   s.swift_version = '5.9'
   s.source = { :git => 'https://example.invalid/mediavault.git' }
   s.static_framework = true

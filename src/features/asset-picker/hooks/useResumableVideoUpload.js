@@ -31,6 +31,7 @@ export function useResumableVideoUpload({ settings, pickedAsset, isLog, canUseAp
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState({ uploadedBytes: 0, totalBytes: 0 });
   const [session, setSession] = useState(null);
+  const [isInFlight, setIsInFlight] = useState(false);
   const inFlightRef = useRef(false);
 
   const startUpload = useCallback(async () => {
@@ -44,6 +45,7 @@ export function useResumableVideoUpload({ settings, pickedAsset, isLog, canUseAp
     }
 
     inFlightRef.current = true;
+    setIsInFlight(true);
     setError(null);
     let activeClientUploadId = null;
     try {
@@ -126,6 +128,7 @@ export function useResumableVideoUpload({ settings, pickedAsset, isLog, canUseAp
       await handleUploadError(uploadError, setStatus, setError, activeClientUploadId);
     } finally {
       inFlightRef.current = false;
+      setIsInFlight(false);
     }
   }, [canUseApi, isLog, onMappingUnavailable, onUploaded, pickedAsset, settings]);
 
@@ -134,6 +137,7 @@ export function useResumableVideoUpload({ settings, pickedAsset, isLog, canUseAp
       return;
     }
     inFlightRef.current = true;
+    setIsInFlight(true);
     try {
       await cancelUploadSession({ settings, sessionId: session.id });
       await removeResumableUploadRecord();
@@ -144,6 +148,7 @@ export function useResumableVideoUpload({ settings, pickedAsset, isLog, canUseAp
       await handleUploadError(cancelError, setStatus, setError);
     } finally {
       inFlightRef.current = false;
+      setIsInFlight(false);
     }
   }, [session, settings]);
 
@@ -152,8 +157,8 @@ export function useResumableVideoUpload({ settings, pickedAsset, isLog, canUseAp
     error,
     progress,
     session,
-    canStart: !inFlightRef.current && Boolean(pickedAsset) && pickedAsset.type === 'video' && canUseApi,
-    canCancel: !inFlightRef.current && Boolean(session?.id) && !['completed', 'cancelled', 'expired'].includes(status),
+    canStart: !isInFlight && Boolean(pickedAsset) && pickedAsset.type === 'video' && canUseApi,
+    canCancel: !isInFlight && Boolean(session?.id) && !['completed', 'cancelled', 'expired'].includes(status),
     startUpload,
     cancelUpload,
   };

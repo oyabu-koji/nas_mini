@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from app.core.settings import Settings
 from app.db.connection import connect
 from app.db.phase_schema_identity import resolve_managed_phase_schema
+from app.repositories.upload_sessions import is_session_video_asset
 from app.services.client_compatibility import (
     IncompatibleClientError,
     parse_semantic_version,
@@ -35,7 +36,7 @@ def resolve_phase2_rollout(
     with connect(settings.database_path, settings.sqlite_busy_timeout_ms) as conn:
         schema = resolve_managed_phase_schema(conn)
         phase2_asset = (
-            _is_session_video(conn, asset_id=asset_id)
+            is_session_video_asset(conn, asset_id=asset_id)
             if asset_id is not None and schema.phase2b_valid
             else False
         )
@@ -70,24 +71,6 @@ def resolve_phase2_rollout(
         safe_delete_candidate=bool(schema.phase2c_valid and formal_enabled),
         runtime_blocked_reason=runtime.blocked_reason,
         detector_v2_schema_enabled=schema.detector_v2_valid,
-    )
-
-
-def _is_session_video(conn, *, asset_id: int) -> bool:
-    return (
-        conn.execute(
-            """
-            SELECT 1
-            FROM assets
-            JOIN upload_sessions ON upload_sessions.asset_id = assets.id
-            WHERE assets.id = ?
-              AND assets.type = 'video'
-              AND upload_sessions.type = 'video'
-            LIMIT 1
-            """,
-            (asset_id,),
-        ).fetchone()
-        is not None
     )
 
 

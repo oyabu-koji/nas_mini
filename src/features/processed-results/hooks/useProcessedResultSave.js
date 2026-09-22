@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { createAppError, messageForErrorCode, toDisplayError } from '../../../shared/utils/errors';
 import {
@@ -63,10 +63,14 @@ export function useProcessedResultSave({ settings, assetId, result, onSuperseded
     : null;
   const currentIdentityKeyRef = useRef(identityKey);
   const inFlightIdentityKeyRef = useRef(null);
-  currentIdentityKeyRef.current = identityKey;
+
+  useLayoutEffect(() => {
+    currentIdentityKeyRef.current = identityKey;
+  }, [identityKey]);
 
   useEffect(() => {
     let active = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Result identity is a reset boundary before persisted save state is loaded.
     setStatus('idle');
     setError(null);
     setSavedLocalAssetIdentifier(null);

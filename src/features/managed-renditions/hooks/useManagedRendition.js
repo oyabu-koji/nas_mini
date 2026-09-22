@@ -114,6 +114,7 @@ export function useManagedRendition({
   }, [eligible, settings]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Eligibility changes intentionally synchronize the external preset catalog and its loading state.
     loadCatalog();
   }, [loadCatalog]);
 
@@ -122,6 +123,7 @@ export function useManagedRendition({
     const restoreOperation = operationRef.current + 1;
     operationRef.current = restoreOperation;
     recordRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Asset identity is a reset boundary for this persisted operation state.
     setSelectedPresetId(null);
     setRendition(null);
     setSubmitStatus('idle');

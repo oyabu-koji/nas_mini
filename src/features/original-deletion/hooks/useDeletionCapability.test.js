@@ -17,6 +17,7 @@ const capabilities = {
 };
 
 function Harness({ canUseApi = true }) {
+  // eslint-disable-next-line react-hooks/immutability -- The test harness exposes current hook state for act/assert access.
   global.latestDeletionCapability = useDeletionCapability({ settings, canUseApi });
   return null;
 }

@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import {
   generateClientRenditionRequestId,
   readManagedRenditionRecord,
@@ -7,6 +6,10 @@ import {
   updateManagedRenditionRecord,
   writePendingManagedRendition,
 } from './managedRenditionStore';
+
+jest.mock('expo-crypto', () => ({
+  randomUUID: jest.fn(() => '123e4567-e89b-12d3-a456-426614174000'),
+}));
 
 const clientRequestId = 'a'.repeat(32);
 

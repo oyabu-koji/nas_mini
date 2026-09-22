@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { getLocalAssetMappingState } from '../../../shared/services/localAssetMappingStore';
@@ -23,12 +23,16 @@ export function useOriginalDeletion({
   const assetId = asset?.id ?? null;
   const currentAssetIdRef = useRef(assetId);
   const currentMappingStateRef = useRef(mappingState);
-  currentAssetIdRef.current = assetId;
-  currentMappingStateRef.current = mappingState;
+
+  useLayoutEffect(() => {
+    currentAssetIdRef.current = assetId;
+    currentMappingStateRef.current = mappingState;
+  }, [assetId, mappingState]);
 
   useEffect(() => {
     let active = true;
     if (!assetId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Missing asset identity is an explicit reset boundary for deletion state.
       setMappingState(null);
       setOutcome(null);
       setStatus('idle');

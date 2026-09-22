@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { uuid } from 'expo-modules-core';
+import { randomUUID } from 'expo-crypto';
 
 import { sanitizeRendition } from './managedRenditionApi';
 
@@ -7,7 +7,7 @@ const KEY_PREFIX = 'mediavault.managedRendition.v1';
 const ID_PATTERN = /^[0-9a-f]{32}$/;
 const PRESET_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-export function generateClientRenditionRequestId(randomUUIDImpl = uuid.v4) {
+export function generateClientRenditionRequestId(randomUUIDImpl = randomUUID) {
   if (typeof randomUUIDImpl !== 'function') {
     throw new Error('secure UUID API is unavailable');
   }

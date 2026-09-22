@@ -1,3 +1,12 @@
+import { ASSET_TYPE } from '../constants/assetStatuses';
+
+export function hasFormalPreviewAuthority(asset) {
+  return Boolean(
+    asset?.type === ASSET_TYPE.VIDEO
+    && asset?.verification_status === 'file_verified',
+  );
+}
+
 export function formalPreviewProfileLabel(formalPreview) {
   if (!formalPreview || formalPreview.state !== 'ready') {
     return null;
